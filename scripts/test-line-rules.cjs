@@ -6,7 +6,7 @@ const fs = require('node:fs/promises');
   const token = await auth.getAccessToken(account.tokens.refresh_token, ['https://www.googleapis.com/auth/cloud-platform']);
   const source = { files: [{ name: 'firestore.rules', content: await fs.readFile('firestore.botnest.rules', 'utf8') }] };
   const testCases = [];
-  const paths = ['botnest/state', 'botnest/state/accounts/alice', 'botnest/state/channels/1234567890', 'botnest/state/channels/1234567890/conversations/abc/messages/1'];
+  const paths = ['botnest/state', 'botnest/state/accounts/alice', 'botnest/state/channels/1234567890', 'botnest/state/channels/1234567890/conversations/abc/messages/1', 'botnest/state/channels/1234567890/outbox/example', 'botnest/state/channels/1234567890/limits/send'];
   for (const document of paths) for (const method of ['get', 'list', 'create', 'update', 'delete']) for (const signedIn of [false, true]) {
     testCases.push({ expectation: 'DENY', request: { path: `/databases/(default)/documents/${document}`, method, auth: signedIn ? { uid: 'alice', token: {} } : null, time: '2026-09-14T00:00:00Z' } });
   }

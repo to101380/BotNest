@@ -2,6 +2,8 @@
 
 ## LINE OA 收件匣（已部署，待綁定 OA）
 
+現在支援从網頁傳送文字回覆、傳送狀態與斷線後安全重試。先前已綁定的 OA 需更新一次連線憑證，以加密保存回覆所需的 Access Token。按 Enter 換行，點「傳送回覆」才會送出。
+
 已部署 OA 綁定、按帳號隔離的新訊息收件匣及 Webhook 接收端。Firebase Blaze 已啟用；登入正式網站後，在「AI機器人」填入 OA 憑證，再設定 LINE Webhook，詳見 [LINE_SETUP.md](LINE_SETUP.md)。本機可執行 `node scripts/preview-inbox.mjs` 查看虛構資料示範。
 
 以下為既有登入功能文件；其中「沒有資料庫或受保護 API」描述的是先前已部署的登入版本，新的 LINE 後端與權限以 `LINE_SETUP.md` 為準。

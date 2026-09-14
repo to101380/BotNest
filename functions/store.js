@@ -1,4 +1,5 @@
 import { HttpError } from "./core.js";
+import { randomUUID } from "node:crypto";
 
 export function createStore(db) {
   const state = db.collection("botnest").doc("state");
@@ -16,6 +17,47 @@ export function createStore(db) {
     return { items: result.slice(0, limit), next: result.length > limit ? result[limit - 1].id : null };
   }
   return {
+    async prepareReply(id, conversationId, operationId, text, at) {
+      const channel = channels.doc(id), conversation = channel.collection("conversations").doc(conversationId);
+      const outbox = channel.collection("outbox").doc(operationId);
+      const messageRef = conversation.collection("messages").doc(`out-${operationId}`);
+      const limitRef = channel.collection("limits").doc("send");
+      let result;
+      await db.runTransaction(async tx => {
+        const [old, target, limits] = await tx.getAll(outbox, conversation, limitRef);
+        if (!target.exists) throw new HttpError(404, "找不到這段對話。");
+        const previous = old.data();
+        if (previous && (previous.conversationId !== conversationId || previous.text !== text)) throw new HttpError(409, "不可用同一筆傳送編號更改內容或收件對象。");
+        if (previous && ["sent", "failed"].includes(previous.status)) { result = { ...previous, claimed: false }; return; }
+        if (previous && at - previous.createdAt >= 23 * 60 * 60 * 1000) throw new HttpError(409, "這則訊息已超過安全重試期限，請先到 LINE 確認傳送結果。");
+        if (previous?.leaseUntil > at) { result = { ...previous, claimed: false }; return; }
+        const rate = limits.data(), active = rate && at - rate.since < 60000;
+        if (active && rate.count >= 20) throw new HttpError(429, "傳送頻率過高，請一分鐘後再試。");
+        const message = { id: `out-${operationId}`, operationId, direction: "outgoing", type: "text", text, sentAt: previous?.createdAt ?? at, status: "pending", note: "正在確認傳送結果", unsent: false };
+        const operation = { conversationId, text, to: target.data().sourceId, retryKey: previous?.retryKey ?? randomUUID(), createdAt: previous?.createdAt ?? at, leaseUntil: at + 20000, status: "pending", message };
+        tx.set(outbox, operation); tx.set(messageRef, message);
+        tx.set(limitRef, { since: active ? rate.since : at, count: active ? rate.count + 1 : 1 });
+        result = { ...operation, claimed: true, retried: !!previous };
+      });
+      return result;
+    },
+    async finishReply(id, operationId, status, note) {
+      const channel = channels.doc(id), outbox = channel.collection("outbox").doc(operationId);
+      let message;
+      await db.runTransaction(async tx => {
+        const operation = (await tx.get(outbox)).data();
+        if (!operation) throw new HttpError(404, "找不到傳送紀錄。");
+        const conversation = channel.collection("conversations").doc(operation.conversationId);
+        const summary = (await tx.get(conversation)).data();
+        // An acknowledged success must never be downgraded by an older retry.
+        if (operation.status === "sent") { message = operation.message; return; }
+        message = { ...operation.message, status, note };
+        tx.set(outbox, { status, message, leaseUntil: 0 }, { merge: true });
+        tx.set(conversation.collection("messages").doc(message.id), message);
+        if (status === "sent" && (!summary || message.sentAt >= summary.updatedAt)) tx.set(conversation, { lastText: `你：${message.text}`, lastMessageId: message.id, updatedAt: message.sentAt }, { merge: true });
+      });
+      return message;
+    },
     async getChannel(id) { return (await channels.doc(id).get()).data() || null; },
     async account(uid) {
       const account = (await accounts.doc(uid).get()).data();

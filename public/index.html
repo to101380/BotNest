@@ -112,7 +112,7 @@
               <input id="line-channel-secret" type="password" pattern="[a-fA-F0-9]{32}" maxlength="32" required autocomplete="off" spellcheck="false">
               <label for="line-access-token">Channel access token（long-lived）</label>
               <input id="line-access-token" type="password" minlength="30" maxlength="4096" required autocomplete="off" spellcheck="false">
-              <p class="note">Secret 會加密保存於後端；Access Token 僅用於確認 OA 身分，不會保存。綁定前請於 10 分鐘內重新登入。</p>
+              <p class="note">Secret 與 Access Token 會加密保存於後端，用於驗證及傳送你的回覆。綁定前請於 10 分鐘內重新登入。</p>
               <button class="email-primary" type="submit">驗證並連接 OA</button>
             </fieldset>
           </form>
@@ -130,7 +130,12 @@
                 <h3 id="line-conversation-title">選擇一段對話</h3>
                 <button id="line-more-messages" class="retry" type="button" hidden>載入更早訊息</button>
                 <div id="line-messages" aria-label="訊息內容"></div>
-                <p class="note inbox-readonly">目前可查看收到的訊息，網頁回覆功能尚未開放。</p>
+                <form id="line-reply-form" class="reply-form">
+                  <label for="line-reply-text">回覆這段對話</label>
+                  <textarea id="line-reply-text" rows="3" maxlength="5000" placeholder="輸入回覆內容…" required disabled></textarea>
+                  <div class="reply-actions"><span id="line-reply-hint" class="note">先選擇一段對話。</span><button id="line-send" class="email-primary" type="submit" disabled>傳送回覆</button></div>
+                  <p class="note">點按按鈕才會傳送；Enter 換行。回覆會使用 OA 的 LINE 訊息額度。「已交給 LINE」不代表對方已收到或已讀。</p>
+                </form>
               </section>
             </div>
           </section>

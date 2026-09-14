@@ -4,6 +4,14 @@ export function createLineInbox() {
   let user = null, active = false, epoch = 0, controller, timer, channel = null;
   let selected = null, conversationNext = null, messageNext = null, refreshing = false, saving = false, browsingHistory = false;
   const conversations = new Map(), messages = new Map();
+  const drafts = new Map(), localReplies = new Map();
+  let sending = false;
+  function replyControls() {
+    const enabled = active && !!selected && !!channel?.canReply && !saving && !sending;
+    $("line-reply-text").disabled = $("line-send").disabled = !enabled;
+    $("line-send").textContent = sending ? "傳送中…" : "傳送回覆";
+    $("line-reply-hint").textContent = !channel?.canReply ? "請更新上方 OA 連線憑證，啟用回覆。" : !selected ? "先選擇一段對話。" : "最多 5000 字";
+  }
   const status = (text, error = false) => { $("line-status").textContent = text; $("line-status").classList.toggle("error", error); };
   const clearSecrets = () => { $("line-channel-secret").value = $("line-access-token").value = ""; };
   function historyMode(value) {
@@ -19,7 +27,7 @@ export function createLineInbox() {
     const response = await fetch(`/api/line/${path}`, { ...options, signal, cache: "no-store", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } });
     const data = await response.json().catch(() => ({ error: "LINE 接收服務尚未部署。本機靜態預覽不支援 OA 連線，請於後端部署後使用正式網站。" }));
     if (currentEpoch !== epoch) throw new DOMException("Session changed", "AbortError");
-    if (!response.ok || data.error) throw new Error(data.error || "LINE 服務暫時無法使用。");
+    if (!response.ok || data.error) { const error = new Error(data.error || "LINE 服務暫時無法使用。"); error.status = response.status; throw error; }
     return data;
   }
   function report(error) { if (error.name !== "AbortError") status(error.message, true); }
@@ -27,6 +35,7 @@ export function createLineInbox() {
     $("line-account").hidden = $("line-inbox").hidden = !channel;
     $("line-connect-form").hidden = !!channel;
     $("line-settings-toggle").setAttribute("aria-expanded", "false");
+    replyControls();
     if (!channel) return;
     $("line-oa-name").textContent = `${channel.displayName} ${channel.basicId}`;
     $("line-oa-state").textContent = channel.verifiedAt ? "Webhook 已接通" : "等待 Webhook 驗證";
@@ -55,9 +64,22 @@ export function createLineInbox() {
     $("line-messages").replaceChildren();
     for (const item of [...messages.values()].sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id))) {
       const bubble = document.createElement("article"), text = document.createElement("p"), time = document.createElement("time");
-      bubble.className = `message-bubble${item.unsent ? " unsent" : ""}`;
+      bubble.className = `message-bubble${item.unsent ? " unsent" : ""}${item.direction === "outgoing" ? " outgoing" : ""}`;
       text.textContent = item.text; time.textContent = formatTime(item.sentAt); time.dateTime = new Date(item.sentAt).toISOString();
-      bubble.append(text, time); $("line-messages").append(bubble);
+      bubble.append(text, time);
+      if (item.direction === "outgoing") {
+        const delivery = document.createElement("p"); delivery.className = "delivery-state";
+        delivery.textContent = ({ sent: "已交給 LINE", failed: "傳送失敗", uncertain: "結果待確認", pending: "傳送確認中" })[item.status] || "結果待確認";
+        if (item.note) delivery.title = item.note;
+        bubble.append(delivery);
+        if (["uncertain", "pending"].includes(item.status)) {
+          const retry = document.createElement("button"); retry.type = "button"; retry.className = "retry";
+          retry.textContent = "重試確認"; retry.disabled = sending || !channel?.canReply || Date.now() - item.sentAt >= 23 * 60 * 60 * 1000;
+          retry.addEventListener("click", () => void sendReply(selected, item.text, item.operationId)); bubble.append(retry);
+        }
+        if (item.status !== "sent" && item.note) { const note = document.createElement("p"); note.className = "note"; note.textContent = item.note; bubble.append(note); }
+      }
+      $("line-messages").append(bubble);
     }
     $("line-more-messages").hidden = !messageNext;
   }
@@ -70,10 +92,16 @@ export function createLineInbox() {
     // Refresh replaces the window, including any retracted messages.
     if (!older) messages.clear();
     for (const item of data.items) messages.set(item.id, item);
+    for (const [operationId, local] of localReplies) {
+      if (local.conversationId !== id) continue;
+      if (!messages.has(local.message.id)) messages.set(local.message.id, local.message);
+      else if (["sent", "failed"].includes(messages.get(local.message.id).status)) localReplies.delete(operationId);
+    }
     messageNext = data.next; showMessages();
   }
   async function selectConversation(id) {
     selected = id; messages.clear(); messageNext = null;
+    $("line-reply-text").value = drafts.get(id) || ""; replyControls();
     $("line-conversation-title").textContent = label(conversations.get(id));
     showConversations(); showMessages();
     try { await loadMessages(); } catch (error) { report(error); }
@@ -85,6 +113,7 @@ export function createLineInbox() {
     try {
       const [account, data] = await Promise.all([api("account"), api(`conversations${more && conversationNext ? `?before=${encodeURIComponent(conversationNext)}` : ""}`)]);
       channel = account.channel;
+      replyControls();
       if (channel) {
         $("line-oa-state").textContent = channel.verifiedAt ? "Webhook 已接通" : "等待 Webhook 驗證";
         $("line-oa-state").classList.toggle("active", !!channel.verifiedAt);
@@ -109,11 +138,47 @@ export function createLineInbox() {
       if (currentEpoch === epoch) timer = setInterval(() => { if (!document.hidden && !browsingHistory) void refresh(); }, 10000);
     } catch (error) { report(error); }
   }
+  async function sendReply(conversationId, text, operationId) {
+    if (sending || !active || !channel?.canReply || !conversationId || !text.trim()) return;
+    const isRetry = !!operationId;
+    operationId ||= crypto.randomUUID();
+    const currentEpoch = epoch;
+    sending = true; replyControls(); showMessages();
+    const initial = { id: `out-${operationId}`, operationId, text, direction: "outgoing", type: "text", status: "pending", sentAt: localReplies.get(operationId)?.message.sentAt || messages.get(`out-${operationId}`)?.sentAt || Date.now() };
+    localReplies.set(operationId, { conversationId, message: initial });
+    if (selected === conversationId) { messages.set(initial.id, initial); showMessages(); }
+    try {
+      const data = await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId }) });
+      localReplies.set(operationId, { conversationId, message: data.message });
+      if (selected === conversationId) { messages.set(data.message.id, data.message); showMessages(); }
+      status(data.message.note || "傳送狀態已更新。", data.message.status !== "sent");
+    } catch (error) {
+      if (currentEpoch !== epoch) return;
+      if (error.status && error.status < 500 && !isRetry) {
+        localReplies.delete(operationId); messages.delete(initial.id);
+        if (!drafts.get(conversationId)) { drafts.set(conversationId, text); if (selected === conversationId) $("line-reply-text").value = text; }
+      } else {
+        const uncertain = { ...initial, status: "uncertain", note: "連線中斷，請用「重試確認」查看結果，避免另發同一則訊息。" };
+        localReplies.set(operationId, { conversationId, message: uncertain });
+        if (selected === conversationId) messages.set(initial.id, uncertain);
+      }
+      report(error);
+    } finally { if (currentEpoch === epoch) { sending = false; replyControls(); showMessages(); } }
+  }
+  $("line-reply-text").addEventListener("input", () => { if (selected) drafts.set(selected, $("line-reply-text").value); });
+  $("line-reply-form").addEventListener("submit", event => {
+    event.preventDefault();
+    const text = $("line-reply-text").value;
+    if (sending || !selected || !channel?.canReply || !text.trim() || text.length > 5000) return;
+    drafts.delete(selected); $("line-reply-text").value = "";
+    void sendReply(selected, text);
+  });
   $("line-connect-form").addEventListener("submit", async event => {
     event.preventDefault();
     if (saving || !active) return;
     const currentEpoch = epoch;
     saving = true; $("line-connect-fields").disabled = true;
+    replyControls();
     status("正在向 LINE 驗證 OA 身分…");
     const body = JSON.stringify({ channelId: $("line-channel-id").value.trim(), channelSecret: $("line-channel-secret").value.trim(), accessToken: $("line-access-token").value.trim() });
     clearSecrets();
@@ -121,7 +186,7 @@ export function createLineInbox() {
       channel = (await api("account", { method: "POST", body })).channel;
       showAccount(); status("OA 已綁定。請將上方網址填入 LINE Developers，按 Verify 完成接通。");
     } catch (error) { report(error); }
-    finally { if (currentEpoch === epoch) { saving = false; $("line-connect-fields").disabled = false; } }
+    finally { if (currentEpoch === epoch) { saving = false; $("line-connect-fields").disabled = false; replyControls(); } }
   });
   $("line-settings-toggle").addEventListener("click", () => {
     $("line-connect-form").hidden = !$("line-connect-form").hidden;
@@ -141,6 +206,7 @@ export function createLineInbox() {
       if (user?.uid === nextUser?.uid && active === nextActive) { user = nextUser; return; }
       epoch++; controller?.abort(); clearInterval(timer); controller = new AbortController();
       user = nextUser; active = nextActive; channel = null; selected = null; refreshing = false; saving = false;
+      sending = false; drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
       conversationNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
       historyMode(false);
       $("line-oa-name").textContent = $("line-webhook-url").value = $("line-channel-id").value = "";

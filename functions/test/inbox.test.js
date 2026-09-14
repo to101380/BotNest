@@ -1,18 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { randomBytes, createHmac } from "node:crypto";
+import { randomBytes, createHmac, randomUUID } from "node:crypto";
 import { createHandler, seal, unseal, validSignature, normalizeEvent } from "../core.js";
 import { createStore } from "../store.js";
 import { memoryDb } from "./memory.js";
 
 const key = randomBytes(32).toString("base64"), secret = "a".repeat(32), botId = `U${"b".repeat(32)}`;
 const event = (id = "1", timestamp = 1000) => ({ type: "message", webhookEventId: `event-${id}`, timestamp, source: { type: "user", userId: `U${"c".repeat(32)}` }, message: { id, type: "text", text: `message ${id}` } });
-const channel = (id = "1234567890", uid = "alice") => ({ channelId: id, ownerUid: uid, botUserId: botId, displayName: "Test OA", basicId: "@test", secret: seal(secret, key, id) });
+const channel = (id = "1234567890", uid = "alice") => ({ channelId: id, ownerUid: uid, botUserId: botId, displayName: "Test OA", basicId: "@test", secret: seal(secret, key, id), accessToken: seal("test-access-token", key, `${id}:access-token`) });
 async function fixture(overrides = {}) {
   const db = memoryDb(), store = createStore(db);
   await store.bind("alice", channel());
   await store.bind("bob", channel("9876543210", "bob"));
-  const handler = createHandler({ store, getKey: () => key, now: () => 1000000,
+  const handler = createHandler({ store, getKey: () => key, now: () => 1000000, fetchLine: async () => { throw new Error("Test must explicitly mock LINE"); },
     verifyToken: async token => { if (!["alice", "bob"].includes(token)) throw new Error("invalid"); return { uid: token, auth_time: 1000, firebase: { sign_in_provider: "google.com" } }; }, ...overrides });
   async function request(url, { token = "alice", method = "GET", body, raw, headers = {} } = {}) {
     const allHeaders = { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers };
@@ -95,7 +95,7 @@ test("users cannot select another tenant through query parameters or guessed con
 test("account response never reveals encrypted credentials, token, or owner UID", async () => {
   const f = await fixture();
   const result = await f.request("/api/line/account");
-  assert.deepEqual(Object.keys(result.body.channel).sort(), ["channelId", "displayName", "basicId", "webhookUrl", "verifiedAt", "lastReceivedAt"].sort());
+  assert.deepEqual(Object.keys(result.body.channel).sort(), ["channelId", "displayName", "basicId", "webhookUrl", "verifiedAt", "lastReceivedAt", "canReply"].sort());
 });
 test("binding transaction rejects channel takeover and changing the current OA", async () => {
   const f = await fixture();
@@ -113,7 +113,7 @@ test("binding checks recent login before accepting credentials", async () => {
   const f = await fixture({ verifyToken: async () => ({ uid: "alice", auth_time: 0, firebase: { sign_in_provider: "google.com" } }) });
   assert.equal((await f.request("/api/line/account", { method: "POST", body: {} })).code, 401);
 });
-test("binding verifies token ownership and stores only encrypted secret", async () => {
+test("binding verifies token ownership and encrypts credentials with distinct authenticated contexts", async () => {
   const token = "fake-token-".repeat(10), calls = [];
   const f = await fixture({ fetchLine: async (url, options) => {
     calls.push({ url, options });
@@ -123,6 +123,85 @@ test("binding verifies token ownership and stores only encrypted secret", async 
   assert.equal(result.code, 200); assert.equal(calls.length, 2);
   const persisted = JSON.stringify([...f.db.data]);
   assert.ok(!persisted.includes(token)); assert.ok(!persisted.includes(secret));
+  const saved = await f.store.account("alice");
+  assert.equal(unseal(saved.accessToken, key, "1234567890:access-token"), token);
+  assert.throws(() => unseal(saved.accessToken, key, "1234567890"));
+});
+
+const replyPath = () => `/api/line/conversations/${normalizeEvent(event()).conversationId}/messages`;
+test("reply uses only the server-owned recipient and records success without resending duplicates", async () => {
+  const calls = [];
+  const f = await fixture({ fetchLine: async (url, options) => { calls.push({ url, options }); return { ok: true, status: 200 }; } });
+  await f.webhook([event()]);
+  const body = { text: "你好！", operationId: randomUUID(), to: "attacker" };
+  const result = await f.request(replyPath(), { method: "POST", body });
+  assert.equal(result.code, 200); assert.equal(result.body.message.status, "sent");
+  assert.equal(JSON.parse(calls[0].options.body).to, event().source.userId);
+  assert.equal(calls[0].options.headers.Authorization, "Bearer test-access-token");
+  assert.ok(calls[0].options.headers["X-Line-Retry-Key"]);
+  await f.request(replyPath(), { method: "POST", body });
+  assert.equal(calls.length, 1);
+  const list = await f.store.messages("1234567890", normalizeEvent(event()).conversationId);
+  assert.equal(list.items.filter(item => item.direction === "outgoing").length, 1);
+});
+test("reply denies other tenants, anonymous access, blank and oversized payloads, and missing tokens", async () => {
+  let calls = 0;
+  const f = await fixture({ fetchLine: async () => { calls++; return { ok: true }; } });
+  await f.webhook([event()]);
+  const body = { text: "reply", operationId: randomUUID() };
+  assert.equal((await f.request(replyPath(), { method: "POST", body, token: "bob" })).code, 404);
+  assert.equal((await f.request(replyPath(), { method: "POST", body, token: null })).code, 401);
+  for (const text of ["  ", "x".repeat(5001)]) assert.equal((await f.request(replyPath(), { method: "POST", body: { ...body, text } })).code, 400);
+  assert.equal((await f.request(replyPath(), { method: "POST", body, headers: { origin: "https://evil.example" } })).code, 403);
+  delete f.db.data.get("botnest/state/channels/1234567890").accessToken;
+  assert.equal((await f.request(replyPath(), { method: "POST", body })).code, 409);
+  assert.equal(calls, 0);
+});
+test("ambiguous timeout retries with identical key and payload, treating accepted 409 as success", async () => {
+  const calls = [];
+  const f = await fixture({ fetchLine: async (url, options) => {
+    calls.push(options); if (calls.length === 1) throw new Error("connection lost");
+    return { ok: false, status: 409, headers: new Map([["x-line-accepted-request-id", "accepted"]]) };
+  } });
+  await f.webhook([event()]);
+  const body = { text: "reply", operationId: randomUUID() };
+  assert.equal((await f.request(replyPath(), { method: "POST", body })).body.message.status, "uncertain");
+  assert.equal((await f.request(replyPath(), { method: "POST", body })).body.message.status, "sent");
+  assert.equal(calls[0].headers["X-Line-Retry-Key"], calls[1].headers["X-Line-Retry-Key"]);
+  assert.equal(calls[0].body, calls[1].body);
+});
+test("same operation cannot change message content or recipient", async () => {
+  const f = await fixture(); await f.webhook([event()]);
+  const body = { text: "first", operationId: randomUUID() };
+  await f.request(replyPath(), { method: "POST", body });
+  assert.equal((await f.request(replyPath(), { method: "POST", body: { ...body, text: "different" } })).code, 409);
+  const other = event("2"); other.source.userId = `U${"d".repeat(32)}`; await f.webhook([other]);
+  assert.equal((await f.request(`/api/line/conversations/${normalizeEvent(other).conversationId}/messages`, { method: "POST", body })).code, 409);
+});
+test("concurrent requests claim only one send and keep the same durable operation", async () => {
+  const f = await fixture(); await f.webhook([event()]);
+  const id = randomUUID(), conversationId = normalizeEvent(event()).conversationId;
+  const results = await Promise.all(Array.from({ length: 5 }, () => f.store.prepareReply("1234567890", conversationId, id, "hello", 1000000)));
+  assert.equal(results.filter(result => result.claimed).length, 1);
+  assert.equal(new Set(results.map(result => result.retryKey)).size, 1);
+});
+test("retries expire before LINE's 24h window and acknowledged success is never downgraded", async () => {
+  const f = await fixture(); await f.webhook([event()]);
+  const id = randomUUID(), cid = normalizeEvent(event()).conversationId;
+  await f.store.prepareReply("1234567890", cid, id, "hello", 1000);
+  await assert.rejects(f.store.prepareReply("1234567890", cid, id, "hello", 1000 + 23 * 3600000), { status: 409 });
+  await f.store.finishReply("1234567890", id, "sent", "accepted");
+  assert.equal((await f.store.finishReply("1234567890", id, "failed", "late response")).status, "sent");
+});
+test("LINE rejection is recorded as failure, while failed confirmation of an ambiguous attempt remains uncertain", async () => {
+  let mode = "reject";
+  const f = await fixture({ fetchLine: async () => { if (mode === "timeout") throw new Error("timeout"); return { ok: false, status: 429 }; } });
+  await f.webhook([event()]);
+  assert.equal((await f.request(replyPath(), { method: "POST", body: { text: "hello", operationId: randomUUID() } })).body.message.status, "failed");
+  mode = "timeout";
+  const body = { text: "uncertain", operationId: randomUUID() };
+  await f.request(replyPath(), { method: "POST", body }); mode = "reject";
+  assert.equal((await f.request(replyPath(), { method: "POST", body })).body.message.status, "uncertain");
 });
 test("wrong channel token is rejected before binding; foreign origin is refused", async () => {
   const f = await fixture({ fetchLine: async () => ({ ok: true, json: async () => ({ client_id: "9876543210" }) }) });

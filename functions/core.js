@@ -63,7 +63,7 @@ export function createHandler({ store, verifyToken, getKey, fetchLine = fetch, n
   }
   const publicChannel = channel => channel ? ({ channelId: channel.channelId, displayName: channel.displayName, basicId: channel.basicId,
     webhookUrl: `https://planning-with-ai-52d58.web.app/line-webhook/${channel.channelId}`,
-    verifiedAt: channel.verifiedAt || null, lastReceivedAt: channel.lastReceivedAt || null }) : null;
+    verifiedAt: channel.verifiedAt || null, lastReceivedAt: channel.lastReceivedAt || null, canReply: !!channel.accessToken }) : null;
 
   return async (req, res) => {
     res.set("Cache-Control", "no-store");
@@ -104,9 +104,10 @@ export function createHandler({ store, verifyToken, getKey, fetchLine = fetch, n
         const bot = await lineRequest("/v2/bot/info", { headers: { Authorization: `Bearer ${accessToken}` } });
         if (!/^U[a-f0-9]{32}$/i.test(bot.userId || "")) throw new HttpError(400, "無法取得 OA 資料。");
         const channel = { channelId, ownerUid: user.uid, botUserId: bot.userId, displayName: String(bot.displayName || "LINE OA").slice(0, 100),
-          basicId: String(bot.basicId || "").slice(0, 100), secret: seal(channelSecret, getKey(), channelId), verifiedAt: null };
+          basicId: String(bot.basicId || "").slice(0, 100), secret: seal(channelSecret, getKey(), channelId),
+          accessToken: seal(accessToken, getKey(), `${channelId}:access-token`), verifiedAt: null };
         await store.bind(user.uid, channel);
-        // Access token is used only for verification and never persisted.
+        // Credentials remain encrypted server-side and are never returned to the browser.
         return res.json({ channel: publicChannel(channel) });
       }
       const account = await store.account(user.uid);
@@ -117,6 +118,30 @@ export function createHandler({ store, verifyToken, getKey, fetchLine = fetch, n
       if (path === "/api/line/conversations" && req.method === "GET") return res.json(await store.conversations(account.channelId, before));
       const messages = /^\/api\/line\/conversations\/([a-f0-9]{64})\/messages$/.exec(path);
       if (messages && req.method === "GET") return res.json(await store.messages(account.channelId, messages[1], before));
+      if (messages && req.method === "POST") {
+        const origin = req.get("origin");
+        if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站回覆。");
+        const { text, operationId } = req.body || {};
+        if (typeof text !== "string" || !text.trim() || text.length > 5000 || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(operationId || "")) throw new HttpError(400, "請輸入 1～5000 字的回覆。");
+        if (!account.accessToken) throw new HttpError(409, "請先更新 OA 連線憑證，啟用網頁回覆。");
+        const token = unseal(account.accessToken, getKey(), `${account.channelId}:access-token`);
+        const operation = await store.prepareReply(account.channelId, messages[1], operationId, text, now());
+        if (!operation.claimed) return res.status(["sent", "failed"].includes(operation.status) ? 200 : 202).json({ message: operation.message });
+        let state = "uncertain", note = "傳送結果尚未確認，請用這則訊息的重試按鈕確認，避免另發一則。";
+        try {
+          const response = await fetchLine("https://api.line.me/v2/bot/message/push", {
+            method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-Line-Retry-Key": operation.retryKey },
+            body: JSON.stringify({ to: operation.to, messages: [{ type: "text", text: operation.text }] }), signal: AbortSignal.timeout(12000),
+          });
+          if (response.ok || (response.status === 409 && response.headers.get("x-line-accepted-request-id"))) { state = "sent"; note = "已交給 LINE，這不代表對方已收到或已讀。"; }
+          else if (response.status >= 400 && response.status < 500 && response.status !== 409) {
+            state = operation.retried ? "uncertain" : "failed";
+            note = response.status === 429 ? "LINE 拒絕傳送，請檢查訊息額度或稍後再傳。" : [401, 403].includes(response.status) ? "LINE 憑證無效或權限不足，請更新 OA 連線憑證。" : "LINE 拒絕這則訊息，請檢查收件對象與訊息內容。";
+          }
+        } catch { /* Network errors have ambiguous outcomes. Retry only with the saved key. */ }
+        const message = await store.finishReply(account.channelId, operationId, state, note);
+        return res.status(state === "uncertain" ? 202 : 200).json({ message });
+      }
       throw new HttpError(404, "找不到頁面。");
     } catch (error) {
       // Never log headers, credentials, LINE payloads, or message bodies.
