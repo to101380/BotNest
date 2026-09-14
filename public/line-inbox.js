@@ -96,6 +96,10 @@ export function createLineInbox() {
       bubble.className = `message-bubble${item.unsent ? " unsent" : ""}${item.direction === "outgoing" ? " outgoing" : ""}`;
       text.textContent = item.text; time.textContent = formatTime(item.sentAt); time.dateTime = new Date(item.sentAt).toISOString();
       bubble.append(text, time);
+      if (item.type === "image" && !item.attachment && !item.unsent) {
+        const note = document.createElement("p"); note.className = "note";
+        note.textContent = item.imageNote || "正在讀取 LINE 圖片…"; bubble.append(note);
+      }
       if (item.attachment) {
         const link = document.createElement("a");
         const url = new URL(item.attachment.url, location.origin);
@@ -105,7 +109,7 @@ export function createLineInbox() {
           if (item.attachment.expiresAt <= Date.now()) { link.removeAttribute("href"); link.textContent += "（連結已過期）"; }
           else if (item.attachment.kind === "image") {
             const img = document.createElement("img"); img.src = url.href; img.alt = item.attachment.name; img.loading = "lazy";
-            img.addEventListener("error", () => img.remove(), { once: true }); link.prepend(img);
+            img.addEventListener("error", () => { img.remove(); link.textContent = `圖片暫時無法預覽，點此開啟：${item.attachment.name}`; }, { once: true }); link.prepend(img);
           }
           bubble.prepend(link);
         }

@@ -329,3 +329,37 @@ test("upload validation rejects active files, forged images, oversized data and 
   for (let i=0;i<20;i++) await f.store.reserveUpload('1234567890',id,5*1024*1024,1000000);
   await assert.rejects(f.store.reserveUpload('1234567890',id,1,1000000),error=>error.status===429);
 });
+
+test('incoming images load only for owner, are cached, and become unavailable after unsend', async () => {
+  const objects = new Map(); let calls = 0;
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY9sAAAAASUVORK5CYII=', 'base64');
+  const f = await fixture({ now: () => 1800000000000, media: { save: async (path, bytes) => objects.set(path, bytes), read: async path => objects.get(path) }, fetchLine: async (url, options) => {
+    calls++; assert.equal(url,'https://api-data.line.me/v2/bot/message/image-1/content'); assert.equal(options.headers.Authorization,'Bearer test-access-token');
+    return new Response(png);
+  } });
+  const incoming = {...event('image-1'), message:{id:'image-1',type:'image'}};
+  await f.webhook([incoming]);
+  const id = (await f.store.conversations('1234567890')).items[0].id;
+  assert.equal((await f.request(`/api/line/conversations/${id}/messages`,{token:'bob'})).body.items.length,0);
+  assert.equal(calls,0);
+  const first = await f.request(`/api/line/conversations/${id}/messages`);
+  const attachment = first.body.items[0].attachment; assert.equal(attachment.kind,'image');
+  await f.request(`/api/line/conversations/${id}/messages`); assert.equal(calls,1);
+  assert.equal((await f.request(attachment.url,{token:null})).code,200);
+  await f.webhook([{...incoming,type:'unsend',webhookEventId:'unsend-img',unsend:{messageId:'image-1'}}]);
+  const after = await f.request(`/api/line/conversations/${id}/messages`);
+  assert.equal(after.body.items[0].unsent,true); assert.equal(after.body.items[0].attachment,undefined);
+  assert.equal((await f.request(attachment.url,{token:null})).code,404);
+});
+test('failed image loads keep inbox available and concurrent unsend cannot restore an image', async () => {
+  let calls=0;
+  const f = await fixture({ now:()=>1800000000000, media:{save:async()=>{}}, fetchLine:async()=>{calls++;return new Response('',{status:410});} });
+  await f.webhook([{...event('img'),message:{id:'img',type:'image'}}]);
+  const id=(await f.store.conversations('1234567890')).items[0].id;
+  const failed=await f.request(`/api/line/conversations/${id}/messages`);
+  assert.equal(failed.code,200); assert.match(failed.body.items[0].imageNote,/已過期/);
+  await f.request(`/api/line/conversations/${id}/messages`); assert.equal(calls,1);
+  await f.webhook([{...event('img'),type:'unsend',webhookEventId:'unsend-race',unsend:{messageId:'img'}}]);
+  const result=await f.store.finishIncomingImage('1234567890',id,'img',{attachment:{url:'should-not-restore'}});
+  assert.equal(result.unsent,true); assert.equal(result.id,'img'); assert.equal(result.attachment,undefined);
+});

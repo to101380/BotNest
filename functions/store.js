@@ -17,6 +17,22 @@ export function createStore(db) {
     return { items: result.slice(0, limit), next: result.length > limit ? result[limit - 1].id : null };
   }
   return {
+    async claimIncomingImage(id, conversationId, messageId, at) {
+      const ref = channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId);
+      return db.runTransaction(async tx => {
+        const value = (await tx.get(ref)).data();
+        if (!value || value.unsent || value.type !== "image" || value.direction !== "incoming" || value.attachment || value.imageRetryAfter > at) return false;
+        tx.set(ref, { imageRetryAfter: at + 60000 }, { merge: true }); return true;
+      });
+    },
+    async finishIncomingImage(id, conversationId, messageId, patch) {
+      const ref = channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId);
+      return db.runTransaction(async tx => {
+        const value = (await tx.get(ref)).data();
+        if (!value || value.unsent) return value ? { id: messageId, ...value } : null;
+        tx.set(ref, patch, { merge: true }); return { id: messageId, ...value, ...patch };
+      });
+    },
     async reserveUpload(id, conversationId, size, at) {
       const channel = channels.doc(id), limits = channel.collection("limits").doc("uploads");
       await db.runTransaction(async tx => {
@@ -30,6 +46,7 @@ export function createStore(db) {
     },
     async saveAttachment(id, attachmentId, value) { await channels.doc(id).collection("attachments").doc(attachmentId).set(value); },
     async getAttachment(id, attachmentId) { return (await channels.doc(id).collection("attachments").doc(attachmentId).get()).data(); },
+    async getMessage(id, conversationId, messageId) { return (await channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId).get()).data(); },
     async claimProfile(id, conversationId, at) {
       const ref = channels.doc(id).collection("conversations").doc(conversationId);
       return db.runTransaction(async tx => {

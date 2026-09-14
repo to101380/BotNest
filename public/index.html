@@ -126,7 +126,7 @@
               <section class="conversation-panel" aria-label="對話列表">
                 <div class="conversation-toolbar"><div class="line-toolbar"><h2>所有對話 <span class="line-source">LINE</span></h2><button id="line-refresh" type="button" aria-label="重新整理對話">↻</button></div>
                 <p id="line-polling-note" class="note">每 10 秒更新。</p>
-                <details class="inbox-help"><summary>收件匣說明</summary><p class="note">此版本顯示接通後收到的訊息；LINE 內建自動回應及舊紀錄不會同步。圖片等訊息先顯示類型。</p></details></div>
+                <details class="inbox-help"><summary>收件匣說明</summary><p class="note">此版本顯示接通後收到的訊息；LINE 內建自動回應及舊紀錄不會同步。圖片會自動載入；其他尚未支援的附件顯示類型。</p></details></div>
                 <p id="line-empty" class="note">還沒有對話。完成 Webhook 驗證後，傳一則訊息給你的 OA。</p>
                 <div id="line-conversations"></div>
                 <button id="line-more-conversations" class="retry" type="button" hidden>載入更多對話</button>
@@ -166,4 +166,3 @@
   <footer>Google · Facebook <span aria-hidden="true">/</span> 一個簡單的登入起點</footer>
 </body>
 </html>
-

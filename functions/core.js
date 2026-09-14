@@ -77,6 +77,7 @@ export function createHandler({ store, verifyToken, getKey, media, fetchLine = f
         if (!validMediaSignature(path, params.get("expires"), params.get("signature"), getKey(), now())) throw new HttpError(403, "附件連結無效或已過期。");
         const attachment = await store.getAttachment(mediaRoute[1], mediaRoute[2]);
         if (!attachment || attachment.expiresAt <= now()) throw new HttpError(404, "附件已過期或不存在。");
+        if (attachment.messageId && (await store.getMessage(mediaRoute[1], attachment.conversationId, attachment.messageId))?.unsent) throw new HttpError(404, "訊息已收回。");
         res.set("Content-Type", attachment.mime);
         res.set("Content-Disposition", `${attachment.kind === "image" ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(attachment.name)}`);
         res.set("Content-Security-Policy", "default-src 'none'; sandbox");
@@ -164,7 +165,44 @@ export function createHandler({ store, verifyToken, getKey, media, fetchLine = f
         return res.json(page);
       }
       const messages = /^\/api\/line\/conversations\/([a-f0-9]{64})\/messages$/.exec(path);
-      if (messages && req.method === "GET") return res.json(await store.messages(account.channelId, messages[1], before));
+      if (messages && req.method === "GET") {
+        const page = await store.messages(account.channelId, messages[1], before);
+        if (account.accessToken && media) {
+          const pending = page.items.filter(item => item.type === "image" && item.direction === "incoming" && !item.unsent && !item.attachment && !(item.imageRetryAfter > now())).slice(0, 3);
+          for (const item of pending) {
+            if (!await store.claimIncomingImage(account.channelId, messages[1], item.id, now())) continue;
+            let patch;
+            try {
+              const token = unseal(account.accessToken, getKey(), `${account.channelId}:access-token`);
+              const response = await fetchLine(`https://api-data.line.me/v2/bot/message/${encodeURIComponent(item.id)}/content`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000) });
+              if (!response.ok) throw new HttpError(response.status, "LINE 圖片暫時無法取得");
+              const chunks = []; let size = 0;
+              for await (const chunk of response.body) {
+                size += chunk.length;
+                if (size > 10 * 1024 * 1024) throw new HttpError(413, "圖片超過 10 MB");
+                chunks.push(Buffer.from(chunk));
+              }
+              const bytes = Buffer.concat(chunks);
+              const png = bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+              const jpeg = bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+              if (!png && !jpeg) throw new HttpError(415, "圖片格式無法預覽");
+              const id = randomUUID(), expiresAt = now() + 30 * 86400000, name = `LINE-${item.id}.${png ? "png" : "jpg"}`;
+              const mediaPath = `/api/line/media/${account.channelId}/${id}`;
+              const url = `${MEDIA_ORIGIN}${mediaPath}?expires=${expiresAt}&signature=${mediaSignature(mediaPath, String(expiresAt), getKey())}`;
+              const attachment = { id, conversationId: messages[1], messageId: item.id, name, kind: "image", mime: png ? "image/png" : "image/jpeg", size, expiresAt, url, storagePath: `botnest/${account.channelId}/${id}` };
+              await media.save(attachment.storagePath, bytes, attachment.mime);
+              await store.saveAttachment(account.channelId, id, attachment);
+              patch = { attachment: { id, name, kind: "image", size, expiresAt, url }, imageNote: "", imageRetryAfter: 0 };
+            } catch (error) {
+              const permanent = [404, 410, 413, 415].includes(error.status);
+              patch = { imageNote: permanent ? "圖片已過期、過大或格式不支援，請對方重新傳送。" : "圖片暫時載入失敗，稍後會自動重試。", imageRetryAfter: now() + (permanent ? 86400000 : 60000) };
+            }
+            const updated = await store.finishIncomingImage(account.channelId, messages[1], item.id, patch);
+            if (updated) { for (const key of Object.keys(item)) delete item[key]; Object.assign(item, updated); }
+          }
+        }
+        return res.json(page);
+      }
       if (messages && req.method === "POST") {
         const origin = req.get("origin");
         if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站回覆。");
