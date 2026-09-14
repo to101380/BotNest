@@ -165,6 +165,15 @@ export function createLineInbox() {
       report(error);
     } finally { if (currentEpoch === epoch) { sending = false; replyControls(); showMessages(); } }
   }
+  let composingReply = false;
+  $("line-reply-text").addEventListener("compositionstart", () => { composingReply = true; });
+  $("line-reply-text").addEventListener("compositionend", () => { composingReply = false; });
+  $("line-reply-text").addEventListener("keydown", event => {
+    if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+    if (composingReply || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    if (!event.repeat) $("line-reply-form").requestSubmit();
+  });
   $("line-reply-text").addEventListener("input", () => { if (selected) drafts.set(selected, $("line-reply-text").value); });
   $("line-reply-form").addEventListener("submit", event => {
     event.preventDefault();
