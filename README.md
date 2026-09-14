@@ -1,8 +1,8 @@
 # Google + Meta 登入起始專案
 
-## LINE OA 收件匣（開發完成，待部署）
+## LINE OA 收件匣（已部署，待綁定 OA）
 
-已新增 OA 綁定、按帳號隔離的新訊息收件匣及 Webhook 接收端。正式啟用仍需 Firebase Blaze 與 OA 憑證設定，詳見 [LINE_SETUP.md](LINE_SETUP.md)。本機可執行 `node scripts/preview-inbox.mjs` 查看虛構資料示範。
+已部署 OA 綁定、按帳號隔離的新訊息收件匣及 Webhook 接收端。Firebase Blaze 已啟用；登入正式網站後，在「AI機器人」填入 OA 憑證，再設定 LINE Webhook，詳見 [LINE_SETUP.md](LINE_SETUP.md)。本機可執行 `node scripts/preview-inbox.mjs` 查看虛構資料示範。
 
 以下為既有登入功能文件；其中「沒有資料庫或受保護 API」描述的是先前已部署的登入版本，新的 LINE 後端與權限以 `LINE_SETUP.md` 為準。
 

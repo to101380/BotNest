@@ -8,8 +8,12 @@ import { createStore } from "./store.js";
 
 initializeApp();
 const encryptionKey = defineSecret("BOTNEST_ENCRYPTION_KEY");
+let handler;
 export const botnestApi = onRequest({
   region: "us-central1", maxInstances: 3, minInstances: 0, concurrency: 20,
   timeoutSeconds: 60, memory: "256MiB", cors: false, invoker: "public",
   secrets: [encryptionKey],
-}, createHandler({ store: createStore(getFirestore()), verifyToken: token => getAuth().verifyIdToken(token, true), getKey: () => encryptionKey.value() }));
+}, (req, res) => {
+  handler ||= createHandler({ store: createStore(getFirestore()), verifyToken: token => getAuth().verifyIdToken(token, true), getKey: () => encryptionKey.value() });
+  return handler(req, res);
+});

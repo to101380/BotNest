@@ -1,8 +1,8 @@
 # 安全處理狀態
 
-## 新增 LINE 功能（尚未部署）
+## 新增 LINE 功能（已部署，待真實 OA 驗證）
 
-新的 OA 收件匣已完成程式與測試，部署目前等待 Firebase Blaze。使用 `firestore.botnest.rules` 排除並保護新的 `botnest` 資料區；未修改正式規則。LINE Secret 加密保存，Access Token 驗證後不保存，API 按 Firebase UID 隔離 OA。詳見 [LINE_SETUP.md](LINE_SETUP.md)。以下為前一版登入系統的歷史安全紀錄。
+Blaze 已啟用；OA 收件匣、接收 API 與 `firestore.botnest.rules` 均已部署。新規則拒絕直接存取 `botnest` 資料區，保留區外既有規則與到期日。LINE Secret 加密保存，Access Token 驗證後不保存，API 按 Firebase UID 隔離 OA。29 項單元測試及 42 項官方規則模擬通過；正式健康檢查回 200，未登入資料請求回 401。尚未輸入 OA 憑證，真實訊息收發需在綁定後驗證。詳見 [LINE_SETUP.md](LINE_SETUP.md)。以下為前一版登入系統的歷史安全紀錄。
 
 更新：依使用者要求新增 Email／密碼供應商，保持匿名登入關閉。密碼政策在 Firebase 強制為 12～128 字元，Email 枚舉保護已啟用；使用者可註冊、登入、收驗證信及重設密碼。此流程不會自動部署尚待確認的 Firestore 規則，原先資料授權風險仍未關閉。
 

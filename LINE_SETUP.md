@@ -2,8 +2,11 @@
 
 ## 目前狀態
 
-已完成原始碼、單元測試與本機示範畫面；尚未部署這一版。
-Firebase `planning-with-ai-52d58` 目前未啟用計費，Cloud Functions 部署需要 Blaze。
+已完成原始碼、單元測試、本機示範與正式部署。
+Firebase `planning-with-ai-52d58` 已啟用 Blaze；BotNest 規則、`botnestApi` 與 Hosting 路由均已部署。
+正式 `/api/line/health` 回 200；未登入的 account/conversations 回 401；未綁定 OA 的 Webhook 回 404。
+`BOTNEST_ENCRYPTION_KEY` 已建立於 Secret Manager。建置映像設定保留 7 天。
+部署修正：資料庫物件延後到首個請求才建立，避免部署分析階段初始化逾時。
 沒有更改既有 LINE Webhook，也沒有輸入或儲存使用者的 LINE 憑證。
 
 ## 功能與範圍
@@ -46,7 +49,7 @@ node scripts/preview-inbox.mjs
 
 ## 正式啟用順序
 
-1. 專案擁有者在 Firebase 將 `planning-with-ai-52d58` 升級到 Blaze，確認按量計費。此專案沒有自動綁定付款方式。
+1. （已完成）專案擁有者已自行將 `planning-with-ai-52d58` 升級到 Blaze，採按量計費。
 2. 在 `functions` 執行 `npm ci`。使用管理員 CLI 初始化 Secret Manager 中的 `BOTNEST_ENCRYPTION_KEY`：32 個隨機 bytes 的 Base64 字串。值只透過標準輸入或 Secret Manager 提供，不能提交 Git 或放入 `public/`。若金鑰已存在，必須沿用；直接輪替會讓既有 Secret 無法解密。
 3. 重新讀取現行 Firestore 規則，確認沒有其他人修改；測試新規則，先部署 `firebase deploy --only firestore:rules --project planning-with-ai-52d58`。
 4. 部署 `firebase deploy --only functions:botnest,hosting --project planning-with-ai-52d58`。確認 API health 回 200、未登入的 account 回 401，然後才開始綁定。
@@ -54,7 +57,7 @@ node scripts/preview-inbox.mjs
 6. 備份 LINE Developers 的原 Webhook URL，再貼上網站產生的網址，開啟 Use webhook，按 Verify。Secret 是否正確會由這次簽章驗證確認。
 7. 從 LINE 傳送新訊息，確認網站收到；用第二個網站帳號確認無法讀取第一個 OA。測試收回訊息後文字移除。
 
-目前預期網址格式為 `https://planning-with-ai-52d58.web.app/line-webhook/{Channel ID}`。接收端部署前不要更改 LINE Webhook。
+網址格式為 `https://planning-with-ai-52d58.web.app/line-webhook/{Channel ID}`。接收端已部署；先在網站完成 OA 綁定，再使用網站產生的網址設定 LINE Webhook。
 若需要切回，使用備份的舊網址；切回後新訊息會回到原服務。
 
 參考：[LINE Webhook](https://developers.line.biz/en/docs/messaging-api/receiving-messages/)、[簽章驗證](https://developers.line.biz/en/docs/messaging-api/verify-webhook-signature/)、[Firebase 部署前提](https://firebase.google.com/docs/functions/get-started)。
