@@ -36,6 +36,8 @@ export function createLineInbox() {
   }
   function showConversationHeader() {
     const item = conversations.get(selected);
+    $("line-chat-empty").hidden = !!item;
+    $("line-chat-empty").parentElement.classList.toggle("has-conversation", !!item);
     $("line-conversation-title").textContent = item ? label(item) : "選擇一段對話";
     $("line-chat-avatar").replaceChildren(...(item ? [avatar(item)] : []));
     $("line-chat-source").textContent = item ? "來自 LINE" : "在左側選擇聊天者，開始回覆";
@@ -56,6 +58,7 @@ export function createLineInbox() {
     $("line-account").hidden = $("line-inbox").hidden = !channel;
     $("line-connect-form").hidden = !!channel;
     $("line-settings-toggle").setAttribute("aria-expanded", "false");
+    $("inbox-settings").open = !channel;
     replyControls();
     if (!channel) return;
     $("line-oa-name").textContent = `${channel.displayName} ${channel.basicId}`;

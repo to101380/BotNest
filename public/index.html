@@ -92,9 +92,10 @@
         </section>
         </div>
         <section id="ai-page" hidden aria-labelledby="ai-title">
-          <h1 id="ai-title" tabindex="-1">AI機器人</h1>
-          <p class="intro">串接你的 LINE 官方帳號，集中查看新對話。</p>
+          <div class="workspace-toolbar">
+          <h1 id="ai-title" tabindex="-1">訊息中心</h1>
           <p id="line-status" class="line-status" role="status" aria-live="polite"></p>
+          <details id="inbox-settings" class="workspace-settings"><summary>OA 連線設定</summary><div class="workspace-settings-content">
           <div id="line-account" hidden>
             <div class="line-account-heading"><h2 id="line-oa-name"></h2><span id="line-oa-state" class="state"></span></div>
             <details class="connection-details"><summary>連線設定</summary>
@@ -118,17 +119,20 @@
               <button class="email-primary" type="submit">驗證並連接 OA</button>
             </fieldset>
           </form>
+          </div></details>
+          </div>
           <section id="line-inbox" hidden aria-label="LINE 對話收件匣">
-            <div class="line-toolbar"><h2>對話收件匣</h2><button id="line-refresh" type="button">重新整理</button></div>
-            <p id="line-polling-note" class="note">每 10 秒更新。</p>
-            <p class="note">此版本顯示接通後收到的訊息；LINE 內建自動回應及舊紀錄不會同步。圖片等訊息先顯示類型。</p>
             <div class="inbox-grid">
               <section class="conversation-panel" aria-label="對話列表">
+                <div class="conversation-toolbar"><div class="line-toolbar"><h2>所有對話 <span class="line-source">LINE</span></h2><button id="line-refresh" type="button" aria-label="重新整理對話">↻</button></div>
+                <p id="line-polling-note" class="note">每 10 秒更新。</p>
+                <details class="inbox-help"><summary>收件匣說明</summary><p class="note">此版本顯示接通後收到的訊息；LINE 內建自動回應及舊紀錄不會同步。圖片等訊息先顯示類型。</p></details></div>
                 <p id="line-empty" class="note">還沒有對話。完成 Webhook 驗證後，傳一則訊息給你的 OA。</p>
                 <div id="line-conversations"></div>
                 <button id="line-more-conversations" class="retry" type="button" hidden>載入更多對話</button>
               </section>
               <section class="message-panel" aria-labelledby="line-conversation-title">
+                <div id="line-chat-empty" class="chat-empty"><span aria-hidden="true">☏</span><strong>選擇對話開始聊天</strong><p>從左側列表選擇一位聊天者</p></div>
                 <div class="chat-heading"><div id="line-chat-avatar"></div><div><h3 id="line-conversation-title">選擇一段對話</h3><p id="line-chat-source">在左側選擇聊天者，開始回覆</p></div></div>
                 <button id="line-more-messages" class="retry" type="button" hidden>載入更早訊息</button>
                 <div id="line-messages" aria-label="訊息內容"></div>
