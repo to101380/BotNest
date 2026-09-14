@@ -7,6 +7,14 @@ export function createLineInbox() {
   const drafts = new Map(), localReplies = new Map();
   const attachments = new Map();
   let sending = false, uploading = false;
+  let followLatest = true;
+  const messageArea = $("line-messages");
+  messageArea.addEventListener("scroll", () => {
+    followLatest = messageArea.scrollHeight - messageArea.clientHeight - messageArea.scrollTop < 40;
+  }, { passive: true });
+  const messageResize = new ResizeObserver(() => {
+    if (active && followLatest) messageArea.scrollTop = messageArea.scrollHeight;
+  });
   function replyControls() {
     const enabled = active && !!selected && !!channel?.canReply && !saving && !sending && !uploading;
     $("line-reply-text").disabled = $("line-send").disabled = !enabled;
@@ -89,7 +97,10 @@ export function createLineInbox() {
     $("line-more-conversations").hidden = !conversationNext;
     showConversationHeader();
   }
-  function showMessages() {
+  function showMessages(scrollMode = "auto") {
+    const previousTop = messageArea.scrollTop, previousHeight = messageArea.scrollHeight;
+    const scrollToLatest = scrollMode === "bottom" || (scrollMode === "auto" && followLatest);
+    messageResize.disconnect();
     $("line-messages").replaceChildren();
     for (const item of [...messages.values()].sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id))) {
       const bubble = document.createElement("article"), text = document.createElement("p"), time = document.createElement("time");
@@ -129,8 +140,12 @@ export function createLineInbox() {
       $("line-messages").append(bubble);
     }
     $("line-more-messages").hidden = !messageNext;
+    followLatest = scrollToLatest;
+    messageArea.scrollTop = scrollToLatest ? messageArea.scrollHeight : scrollMode === "older" ? previousTop + messageArea.scrollHeight - previousHeight : previousTop;
+    messageResize.observe(messageArea);
+    for (const bubble of messageArea.children) messageResize.observe(bubble);
   }
-  async function loadMessages(older = false) {
+  async function loadMessages(older = false, scrollMode = "auto") {
     const id = selected;
     if (!id) return;
     const data = await api(`conversations/${id}/messages${older && messageNext ? `?before=${encodeURIComponent(messageNext)}` : ""}`);
@@ -144,14 +159,15 @@ export function createLineInbox() {
       if (!messages.has(local.message.id)) messages.set(local.message.id, local.message);
       else if (["sent", "failed"].includes(messages.get(local.message.id).status)) localReplies.delete(operationId);
     }
-    messageNext = data.next; showMessages();
+    messageNext = data.next; showMessages(older ? "older" : scrollMode);
   }
   async function selectConversation(id) {
     selected = id; messages.clear(); messageNext = null;
+    historyMode(false);
     $("line-reply-text").value = drafts.get(id) || ""; replyControls();
     $("line-conversation-title").textContent = label(conversations.get(id));
     showConversations(); showMessages();
-    try { await loadMessages(); } catch (error) { report(error); }
+    try { await loadMessages(false, "bottom"); } catch (error) { report(error); }
   }
   async function refresh(more = false) {
     if (refreshing || !channel || !active || saving) return;
@@ -193,7 +209,7 @@ export function createLineInbox() {
     sending = true; replyControls(); showMessages();
     const initial = { id: `out-${operationId}`, operationId, text, ...(attachment ? { attachment } : {}), direction: "outgoing", type: attachment?.kind || "text", status: "pending", sentAt: localReplies.get(operationId)?.message.sentAt || messages.get(`out-${operationId}`)?.sentAt || Date.now() };
     localReplies.set(operationId, { conversationId, message: initial });
-    if (selected === conversationId) { messages.set(initial.id, initial); showMessages(); }
+    if (selected === conversationId) { historyMode(false); messages.set(initial.id, initial); showMessages("bottom"); }
     try {
       const data = await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId, attachmentId: attachment?.id || null }) });
       localReplies.set(operationId, { conversationId, message: data.message });
@@ -307,12 +323,13 @@ export function createLineInbox() {
     try { await navigator.clipboard.writeText($("line-webhook-url").value); status("已複製 Webhook URL。"); }
     catch { $("line-webhook-url").select(); status("請手動複製已選取的網址。"); }
   });
-  window.addEventListener("pagehide", () => { clearSecrets(); controller?.abort(); clearInterval(timer); });
+  window.addEventListener("pagehide", () => { clearSecrets(); controller?.abort(); clearInterval(timer); messageResize.disconnect(); });
   return {
     setSession(nextUser, visible) {
       const nextActive = !!nextUser && visible;
       if (user?.uid === nextUser?.uid && active === nextActive) { user = nextUser; return; }
       epoch++; controller?.abort(); clearInterval(timer); controller = new AbortController();
+      messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; channel = null; selected = null; refreshing = false; saving = false;
       sending = false; uploading = false; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
       $("line-emoji-panel").hidden = true; $("line-pick-emoji").setAttribute("aria-expanded", "false");
