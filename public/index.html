@@ -134,9 +134,19 @@
                 <div id="line-messages" aria-label="訊息內容"></div>
                 <form id="line-reply-form" class="reply-form">
                   <label for="line-reply-text">回覆這段對話</label>
-                  <textarea id="line-reply-text" rows="3" maxlength="5000" placeholder="輸入回覆內容…" required disabled></textarea>
+                  <div class="composer-tools" role="group" aria-label="附件與表情符號">
+                    <button id="line-pick-image" type="button" title="傳送圖片" aria-label="選取圖片" disabled>▧ <span>圖片</span></button>
+                    <button id="line-pick-file" type="button" title="傳送文件連結" aria-label="選取文件" disabled>📎 <span>文件</span></button>
+                    <button id="line-pick-emoji" type="button" aria-label="選取表情符號" aria-expanded="false" disabled>☺ <span>表情符號</span></button>
+                    <input id="line-image-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+                    <input id="line-file-input" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip" hidden>
+                  </div>
+                  <div id="line-emoji-panel" class="emoji-panel" role="group" aria-label="表情符號" hidden></div>
+                  <div id="line-attachment-preview" class="attachment-preview" hidden><span id="line-attachment-name"></span><button id="line-remove-attachment" type="button" aria-label="移除待傳附件">移除</button></div>
+                  <textarea id="line-reply-text" rows="3" maxlength="5000" placeholder="輸入回覆內容…" disabled></textarea>
                   <div class="reply-actions"><span id="line-reply-hint" class="note">先選擇一段對話。</span><button id="line-send" class="email-primary" type="submit" disabled>傳送回覆</button></div>
                   <p class="note">Enter 傳送，Shift＋Enter 換行。回覆會使用 OA 的 LINE 訊息額度。「已交給 LINE」不代表對方已收到或已讀。</p>
+                  <p class="note">圖片自動壓縮；文件上限 5 MB，以 30 天有效的下載連結傳送。</p>
                 </form>
               </section>
             </div>

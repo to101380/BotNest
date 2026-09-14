@@ -74,3 +74,9 @@ Firebase Authentication → Sign-in method 啟用 Google，填寫支援電子郵
 - https://firebase.google.com/docs/auth/web/facebook-login
 - https://firebase.google.com/docs/auth/web/account-linking
 - https://firebase.google.com/docs/auth/admin/verify-id-tokens
+
+### 圖片、文件與 Emoji
+
+輸入框旁可選取圖片、文件或 Emoji。附件上傳後仍需按「傳送回覆」或 Enter；可先移除，亦可附上文字。圖片在瀏覽器轉為 JPEG（最長邊 1600px、1 MB 以下，透明背景轉白），原檔限制 20 MB。文件支援 PDF、Office、TXT、CSV、ZIP，上限 5 MB；LINE 以文字下載連結接收文件。Emoji 插入文字游標處。
+
+附件使用專用私人 GCS bucket `planning-with-ai-52d58-botnest-media`，不開放 bucket 公開讀取。後端簽發 30 天有效的持有者連結（取得連結者即可讀取），31 天自動清理檔案。下載文件強制 attachment 與 sandbox。每 OA 每 24 小時限制 100 次上傳及 100 MB；失敗嘗試也計入預留額度。附件須屬於目前 OA 及對話；重試沿用已保存的 LINE 訊息內容和 retry key。LINE API 查閱：[支援的訊息](https://developers.line.biz/en/docs/messaging-api/sending-messages)、[圖片格式](https://developers.line.biz/en/reference/messaging-api/nojs/#image-message)。

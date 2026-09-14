@@ -5,10 +5,14 @@ export function createLineInbox() {
   let selected = null, conversationNext = null, messageNext = null, refreshing = false, saving = false, browsingHistory = false;
   const conversations = new Map(), messages = new Map();
   const drafts = new Map(), localReplies = new Map();
-  let sending = false;
+  const attachments = new Map();
+  let sending = false, uploading = false;
   function replyControls() {
-    const enabled = active && !!selected && !!channel?.canReply && !saving && !sending;
+    const enabled = active && !!selected && !!channel?.canReply && !saving && !sending && !uploading;
     $("line-reply-text").disabled = $("line-send").disabled = !enabled;
+    for (const id of ["line-pick-image", "line-pick-file", "line-pick-emoji", "line-remove-attachment"]) $(id).disabled = !enabled;
+    $("line-attachment-preview").hidden = !attachments.has(selected) && !uploading;
+    $("line-attachment-name").textContent = uploading ? "正在準備附件…" : attachments.has(selected) ? `${attachments.get(selected).kind === "image" ? "圖片" : "文件"}：${attachments.get(selected).name}（待傳送）` : "";
     $("line-send").textContent = sending ? "傳送中…" : "傳送回覆";
     $("line-reply-hint").textContent = !channel?.canReply ? "請更新上方 OA 連線憑證，啟用回覆。" : !selected ? "先選擇一段對話。" : "最多 5000 字";
   }
@@ -89,6 +93,20 @@ export function createLineInbox() {
       bubble.className = `message-bubble${item.unsent ? " unsent" : ""}${item.direction === "outgoing" ? " outgoing" : ""}`;
       text.textContent = item.text; time.textContent = formatTime(item.sentAt); time.dateTime = new Date(item.sentAt).toISOString();
       bubble.append(text, time);
+      if (item.attachment) {
+        const link = document.createElement("a");
+        const url = new URL(item.attachment.url, location.origin);
+        if (url.origin === "https://planning-with-ai-52d58.web.app" && url.pathname.startsWith("/api/line/media/")) {
+          link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer";
+          link.textContent = `📎 ${item.attachment.name}`; link.className = "message-attachment";
+          if (item.attachment.expiresAt <= Date.now()) { link.removeAttribute("href"); link.textContent += "（連結已過期）"; }
+          else if (item.attachment.kind === "image") {
+            const img = document.createElement("img"); img.src = url.href; img.alt = item.attachment.name; img.loading = "lazy";
+            img.addEventListener("error", () => img.remove(), { once: true }); link.prepend(img);
+          }
+          bubble.prepend(link);
+        }
+      }
       if (item.direction === "outgoing") {
         const delivery = document.createElement("p"); delivery.className = "delivery-state";
         delivery.textContent = ({ sent: "已交給 LINE", failed: "傳送失敗", uncertain: "結果待確認", pending: "傳送確認中" })[item.status] || "結果待確認";
@@ -97,7 +115,7 @@ export function createLineInbox() {
         if (["uncertain", "pending"].includes(item.status)) {
           const retry = document.createElement("button"); retry.type = "button"; retry.className = "retry";
           retry.textContent = "重試確認"; retry.disabled = sending || !channel?.canReply || Date.now() - item.sentAt >= 23 * 60 * 60 * 1000;
-          retry.addEventListener("click", () => void sendReply(selected, item.text, item.operationId)); bubble.append(retry);
+          retry.addEventListener("click", () => void sendReply(selected, item.text, item.operationId, item.attachment)); bubble.append(retry);
         }
         if (item.status !== "sent" && item.note) { const note = document.createElement("p"); note.className = "note"; note.textContent = item.note; bubble.append(note); }
       }
@@ -160,17 +178,17 @@ export function createLineInbox() {
       if (currentEpoch === epoch) timer = setInterval(() => { if (!document.hidden && !browsingHistory) void refresh(); }, 10000);
     } catch (error) { report(error); }
   }
-  async function sendReply(conversationId, text, operationId) {
-    if (sending || !active || !channel?.canReply || !conversationId || !text.trim()) return;
+  async function sendReply(conversationId, text, operationId, attachment) {
+    if (sending || !active || !channel?.canReply || !conversationId || (!text.trim() && !attachment)) return;
     const isRetry = !!operationId;
     operationId ||= crypto.randomUUID();
     const currentEpoch = epoch;
     sending = true; replyControls(); showMessages();
-    const initial = { id: `out-${operationId}`, operationId, text, direction: "outgoing", type: "text", status: "pending", sentAt: localReplies.get(operationId)?.message.sentAt || messages.get(`out-${operationId}`)?.sentAt || Date.now() };
+    const initial = { id: `out-${operationId}`, operationId, text, ...(attachment ? { attachment } : {}), direction: "outgoing", type: attachment?.kind || "text", status: "pending", sentAt: localReplies.get(operationId)?.message.sentAt || messages.get(`out-${operationId}`)?.sentAt || Date.now() };
     localReplies.set(operationId, { conversationId, message: initial });
     if (selected === conversationId) { messages.set(initial.id, initial); showMessages(); }
     try {
-      const data = await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId }) });
+      const data = await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId, attachmentId: attachment?.id || null }) });
       localReplies.set(operationId, { conversationId, message: data.message });
       if (selected === conversationId) { messages.set(data.message.id, data.message); showMessages(); }
       status(data.message.note || "傳送狀態已更新。", data.message.status !== "sent");
@@ -179,6 +197,7 @@ export function createLineInbox() {
       if (error.status && error.status < 500 && !isRetry) {
         localReplies.delete(operationId); messages.delete(initial.id);
         if (!drafts.get(conversationId)) { drafts.set(conversationId, text); if (selected === conversationId) $("line-reply-text").value = text; }
+        if (attachment && !attachments.has(conversationId)) attachments.set(conversationId, attachment);
       } else {
         const uncertain = { ...initial, status: "uncertain", note: "連線中斷，請用「重試確認」查看結果，避免另發同一則訊息。" };
         localReplies.set(operationId, { conversationId, message: uncertain });
@@ -186,6 +205,55 @@ export function createLineInbox() {
       }
       report(error);
     } finally { if (currentEpoch === epoch) { sending = false; replyControls(); showMessages(); } }
+  }
+  async function uploadFile(file, kind) {
+    if (!file || uploading || sending || !selected || !active || !channel?.canReply) return;
+    const conversationId = selected, currentEpoch = epoch;
+    uploading = true; replyControls();
+    try {
+      if (file.size > (kind === "image" ? 20 : 5) * 1024 * 1024) throw new Error(kind === "image" ? "原始圖片請小於 20 MB。" : "文件請小於 5 MB。");
+      let blob = file, name = file.name;
+      if (kind === "image") {
+        const bitmap = await createImageBitmap(file);
+        try {
+          const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+          const canvas = document.createElement("canvas"); canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+          const ctx = canvas.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+          for (const quality of [0.85, 0.65, 0.45]) {
+            blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", quality));
+            if (blob && blob.size <= 1024 * 1024) break;
+          }
+          if (!blob || blob.size > 1024 * 1024) throw new Error("圖片壓縮後仍太大，請選擇較小圖片。");
+          name = `${file.name.replace(/\.[^.]+$/, "").slice(0, 145)}.jpg`;
+        } finally { bitmap.close(); }
+      }
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      let binary = "";
+      for (let offset = 0; offset < bytes.length; offset += 32768) binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
+      if (currentEpoch !== epoch) return;
+      const data = await api(`conversations/${conversationId}/attachments`, { method: "POST", body: JSON.stringify({ name, kind, data: btoa(binary) }) });
+      attachments.set(conversationId, data.attachment);
+      status("附件已準備好，按傳送後才會送給對方。");
+    } catch (error) { if (currentEpoch === epoch) report(error); }
+    finally { if (currentEpoch === epoch) { uploading = false; replyControls(); } }
+  }
+  for (const kind of ["image", "file"]) {
+    $(`line-pick-${kind}`).addEventListener("click", () => $(`line-${kind}-input`).click());
+    $(`line-${kind}-input`).addEventListener("change", event => { const file = event.target.files[0]; event.target.value = ""; void uploadFile(file, kind); });
+  }
+  $("line-remove-attachment").addEventListener("click", () => { attachments.delete(selected); replyControls(); });
+  $("line-pick-emoji").addEventListener("click", () => {
+    $("line-emoji-panel").hidden = !$("line-emoji-panel").hidden;
+    $("line-pick-emoji").setAttribute("aria-expanded", String(!$("line-emoji-panel").hidden));
+  });
+  for (const emoji of ["😀", "😊", "😄", "🥰", "😍", "😂", "🥹", "😅", "🤔", "😢", "🙏", "👍", "👏", "🙌", "👌", "💪", "❤️", "💚", "🎉", "✨", "🔥", "✅", "📌", "☕"]) {
+    const button = document.createElement("button"); button.type = "button"; button.textContent = emoji; button.setAttribute("aria-label", `插入 ${emoji}`);
+    button.addEventListener("click", () => {
+      const input = $("line-reply-text"); if (input.disabled || input.value.length + emoji.length > 5000) return;
+      input.setRangeText(emoji, input.selectionStart, input.selectionEnd, "end"); drafts.set(selected, input.value); input.focus();
+      $("line-emoji-panel").hidden = true; $("line-pick-emoji").setAttribute("aria-expanded", "false");
+    });
+    $("line-emoji-panel").append(button);
   }
   let composingReply = false;
   $("line-reply-text").addEventListener("compositionstart", () => { composingReply = true; });
@@ -200,9 +268,11 @@ export function createLineInbox() {
   $("line-reply-form").addEventListener("submit", event => {
     event.preventDefault();
     const text = $("line-reply-text").value;
-    if (sending || !selected || !channel?.canReply || !text.trim() || text.length > 5000) return;
+    const attachment = attachments.get(selected);
+    if (sending || uploading || !selected || !channel?.canReply || (!text.trim() && !attachment) || text.length > 5000) return;
     drafts.delete(selected); $("line-reply-text").value = "";
-    void sendReply(selected, text);
+    attachments.delete(selected);
+    void sendReply(selected, text, undefined, attachment);
   });
   $("line-connect-form").addEventListener("submit", async event => {
     event.preventDefault();
@@ -237,7 +307,8 @@ export function createLineInbox() {
       if (user?.uid === nextUser?.uid && active === nextActive) { user = nextUser; return; }
       epoch++; controller?.abort(); clearInterval(timer); controller = new AbortController();
       user = nextUser; active = nextActive; channel = null; selected = null; refreshing = false; saving = false;
-      sending = false; drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
+      sending = false; uploading = false; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
+      $("line-emoji-panel").hidden = true; $("line-pick-emoji").setAttribute("aria-expanded", "false");
       conversationNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
       historyMode(false);
       $("line-oa-name").textContent = $("line-webhook-url").value = $("line-channel-id").value = "";

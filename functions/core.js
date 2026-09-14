@@ -1,4 +1,5 @@
-import { createHash, createHmac, timingSafeEqual, randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual, randomBytes, randomUUID, createCipheriv, createDecipheriv } from "node:crypto";
+import { MEDIA_ORIGIN, mediaSignature, validMediaSignature, validateUpload } from "./media.js";
 
 export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -46,7 +47,7 @@ export function normalizeEvent(event) {
   };
 }
 
-export function createHandler({ store, verifyToken, getKey, fetchLine = fetch, now = Date.now }) {
+export function createHandler({ store, verifyToken, getKey, media, fetchLine = fetch, now = Date.now }) {
   async function lineRequest(path, options) {
     const response = await fetchLine(`https://api.line.me${path}`, { ...options, signal: AbortSignal.timeout(12000) });
     if (!response.ok) throw new HttpError(response.status >= 500 || response.status === 429 ? 503 : 400, "LINE 憑證驗證失敗，請確認 Channel ID 與長期 Access Token。");
@@ -70,6 +71,17 @@ export function createHandler({ store, verifyToken, getKey, fetchLine = fetch, n
     res.set("X-Content-Type-Options", "nosniff");
     try {
       const path = new URL(req.originalUrl || req.url, "https://botnest.invalid").pathname;
+      const mediaRoute = /^\/api\/line\/media\/(\d{5,20})\/([a-f0-9-]{36})$/.exec(path);
+      if (mediaRoute && ["GET", "HEAD"].includes(req.method)) {
+        const params = new URL(req.originalUrl || req.url, MEDIA_ORIGIN).searchParams;
+        if (!validMediaSignature(path, params.get("expires"), params.get("signature"), getKey(), now())) throw new HttpError(403, "附件連結無效或已過期。");
+        const attachment = await store.getAttachment(mediaRoute[1], mediaRoute[2]);
+        if (!attachment || attachment.expiresAt <= now()) throw new HttpError(404, "附件已過期或不存在。");
+        res.set("Content-Type", attachment.mime);
+        res.set("Content-Disposition", `${attachment.kind === "image" ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(attachment.name)}`);
+        res.set("Content-Security-Policy", "default-src 'none'; sandbox");
+        return res.status(200).send(req.method === "HEAD" ? "" : await media.read(attachment.storagePath));
+      }
       const webhook = /^\/line-webhook\/(\d{5,20})$/.exec(path);
       if (webhook) {
         if (req.method !== "POST") throw new HttpError(405, "請由 LINE 傳送 POST Webhook。");
@@ -115,6 +127,21 @@ export function createHandler({ store, verifyToken, getKey, fetchLine = fetch, n
       const query = new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
       const before = query.get("before");
       if (before && !/^[a-zA-Z0-9_-]{1,128}$/.test(before)) throw new HttpError(400, "分頁參數無效。");
+      const upload = /^\/api\/line\/conversations\/([a-f0-9]{64})\/attachments$/.exec(path);
+      if (upload && req.method === "POST") {
+        const origin = req.get("origin");
+        if (origin && ![MEDIA_ORIGIN, "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站上傳。");
+        if (!account.accessToken) throw new HttpError(409, "請先更新 OA 連線憑證。");
+        const file = validateUpload(req.body);
+        await store.reserveUpload(account.channelId, upload[1], file.size, now());
+        const id = randomUUID(), expiresAt = now() + 30 * 86400000;
+        const mediaPath = `/api/line/media/${account.channelId}/${id}`;
+        const url = `${MEDIA_ORIGIN}${mediaPath}?expires=${expiresAt}&signature=${mediaSignature(mediaPath, String(expiresAt), getKey())}`;
+        const attachment = { id, conversationId: upload[1], name: file.name, kind: file.kind, mime: file.mime, size: file.size, expiresAt, url, storagePath: `botnest/${account.channelId}/${id}` };
+        await media.save(attachment.storagePath, file.bytes, file.mime);
+        await store.saveAttachment(account.channelId, id, attachment);
+        return res.json({ attachment: { id, name: file.name, kind: file.kind, size: file.size, url, expiresAt } });
+      }
       if (path === "/api/line/conversations" && req.method === "GET") {
         const page = await store.conversations(account.channelId, before);
         if (account.accessToken) await Promise.all(page.items.map(async item => {
@@ -141,17 +168,17 @@ export function createHandler({ store, verifyToken, getKey, fetchLine = fetch, n
       if (messages && req.method === "POST") {
         const origin = req.get("origin");
         if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站回覆。");
-        const { text, operationId } = req.body || {};
-        if (typeof text !== "string" || !text.trim() || text.length > 5000 || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(operationId || "")) throw new HttpError(400, "請輸入 1～5000 字的回覆。");
+        const { text = "", operationId, attachmentId = null } = req.body || {};
+        if (typeof text !== "string" || (!attachmentId && !text.trim()) || text.length > 5000 || (attachmentId && !/^[a-f0-9-]{36}$/.test(attachmentId)) || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(operationId || "")) throw new HttpError(400, "請輸入 1～5000 字的回覆或選取附件。");
         if (!account.accessToken) throw new HttpError(409, "請先更新 OA 連線憑證，啟用網頁回覆。");
         const token = unseal(account.accessToken, getKey(), `${account.channelId}:access-token`);
-        const operation = await store.prepareReply(account.channelId, messages[1], operationId, text, now());
+        const operation = await store.prepareReply(account.channelId, messages[1], operationId, text, now(), attachmentId);
         if (!operation.claimed) return res.status(["sent", "failed"].includes(operation.status) ? 200 : 202).json({ message: operation.message });
         let state = "uncertain", note = "傳送結果尚未確認，請用這則訊息的重試按鈕確認，避免另發一則。";
         try {
           const response = await fetchLine("https://api.line.me/v2/bot/message/push", {
             method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-Line-Retry-Key": operation.retryKey },
-            body: JSON.stringify({ to: operation.to, messages: [{ type: "text", text: operation.text }] }), signal: AbortSignal.timeout(12000),
+            body: JSON.stringify({ to: operation.to, messages: operation.lineMessages || [{ type: "text", text: operation.text }] }), signal: AbortSignal.timeout(12000),
           });
           if (response.ok || (response.status === 409 && response.headers.get("x-line-accepted-request-id"))) { state = "sent"; note = "已交給 LINE，這不代表對方已收到或已讀。"; }
           else if (response.status >= 400 && response.status < 500 && response.status !== 409) {

@@ -4,6 +4,7 @@ import { randomBytes, createHmac, randomUUID } from "node:crypto";
 import { createHandler, seal, unseal, validSignature, normalizeEvent } from "../core.js";
 import { createStore } from "../store.js";
 import { memoryDb } from "./memory.js";
+import { validateUpload } from "../media.js";
 
 const key = randomBytes(32).toString("base64"), secret = "a".repeat(32), botId = `U${"b".repeat(32)}`;
 const event = (id = "1", timestamp = 1000) => ({ type: "message", webhookEventId: `event-${id}`, timestamp, source: { type: "user", userId: `U${"c".repeat(32)}` }, message: { id, type: "text", text: `message ${id}` } });
@@ -16,7 +17,7 @@ async function fixture(overrides = {}) {
     verifyToken: async token => { if (!["alice", "bob"].includes(token)) throw new Error("invalid"); return { uid: token, auth_time: 1000, firebase: { sign_in_provider: "google.com" } }; }, ...overrides });
   async function request(url, { token = "alice", method = "GET", body, raw, headers = {} } = {}) {
     const allHeaders = { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers };
-    const res = { code: 200, headers: {}, set(k, v) { this.headers[k] = v; return this; }, status(code) { this.code = code; return this; }, json(value) { this.body = value; return this; } };
+    const res = { code: 200, headers: {}, set(k, v) { this.headers[k] = v; return this; }, status(code) { this.code = code; return this; }, json(value) { this.body = value; return this; }, send(value) { this.body = value; return this; } };
     await handler({ originalUrl: url, method, body, rawBody: raw, get: name => allHeaders[name.toLowerCase()] }, res);
     return res;
   }
@@ -261,4 +262,70 @@ test("untrusted image hosts are rejected and concurrent lookups share a lease", 
   await Promise.all([f.request("/api/line/conversations"), f.request("/api/line/conversations")]);
   assert.equal(calls, 1);
   assert.equal((await f.request("/api/line/conversations")).body.items[0].pictureUrl, "");
+});
+
+test("image uploads use scoped storage and expiring links; retries preserve image payload", async () => {
+  let clock = 1800000000000, calls = 0;
+  const objects = new Map(), sent = [];
+  const f = await fixture({ now: () => clock, media: { save: async (path, bytes) => objects.set(path, bytes), read: async path => objects.get(path) }, fetchLine: async (url, options) => {
+    sent.push(JSON.parse(options.body)); calls++;
+    return calls === 1 ? { ok: false, status: 500 } : { ok: true, status: 200 };
+  } });
+  await f.webhook([event()]);
+  const id = (await f.store.conversations("1234567890")).items[0].id;
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY9sAAAAASUVORK5CYII=';
+  const uploaded = await f.request(`/api/line/conversations/${id}/attachments`, { method: 'POST', body: { kind: 'image', name: 'photo.png', data: png } });
+  assert.equal(uploaded.code, 200);
+  assert.equal(objects.size, 1);
+  const attachment = uploaded.body.attachment;
+  const publicPath = attachment.url.replace('https://planning-with-ai-52d58.web.app', '');
+  const downloaded = await f.request(publicPath, { token: null });
+  assert.equal(downloaded.code, 200); assert.equal(downloaded.body.toString('base64'), png);
+  assert.equal(downloaded.headers['Content-Type'], 'image/png');
+  assert.equal((await f.request(publicPath.replace('signature=', 'signature=0'), { token: null })).code, 403);
+  const body = { text: '😊 照片給你', attachmentId: attachment.id, operationId: randomUUID() };
+  const first = await f.request(`/api/line/conversations/${id}/messages`, { method: 'POST', body });
+  assert.equal(first.body.message.status, 'uncertain');
+  clock += 21000;
+  const retry = await f.request(`/api/line/conversations/${id}/messages`, { method: 'POST', body });
+  assert.equal(retry.body.message.status, 'sent');
+  assert.deepEqual(sent[0], sent[1]);
+  assert.equal(sent[0].messages[0].type, 'image');
+  assert.equal(sent[0].messages[0].previewImageUrl, attachment.url);
+  assert.equal(sent[0].messages[1].text, body.text);
+  clock = attachment.expiresAt + 1;
+  assert.equal((await f.request(publicPath, { token: null })).code, 403);
+});
+test("documents send download links and cannot be attached to another conversation or tenant", async () => {
+  let payload;
+  const f = await fixture({ now: () => 1800000000000, media: { save: async () => {}, read: async () => Buffer.from('file') }, fetchLine: async (url, options) => { payload = JSON.parse(options.body); return { ok: true }; } });
+  await f.webhook([event()]);
+  const id = (await f.store.conversations('1234567890')).items[0].id;
+  const uploaded = await f.request(`/api/line/conversations/${id}/attachments`, { method:'POST', body:{kind:'file',name:'說明.txt',data:Buffer.from('demo').toString('base64')} });
+  const attachment = uploaded.body.attachment;
+  const body = {text:'',attachmentId:attachment.id,operationId:randomUUID()};
+  assert.equal((await f.request(`/api/line/conversations/${id}/messages`,{method:'POST',body,token:'bob'})).code,404);
+  await f.webhook([{...event('2',2000),source:{type:'user',userId:`U${'d'.repeat(32)}`}}]);
+  const other = (await f.store.conversations('1234567890')).items.find(item=>item.id!==id).id;
+  assert.equal((await f.request(`/api/line/conversations/${other}/messages`,{method:'POST',body})).code,400);
+  assert.equal((await f.request(`/api/line/conversations/${id}/messages`,{method:'POST',body})).code,200);
+  assert.equal(payload.messages[0].type,'text'); assert.ok(payload.messages[0].text.includes(attachment.url));
+  const downloaded = await f.request(attachment.url,{token:null});
+  assert.match(downloaded.headers['Content-Disposition'],/^attachment;/);
+  assert.equal(downloaded.headers['Content-Security-Policy'],"default-src 'none'; sandbox");
+  assert.equal((await f.request(`/api/line/conversations/${id}/messages`,{method:'POST',body:{...body,attachmentId:randomUUID()}})).code,409);
+});
+test("upload validation rejects active files, forged images, oversized data and anonymous access", async () => {
+  for (const value of [
+    {kind:'file',name:'page.html',data:'YWJj'}, {kind:'image',name:'fake.png',data:'YWJj'},
+    {kind:'file',name:'../file.pdf',data:'YWJj'}, {kind:'file',name:'empty.txt',data:''},
+    {kind:'file',name:'big.pdf',data:Buffer.alloc(5*1024*1024+1).toString('base64')},
+  ]) assert.throws(()=>validateUpload(value));
+  const f = await fixture();
+  const result = await f.request(`/api/line/conversations/${'a'.repeat(64)}/attachments`,{token:null,method:'POST',body:{}});
+  assert.equal(result.code,401);
+  await f.webhook([event()]);
+  const id = (await f.store.conversations('1234567890')).items[0].id;
+  for (let i=0;i<20;i++) await f.store.reserveUpload('1234567890',id,5*1024*1024,1000000);
+  await assert.rejects(f.store.reserveUpload('1234567890',id,1,1000000),error=>error.status===429);
 });

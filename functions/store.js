@@ -17,6 +17,19 @@ export function createStore(db) {
     return { items: result.slice(0, limit), next: result.length > limit ? result[limit - 1].id : null };
   }
   return {
+    async reserveUpload(id, conversationId, size, at) {
+      const channel = channels.doc(id), limits = channel.collection("limits").doc("uploads");
+      await db.runTransaction(async tx => {
+        const [conversation, old] = await tx.getAll(channel.collection("conversations").doc(conversationId), limits);
+        if (!conversation.exists) throw new HttpError(404, "找不到這段對話。");
+        const prior = old.data(), sameDay = prior && at - prior.since < 86400000;
+        const bytes = (sameDay ? prior.bytes : 0) + size, count = (sameDay ? prior.count : 0) + 1;
+        if (bytes > 100 * 1024 * 1024 || count > 100) throw new HttpError(429, "今日附件上傳額度已達上限，請明天再試。");
+        tx.set(limits, { since: sameDay ? prior.since : at, bytes, count });
+      });
+    },
+    async saveAttachment(id, attachmentId, value) { await channels.doc(id).collection("attachments").doc(attachmentId).set(value); },
+    async getAttachment(id, attachmentId) { return (await channels.doc(id).collection("attachments").doc(attachmentId).get()).data(); },
     async claimProfile(id, conversationId, at) {
       const ref = channels.doc(id).collection("conversations").doc(conversationId);
       return db.runTransaction(async tx => {
@@ -29,7 +42,7 @@ export function createStore(db) {
     async saveProfile(id, conversationId, profile) {
       await channels.doc(id).collection("conversations").doc(conversationId).set(profile, { merge: true });
     },
-    async prepareReply(id, conversationId, operationId, text, at) {
+    async prepareReply(id, conversationId, operationId, text, at, attachmentId = null) {
       const channel = channels.doc(id), conversation = channel.collection("conversations").doc(conversationId);
       const outbox = channel.collection("outbox").doc(operationId);
       const messageRef = conversation.collection("messages").doc(`out-${operationId}`);
@@ -39,14 +52,23 @@ export function createStore(db) {
         const [old, target, limits] = await tx.getAll(outbox, conversation, limitRef);
         if (!target.exists) throw new HttpError(404, "找不到這段對話。");
         const previous = old.data();
-        if (previous && (previous.conversationId !== conversationId || previous.text !== text)) throw new HttpError(409, "不可用同一筆傳送編號更改內容或收件對象。");
+        if (previous && (previous.conversationId !== conversationId || previous.text !== text || (previous.attachmentId || null) !== attachmentId)) throw new HttpError(409, "不可用同一筆傳送編號更改內容或收件對象。");
         if (previous && ["sent", "failed"].includes(previous.status)) { result = { ...previous, claimed: false }; return; }
         if (previous && at - previous.createdAt >= 23 * 60 * 60 * 1000) throw new HttpError(409, "這則訊息已超過安全重試期限，請先到 LINE 確認傳送結果。");
         if (previous?.leaseUntil > at) { result = { ...previous, claimed: false }; return; }
         const rate = limits.data(), active = rate && at - rate.since < 60000;
         if (active && rate.count >= 20) throw new HttpError(429, "傳送頻率過高，請一分鐘後再試。");
-        const message = { id: `out-${operationId}`, operationId, direction: "outgoing", type: "text", text, sentAt: previous?.createdAt ?? at, status: "pending", note: "正在確認傳送結果", unsent: false };
-        const operation = { conversationId, text, to: target.data().sourceId, retryKey: previous?.retryKey ?? randomUUID(), createdAt: previous?.createdAt ?? at, leaseUntil: at + 20000, status: "pending", message };
+        let attachment;
+        if (attachmentId) {
+          const stored = (await tx.get(channel.collection("attachments").doc(attachmentId))).data();
+          if (!stored || stored.conversationId !== conversationId || stored.expiresAt <= at + 86400000) throw new HttpError(400, "附件無效、已過期或不屬於這段對話，請重新上傳。");
+          attachment = { id: attachmentId, name: stored.name, kind: stored.kind, url: stored.url, size: stored.size, expiresAt: stored.expiresAt };
+        }
+        const lineMessages = [];
+        if (attachment) lineMessages.push(attachment.kind === "image" ? { type: "image", originalContentUrl: attachment.url, previewImageUrl: attachment.url } : { type: "text", text: `📎 ${attachment.name}\n${attachment.url}\n（下載連結 30 天內有效）` });
+        if (text.trim()) lineMessages.push({ type: "text", text });
+        const message = { id: `out-${operationId}`, operationId, direction: "outgoing", type: attachment?.kind || "text", text, ...(attachment ? { attachment } : {}), sentAt: previous?.createdAt ?? at, status: "pending", note: "正在確認傳送結果", unsent: false };
+        const operation = { conversationId, text, attachmentId, lineMessages: previous?.lineMessages || lineMessages, to: target.data().sourceId, retryKey: previous?.retryKey ?? randomUUID(), createdAt: previous?.createdAt ?? at, leaseUntil: at + 20000, status: "pending", message };
         tx.set(outbox, operation); tx.set(messageRef, message);
         tx.set(limitRef, { since: active ? rate.since : at, count: active ? rate.count + 1 : 1 });
         result = { ...operation, claimed: true, retried: !!previous };
@@ -66,7 +88,7 @@ export function createStore(db) {
         message = { ...operation.message, status, note };
         tx.set(outbox, { status, message, leaseUntil: 0 }, { merge: true });
         tx.set(conversation.collection("messages").doc(message.id), message);
-        if (status === "sent" && (!summary || message.sentAt >= summary.updatedAt)) tx.set(conversation, { lastText: `你：${message.text}`, lastMessageId: message.id, updatedAt: message.sentAt }, { merge: true });
+        if (status === "sent" && (!summary || message.sentAt >= summary.updatedAt)) tx.set(conversation, { lastText: `你：${message.attachment ? `[${message.type === "image" ? "圖片" : "文件"}] ${message.attachment.name} ` : ""}${message.text}`, lastMessageId: message.id, updatedAt: message.sentAt }, { merge: true });
       });
       return message;
     },

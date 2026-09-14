@@ -13,7 +13,9 @@ await store.bind("preview", { channelId: "1234567890", ownerUid: "preview", botU
 for (const [i, text] of ["你好，我想了解服務內容。", "可以告訴我目前的營業時間嗎？", "謝謝！我晚點再和你聯絡。"].entries()) {
   await store.ingest("1234567890", normalizeEvent({ type: "message", webhookEventId: `demo-${i}`, timestamp: Date.now() - (3 - i) * 60000, source: { type: "user", userId: `U${"b".repeat(32)}` }, message: { type: "text", id: String(i), text } }));
 }
+const previewMedia = new Map();
 const handler = createHandler({ store, getKey: () => key,
+  media: { save: async (path, bytes) => previewMedia.set(path, bytes), read: async path => previewMedia.get(path) },
   verifyToken: async token => { if (token !== "preview-token") throw new Error("Invalid preview token"); return { uid: "preview", auth_time: 0, firebase: { sign_in_provider: "google.com" } }; },
   fetchLine: async url => {
     if (url.includes("/v2/bot/profile/")) return { ok: true, status: 200, json: async () => ({ displayName: "小林（示範）" }) };
@@ -47,6 +49,7 @@ http.createServer(async (req, res) => {
       res.set = (k, v) => { res.setHeader(k, v); return res; };
       res.status = code => { res.statusCode = code; return res; };
       res.json = data => { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(data)); };
+      res.send = data => res.end(data);
       return await handler(req, res);
     }
     if (req.url === "/__preview.js") { res.setHeader("Content-Type", types[".js"]); return res.end(previewScript); }
