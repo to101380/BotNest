@@ -224,3 +224,41 @@ test("unsupported event data cannot inject document paths; attachments are typed
   const picture = event(); picture.message.type = "image";
   assert.equal(normalizeEvent(picture).text, "[圖片]");
 });
+
+test("profile lookup is owner scoped, cached and preserved by incoming messages", async () => {
+  let calls = 0;
+  const f = await fixture({ fetchLine: async (url, options) => {
+    calls++;
+    assert.match(url, /\/v2\/bot\/profile\/U[c]{32}$/);
+    assert.equal(options.headers.Authorization, "Bearer test-access-token");
+    return { ok: true, json: async () => ({ displayName: "小林", pictureUrl: "https://profile.line-scdn.net/example", statusMessage: "private extra field" }) };
+  } });
+  await f.webhook([event()]);
+  assert.equal((await f.request("/api/line/conversations", { token: "bob" })).body.items.length, 0);
+  assert.equal(calls, 0);
+  const first = await f.request("/api/line/conversations");
+  assert.equal(first.body.items[0].displayName, "小林");
+  assert.equal(first.body.items[0].pictureUrl, "https://profile.line-scdn.net/example");
+  assert.equal(first.body.items[0].statusMessage, undefined);
+  await f.webhook([event("2", 2000)]);
+  const second = await f.request("/api/line/conversations");
+  assert.equal(second.body.items[0].displayName, "小林");
+  assert.equal(second.body.items[0].lastText, "message 2");
+  assert.equal(calls, 1);
+});
+test("unavailable profiles do not block inbox and failures are cached", async () => {
+  let calls = 0;
+  const f = await fixture({ fetchLine: async () => { calls++; throw new Error("unavailable"); } });
+  await f.webhook([event()]);
+  assert.equal((await f.request("/api/line/conversations")).code, 200);
+  assert.equal((await f.request("/api/line/conversations")).body.items[0].lastText, "message 1");
+  assert.equal(calls, 1);
+});
+test("untrusted image hosts are rejected and concurrent lookups share a lease", async () => {
+  let calls = 0;
+  const f = await fixture({ fetchLine: async () => { calls++; return { ok: true, json: async () => ({ displayName: "Test", pictureUrl: "https://example.com/tracker" }) }; } });
+  await f.webhook([event()]);
+  await Promise.all([f.request("/api/line/conversations"), f.request("/api/line/conversations")]);
+  assert.equal(calls, 1);
+  assert.equal((await f.request("/api/line/conversations")).body.items[0].pictureUrl, "");
+});

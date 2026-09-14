@@ -17,6 +17,18 @@ export function createStore(db) {
     return { items: result.slice(0, limit), next: result.length > limit ? result[limit - 1].id : null };
   }
   return {
+    async claimProfile(id, conversationId, at) {
+      const ref = channels.doc(id).collection("conversations").doc(conversationId);
+      return db.runTransaction(async tx => {
+        const value = (await tx.get(ref)).data();
+        if (!value || value.profileRefreshAfter > at) return false;
+        tx.set(ref, { profileRefreshAfter: at + 60000 }, { merge: true });
+        return true;
+      });
+    },
+    async saveProfile(id, conversationId, profile) {
+      await channels.doc(id).collection("conversations").doc(conversationId).set(profile, { merge: true });
+    },
     async prepareReply(id, conversationId, operationId, text, at) {
       const channel = channels.doc(id), conversation = channel.collection("conversations").doc(conversationId);
       const outbox = channel.collection("outbox").doc(operationId);
@@ -103,7 +115,7 @@ export function createStore(db) {
           if (summary?.lastMessageId === event.messageId) tx.update(conversation, { lastText: "[訊息已收回]" });
         } else if (!old?.unsent) {
           tx.set(message, { type: event.type, text: event.text, sentAt: event.sentAt, unsent: false, direction: "incoming" });
-          if (!summary || event.sentAt >= summary.updatedAt) tx.set(conversation, { sourceType: event.sourceType, sourceId: event.sourceId, lastText: event.text, lastMessageId: event.messageId, updatedAt: event.sentAt });
+          if (!summary || event.sentAt >= summary.updatedAt) tx.set(conversation, { sourceType: event.sourceType, sourceId: event.sourceId, lastText: event.text, lastMessageId: event.messageId, updatedAt: event.sentAt }, { merge: true });
         }
         tx.set(receipt, { receivedAt: Date.now() });
       });

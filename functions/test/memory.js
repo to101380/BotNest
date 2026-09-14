@@ -26,11 +26,12 @@ export function memoryDb() {
     runTransaction(fn) {
       const job = queue.then(async () => {
         const writes = [];
-        await fn({ get: async r => snap(r.path), getAll: async (...refs) => refs.map(r => snap(r.path)),
+        const result = await fn({ get: async r => snap(r.path), getAll: async (...refs) => refs.map(r => snap(r.path)),
           set: (r, value, options) => writes.push(() => data.set(r.path, options?.merge ? { ...data.get(r.path), ...structuredClone(value) } : structuredClone(value))),
           update: (r, value) => writes.push(() => data.set(r.path, { ...data.get(r.path), ...structuredClone(value) })),
         });
         for (const write of writes) write();
+        return result;
       });
       queue = job.catch(() => {}); return job;
     },

@@ -115,7 +115,27 @@ export function createHandler({ store, verifyToken, getKey, fetchLine = fetch, n
       const query = new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
       const before = query.get("before");
       if (before && !/^[a-zA-Z0-9_-]{1,128}$/.test(before)) throw new HttpError(400, "分頁參數無效。");
-      if (path === "/api/line/conversations" && req.method === "GET") return res.json(await store.conversations(account.channelId, before));
+      if (path === "/api/line/conversations" && req.method === "GET") {
+        const page = await store.conversations(account.channelId, before);
+        if (account.accessToken) await Promise.all(page.items.map(async item => {
+          if (!["user", "group"].includes(item.sourceType) || item.profileRefreshAfter > now()) return;
+          if (!await store.claimProfile(account.channelId, item.id, now())) return;
+          let profile = { profileRefreshAfter: now() + 3600000 };
+          try {
+            const token = unseal(account.accessToken, getKey(), `${account.channelId}:access-token`);
+            const endpoint = item.sourceType === "user" ? `/v2/bot/profile/${encodeURIComponent(item.sourceId)}` : `/v2/bot/group/${encodeURIComponent(item.sourceId)}/summary`;
+            const response = await fetchLine(`https://api.line.me${endpoint}`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(4000) });
+            if (response.ok) {
+              const data = await response.json();
+              const pictureUrl = typeof data.pictureUrl === "string" && /^https:\/\/[^/]+\.line-scdn\.net\//i.test(data.pictureUrl) ? data.pictureUrl.slice(0, 2048) : "";
+              profile = { displayName: String(data.displayName || data.groupName || "").slice(0, 100), pictureUrl, profileRefreshAfter: now() + 86400000 };
+            } else if (response.status === 404) profile = { ...profile, displayName: "", pictureUrl: "" };
+          } catch { /* Profile lookup must not prevent reading conversations. */ }
+          await store.saveProfile(account.channelId, item.id, profile);
+          Object.assign(item, profile);
+        }));
+        return res.json(page);
+      }
       const messages = /^\/api\/line\/conversations\/([a-f0-9]{64})\/messages$/.exec(path);
       if (messages && req.method === "GET") return res.json(await store.messages(account.channelId, messages[1], before));
       if (messages && req.method === "POST") {

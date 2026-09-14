@@ -18,7 +18,24 @@ export function createLineInbox() {
     browsingHistory = value;
     $("line-polling-note").textContent = value ? "正在瀏覽較早紀錄，自動更新已暫停；按「重新整理」回到最新訊息。" : "每 10 秒更新。";
   }
-  const label = item => `${({ user: "使用者", group: "群組", room: "聊天室" })[item.sourceType] || "對話"} · ${item.sourceId.slice(-8)}`;
+  const label = item => item.displayName || `${({ user: "使用者", group: "群組", room: "聊天室" })[item.sourceType] || "對話"} · ${item.sourceId.slice(-8)}`;
+  function avatar(item) {
+    const frame = document.createElement("span"); frame.className = "chat-avatar";
+    frame.textContent = item.displayName ? [...item.displayName][0] : "人";
+    frame.setAttribute("aria-hidden", "true");
+    if (item.pictureUrl && /^https:\/\/[^/]+\.line-scdn\.net\//i.test(item.pictureUrl)) {
+      const image = document.createElement("img"); image.alt = ""; image.src = item.pictureUrl;
+      image.loading = "lazy"; image.referrerPolicy = "no-referrer";
+      image.addEventListener("error", () => image.remove(), { once: true }); frame.append(image);
+    }
+    return frame;
+  }
+  function showConversationHeader() {
+    const item = conversations.get(selected);
+    $("line-conversation-title").textContent = item ? label(item) : "選擇一段對話";
+    $("line-chat-avatar").replaceChildren(...(item ? [avatar(item)] : []));
+    $("line-chat-source").textContent = item ? "來自 LINE" : "在左側選擇聊天者，開始回覆";
+  }
   async function api(path, options = {}) {
     const currentEpoch = epoch, currentUser = user, signal = controller.signal;
     if (!active || !currentUser) throw new DOMException("Inactive", "AbortError");
@@ -54,11 +71,16 @@ export function createLineInbox() {
       const name = document.createElement("strong"), preview = document.createElement("span"), time = document.createElement("time");
       name.textContent = label(item); preview.textContent = item.lastText;
       time.dateTime = new Date(item.updatedAt).toISOString(); time.textContent = formatTime(item.updatedAt);
-      button.append(name, preview, time);
+      const details = document.createElement("span"); details.className = "conversation-details";
+      preview.className = "conversation-preview";
+      const source = document.createElement("span"); source.className = "line-source"; source.textContent = "LINE";
+      const meta = document.createElement("span"); meta.className = "conversation-meta"; meta.append(source, time);
+      details.append(name, preview, meta); button.append(avatar(item), details);
       button.addEventListener("click", () => selectConversation(item.id));
       $("line-conversations").append(button);
     }
     $("line-more-conversations").hidden = !conversationNext;
+    showConversationHeader();
   }
   function showMessages() {
     $("line-messages").replaceChildren();

@@ -97,10 +97,12 @@
           <p id="line-status" class="line-status" role="status" aria-live="polite"></p>
           <div id="line-account" hidden>
             <div class="line-account-heading"><h2 id="line-oa-name"></h2><span id="line-oa-state" class="state"></span></div>
+            <details class="connection-details"><summary>連線設定</summary>
             <label for="line-webhook-url">你的 Webhook URL</label>
             <div class="webhook-row"><input id="line-webhook-url" readonly><button id="line-copy" type="button">複製網址</button></div>
             <p class="note">先備份 LINE Developers 的原網址，再將此網址填入 Webhook URL，開啟 Use webhook 並按 Verify。然後傳一則新訊息給 OA。</p>
             <button id="line-settings-toggle" class="retry" type="button" aria-expanded="false">更新連線憑證</button>
+            </details>
           </div>
           <form id="line-connect-form" hidden>
             <fieldset id="line-connect-fields">
@@ -127,7 +129,7 @@
                 <button id="line-more-conversations" class="retry" type="button" hidden>載入更多對話</button>
               </section>
               <section class="message-panel" aria-labelledby="line-conversation-title">
-                <h3 id="line-conversation-title">選擇一段對話</h3>
+                <div class="chat-heading"><div id="line-chat-avatar"></div><div><h3 id="line-conversation-title">選擇一段對話</h3><p id="line-chat-source">在左側選擇聊天者，開始回覆</p></div></div>
                 <button id="line-more-messages" class="retry" type="button" hidden>載入更早訊息</button>
                 <div id="line-messages" aria-label="訊息內容"></div>
                 <form id="line-reply-form" class="reply-form">
