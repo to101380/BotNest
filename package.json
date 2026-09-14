@@ -1,0 +1,11 @@
+{
+  "name": "google-meta-login",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "check": "node --check public/app.js && node --check public/auth-helpers.js && node --check scripts/serve.mjs",
+    "test": "node --test --test-isolation=none tests/auth-helpers.test.mjs"
+  },
+  "engines": { "node": ">=22" }
+}

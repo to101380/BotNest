@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>登入｜Identity</title>
+  <meta name="description" content="使用 Google 或 Facebook 登入，查看你的帳號身分。">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header><a href="/" class="brand"><span class="brand-mark" aria-hidden="true">i</span>identity<span class="brand-dot">.</span></a><span class="header-caption">你的帳號，從這裡開始</span></header>
+  <main>
+    <nav id="app-nav" class="app-nav" aria-label="主要導覽" hidden>
+      <p class="nav-caption">工作空間</p>
+      <a id="nav-account" href="#account">帳號資訊</a>
+      <a id="nav-ai" href="#ai-robot">AI機器人</a>
+    </nav>
+    <section class="login-card" aria-labelledby="title">
+      <div class="card-top"><span class="eyebrow">ACCOUNT ACCESS</span><span id="state" class="state">準備中</span></div>
+      <section id="signed-out">
+        <h1 id="title">歡迎回來<span class="dot">.</span></h1>
+        <p class="intro">使用 Email 或你習慣的第三方帳號登入。</p>
+        <div class="providers">
+          <button id="google" class="provider google" disabled><svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.07H12v3.92h5.38a4.6 4.6 0 0 1-2 3.02v2.54h3.24c1.9-1.75 2.98-4.33 2.98-7.4Z"/><path fill="#34A853" d="M12 22c2.7 0 4.97-.9 6.63-2.36l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.04v2.62A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.39 13.93a6.02 6.02 0 0 1 0-3.86V7.45H3.04a10 10 0 0 0 0 9.1l3.35-2.62Z"/><path fill="#EA4335" d="M12 5.94c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.64 9.64 0 0 0 12 2a10 10 0 0 0-8.96 5.45l3.35 2.62C7.18 7.7 9.39 5.94 12 5.94Z"/></svg><span>使用 Google 登入</span><span class="arrow" aria-hidden="true">↗</span></button>
+          <button id="facebook" class="provider facebook" disabled><span class="facebook-icon" aria-hidden="true">f</span><span>使用 Facebook 登入</span><span class="arrow" aria-hidden="true">↗</span></button>
+        </div>
+        <div class="divider">或使用 Email 登入／註冊</div>
+        <div class="email-tabs" role="group" aria-label="Email 帳號操作">
+          <button id="mode-login" type="button" aria-pressed="true">Email 登入</button>
+          <button id="mode-register" type="button" aria-pressed="false">註冊帳號</button>
+        </div>
+        <form id="email-form">
+          <fieldset id="email-fields" disabled>
+            <label for="account-email">電子郵件</label>
+            <input id="account-email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" maxlength="254" required placeholder="you@example.com">
+            <div id="password-group">
+              <label for="account-password">密碼</label>
+              <input id="account-password" type="password" autocomplete="current-password" maxlength="128" required>
+            </div>
+            <div id="confirm-group" hidden>
+              <label for="confirm-password">再次輸入密碼</label>
+              <input id="confirm-password" type="password" autocomplete="new-password" maxlength="128">
+              <p class="note">至少 12 個字元，可使用長句作為密碼。</p>
+            </div>
+            <button id="email-submit" type="submit" class="email-primary">使用 Email 登入</button>
+            <button id="forgot-password" type="button" class="retry">忘記密碼？</button>
+          </fieldset>
+        </form>
+        <p class="note">Email 密碼由 Firebase Authentication 處理。<br>Google／Facebook 密碼僅在各自的登入視窗輸入。</p>
+      </section>
+      <section id="signed-in" hidden aria-labelledby="welcome">
+        <div id="account-page">
+        <div class="avatar" id="avatar"></div>
+        <h1 id="welcome">登入成功</h1><p id="email" class="intro"></p>
+        <section id="email-verification" hidden>
+          <p class="note">此 Email 尚未驗證。請開啟驗證信完成驗證，再回來更新狀態。</p>
+          <button id="send-verification" type="button" class="retry">重新寄送驗證信</button>
+          <button id="refresh-verification" type="button" class="retry">我已驗證，更新狀態</button>
+        </section>
+        <div class="identity-field"><label for="uid">Firebase UID</label><div class="uid-row"><input id="uid" readonly><button id="copy" aria-label="複製 Firebase UID">複製</button></div><p>這是你在本專案中的使用者識別碼。</p></div>
+        <h2>登入來源</h2><ul id="provider-list"></ul>
+        <section id="link-panel" aria-labelledby="link-title">
+          <h2 id="link-title">連結其他登入方式</h2>
+          <p class="note">先驗證原本的登入身分，再確認連結新帳號。完成後兩種方式共用同一個 Firebase UID。</p>
+          <div id="password-reauth-group" hidden>
+            <label for="reauth-password">目前帳號密碼</label>
+            <input id="reauth-password" type="password" autocomplete="current-password" maxlength="128">
+            <p class="note">Email 帳號需先完成信箱驗證，再輸入目前密碼確認身分。</p>
+          </div>
+          <div class="providers">
+            <button id="link-google" class="provider google" type="button" hidden>連結 Google 帳號</button>
+            <button id="link-facebook" class="provider facebook" type="button" hidden>連結 Facebook 帳號</button>
+          </div>
+        </section>
+        <section id="add-password-panel" hidden aria-labelledby="add-password-title">
+          <h2 id="add-password-title">設定 Email 登入密碼</h2>
+          <p class="note">使用目前帳號的 Email，與已連結的 Google／Facebook 共用帳號。送出後需再次驗證原本的登入身分。</p>
+          <form id="add-password-form">
+            <fieldset id="add-password-fields">
+              <label for="password-email">帳號 Email</label>
+              <input id="password-email" type="email" autocomplete="username" readonly>
+              <label for="new-password">新密碼</label>
+              <input id="new-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>
+              <label for="new-password-confirm">再次輸入新密碼</label>
+              <input id="new-password-confirm" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>
+              <p class="note">密碼需 12～128 個字元。若 Email 尚未驗證，請先完成上方信箱驗證。</p>
+              <button class="email-primary" type="submit">驗證身分並設定密碼</button>
+            </fieldset>
+          </form>
+        </section>
+        </div>
+        <section id="ai-page" hidden aria-labelledby="ai-title">
+          <h1 id="ai-title" tabindex="-1">AI機器人</h1>
+          <p class="intro">歡迎來到 AI機器人。</p>
+          <p class="note ai-placeholder">機器人功能尚未開放。</p>
+        </section>
+        <button id="logout" class="logout">登出帳號</button>
+      </section>
+      <p id="status" role="status" aria-live="polite">正在讀取登入設定…</p>
+      <button id="retry" class="retry" hidden>重新讀取設定</button>
+    </section>
+    <aside id="setup" hidden><span class="setup-label">開發設定</span><h2>先連接 Firebase 專案</h2><p>登入程式已準備好。填入 Firebase 網頁設定，並在控制台啟用 Google 與 Facebook 登入後，即可開始測試。</p><p>設定檔：<code>public/firebase-config.json</code><br>完整步驟請見專案的 <code>README.md</code>。</p></aside>
+  </main>
+  <footer>Google · Facebook <span aria-hidden="true">/</span> 一個簡單的登入起點</footer>
+</body>
+</html>
+

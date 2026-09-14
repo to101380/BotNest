@@ -1,0 +1,6 @@
+{
+  "score": 1,
+  "summary": "Before remediation: all authenticated users, including anonymous users, could read and write every Firestore document until 2026-09-18. Login-only app has no Firestore data requirements.",
+  "findings": [{"check":"Field-Level vs. Identity-Level Security","severity":"critical","issue":"request.auth != null does not establish document ownership; unrestricted cross-user reads/writes and no schema or size checks.","recommendation":"For the current login-only app, deny all client reads and writes. Define ownership and validated schemas before introducing data features."}],
+  "proposedRemediation": "firestore.rules denies all client access; server/Admin access remains governed by IAM. Deployment and live verification are tracked in SECURITY_STATUS.md."
+}

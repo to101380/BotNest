@@ -1,0 +1,98 @@
+{
+  "authorizedDomains": [
+    "localhost",
+    "planning-with-ai-52d58.firebaseapp.com",
+    "planning-with-ai-52d58.web.app",
+    "127.0.0.1"
+  ],
+  "anonymousEnabled": true,
+  "key": {
+    "name": "projects/522522721239/locations/global/keys/f96ff513-df25-4900-bb6e-9b9e8e608065",
+    "restrictions": {
+      "browserKeyRestrictions": {},
+      "apiTargets": [
+        {
+          "service": "firebasedatabase.googleapis.com"
+        },
+        {
+          "service": "firebasehosting.googleapis.com"
+        },
+        {
+          "service": "firebaserules.googleapis.com"
+        },
+        {
+          "service": "sqladmin.googleapis.com"
+        },
+        {
+          "service": "cloudconfig.googleapis.com"
+        },
+        {
+          "service": "datastore.googleapis.com"
+        },
+        {
+          "service": "fcmregistrations.googleapis.com"
+        },
+        {
+          "service": "firebase.googleapis.com"
+        },
+        {
+          "service": "firebaseappcheck.googleapis.com"
+        },
+        {
+          "service": "firebaseappdistribution.googleapis.com"
+        },
+        {
+          "service": "firebaseapphosting.googleapis.com"
+        },
+        {
+          "service": "firebaseapptesters.googleapis.com"
+        },
+        {
+          "service": "firebasedataconnect.googleapis.com"
+        },
+        {
+          "service": "firebaseinappmessaging.googleapis.com"
+        },
+        {
+          "service": "firebaseinstallations.googleapis.com"
+        },
+        {
+          "service": "firebaseml.googleapis.com"
+        },
+        {
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        {
+          "service": "firebaseremoteconfigrealtime.googleapis.com"
+        },
+        {
+          "service": "firebasestorage.googleapis.com"
+        },
+        {
+          "service": "firebasevertexai.googleapis.com"
+        },
+        {
+          "service": "firestore.googleapis.com"
+        },
+        {
+          "service": "identitytoolkit.googleapis.com"
+        },
+        {
+          "service": "logging.googleapis.com"
+        },
+        {
+          "service": "mlkit.googleapis.com"
+        },
+        {
+          "service": "play.googleapis.com"
+        },
+        {
+          "service": "securetoken.googleapis.com"
+        },
+        {
+          "service": "fpnv.googleapis.com"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Login-only site: no client data access is required. Server IAM is separate.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
