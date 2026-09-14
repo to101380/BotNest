@@ -1,5 +1,11 @@
 # Google + Meta 登入起始專案
 
+## LINE OA 收件匣（開發完成，待部署）
+
+已新增 OA 綁定、按帳號隔離的新訊息收件匣及 Webhook 接收端。正式啟用仍需 Firebase Blaze 與 OA 憑證設定，詳見 [LINE_SETUP.md](LINE_SETUP.md)。本機可執行 `node scripts/preview-inbox.mjs` 查看虛構資料示範。
+
+以下為既有登入功能文件；其中「沒有資料庫或受保護 API」描述的是先前已部署的登入版本，新的 LINE 後端與權限以 `LINE_SETUP.md` 為準。
+
 ## Email／密碼登入（已啟用）
 
 正式站提供 Email 登入、註冊帳號、忘記密碼、Email 驗證信重寄與驗證狀態更新。只能輸入 Email，沒有自訂使用者名稱。Firebase Authentication 管理使用者與密碼；不在 Firestore 保存密碼。

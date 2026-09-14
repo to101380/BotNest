@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // BotNest model (server-owned, never directly accessible from a browser):
+    // botnest/state/accounts/{uid}: channelId (string, immutable per owner).
+    // botnest/state/channels/{id}: ownerUid, channelId, botUserId, displayName,
+    //   basicId (strings), secret {iv,tag,data} (AES-GCM ciphertext), timestamps.
+    // channels/{id}/conversations/{sha256}: sourceType, sourceId, lastText,
+    //   lastMessageId (strings), updatedAt (milliseconds).
+    // conversations/{id}/messages/{id}: type,text,direction (strings),
+    //   sentAt (milliseconds), unsent (boolean).
+    // channels/{id}/receipts/{id}: receivedAt (milliseconds).
+    // botnest/state/bindingLimits/{uid}: since,count (numbers).
+    // HTTPS API verifies Firebase ID tokens and ownerUid on every data request.
+    match /botnest/{document=**} {
+      allow read, write: if false;
+    }
+    // Preserve the already-live legacy rule ONLY outside the new BotNest area.
+    // This expires on 2026-09-18. It is not a rule for future application data.
+    match /{root}/{document=**} {
+      allow read, write: if root != 'botnest'
+        && request.auth != null && request.time < timestamp.date(2026, 9, 18);
+    }
+  }
+}

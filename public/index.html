@@ -6,6 +6,7 @@
   <title>登入｜Identity</title>
   <meta name="description" content="使用 Google 或 Facebook 登入，查看你的帳號身分。">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/line-inbox.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -92,8 +93,47 @@
         </div>
         <section id="ai-page" hidden aria-labelledby="ai-title">
           <h1 id="ai-title" tabindex="-1">AI機器人</h1>
-          <p class="intro">歡迎來到 AI機器人。</p>
-          <p class="note ai-placeholder">機器人功能尚未開放。</p>
+          <p class="intro">串接你的 LINE 官方帳號，集中查看新對話。</p>
+          <p id="line-status" class="line-status" role="status" aria-live="polite"></p>
+          <div id="line-account" hidden>
+            <div class="line-account-heading"><h2 id="line-oa-name"></h2><span id="line-oa-state" class="state"></span></div>
+            <label for="line-webhook-url">你的 Webhook URL</label>
+            <div class="webhook-row"><input id="line-webhook-url" readonly><button id="line-copy" type="button">複製網址</button></div>
+            <p class="note">先備份 LINE Developers 的原網址，再將此網址填入 Webhook URL，開啟 Use webhook 並按 Verify。然後傳一則新訊息給 OA。</p>
+            <button id="line-settings-toggle" class="retry" type="button" aria-expanded="false">更新連線憑證</button>
+          </div>
+          <form id="line-connect-form" hidden>
+            <fieldset id="line-connect-fields">
+              <legend>連接你的 LINE 官方帳號</legend>
+              <p class="note">在 LINE Developers 的 Basic settings 取得 Channel ID、Channel Secret；Messaging API 分頁可取得 Channel access token（long-lived）。</p>
+              <label for="line-channel-id">Channel ID</label>
+              <input id="line-channel-id" inputmode="numeric" pattern="[0-9]{5,20}" maxlength="20" required autocomplete="off">
+              <label for="line-channel-secret">Channel Secret</label>
+              <input id="line-channel-secret" type="password" pattern="[a-fA-F0-9]{32}" maxlength="32" required autocomplete="off" spellcheck="false">
+              <label for="line-access-token">Channel access token（long-lived）</label>
+              <input id="line-access-token" type="password" minlength="30" maxlength="4096" required autocomplete="off" spellcheck="false">
+              <p class="note">Secret 會加密保存於後端；Access Token 僅用於確認 OA 身分，不會保存。綁定前請於 10 分鐘內重新登入。</p>
+              <button class="email-primary" type="submit">驗證並連接 OA</button>
+            </fieldset>
+          </form>
+          <section id="line-inbox" hidden aria-label="LINE 對話收件匣">
+            <div class="line-toolbar"><h2>對話收件匣</h2><button id="line-refresh" type="button">重新整理</button></div>
+            <p id="line-polling-note" class="note">每 10 秒更新。</p>
+            <p class="note">此版本顯示接通後收到的訊息；LINE 內建自動回應及舊紀錄不會同步。圖片等訊息先顯示類型。</p>
+            <div class="inbox-grid">
+              <section class="conversation-panel" aria-label="對話列表">
+                <p id="line-empty" class="note">還沒有對話。完成 Webhook 驗證後，傳一則訊息給你的 OA。</p>
+                <div id="line-conversations"></div>
+                <button id="line-more-conversations" class="retry" type="button" hidden>載入更多對話</button>
+              </section>
+              <section class="message-panel" aria-labelledby="line-conversation-title">
+                <h3 id="line-conversation-title">選擇一段對話</h3>
+                <button id="line-more-messages" class="retry" type="button" hidden>載入更早訊息</button>
+                <div id="line-messages" aria-label="訊息內容"></div>
+                <p class="note inbox-readonly">目前可查看收到的訊息，網頁回覆功能尚未開放。</p>
+              </section>
+            </div>
+          </section>
         </section>
         <button id="logout" class="logout">登出帳號</button>
       </section>

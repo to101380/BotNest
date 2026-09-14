@@ -1,5 +1,7 @@
 import { hasFirebaseConfig, providerName, authErrorMessage, linkProviderAccount, reauthenticateForLink, validateEmailRegistration, reauthenticatePasswordForLink, linkEmailPassword } from "./auth-helpers.js";
+import { createLineInbox } from "./line-inbox.js";
 const $ = id => document.getElementById(id);
+const lineInbox = createLineInbox();
 let auth;
 let sdk;
 let busy = false;
@@ -14,6 +16,10 @@ function renderPage(moveFocus = false) {
   document.body.classList.toggle("authenticated", signedIn);
   $("account-page").hidden = aiPage;
   $("ai-page").hidden = !aiPage;
+  $("signed-in").setAttribute("aria-labelledby", aiPage ? "ai-title" : "welcome");
+  document.querySelector(".login-card").setAttribute("aria-labelledby", signedIn ? (aiPage ? "ai-title" : "welcome") : "title");
+  document.body.classList.toggle("inbox-open", aiPage);
+  lineInbox.setSession(auth?.currentUser || null, aiPage);
   for (const [id, active] of [["nav-account", !aiPage], ["nav-ai", aiPage]]) {
     if (signedIn && active) $(id).setAttribute("aria-current", "page");
     else $(id).removeAttribute("aria-current");
