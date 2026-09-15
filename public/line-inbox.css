@@ -63,3 +63,16 @@ body.inbox-open{height:100dvh;min-height:0;overflow:hidden;background:#fff}
 .inbox-open .message-bubble:has(.message-attachment){max-width:min(78%,520px)}
 @media(max-width:800px){.inbox-open .message-bubble{max-width:84%}.inbox-open .message-bubble:has(.message-attachment){max-width:90%}}
 @media(max-width:600px){.message-date-divider{margin:10px 0 7px}.inbox-open .message-bubble{max-width:91%;padding:7px 10px 5px}}
+
+/* Channel badge and cleaner conversation-list hierarchy. */
+.inbox-open .conversation-item{padding:15px 16px;align-items:center;transition:background-color .15s ease}
+.inbox-open .conversation-item:hover{background:#f6f9f7}
+.inbox-open .conversation-item[aria-pressed=true]{background:#edf8f2;box-shadow:inset 3px 0 #06a85a}
+.inbox-open .chat-avatar{overflow:visible;isolation:isolate}
+.inbox-open .chat-avatar>img{border-radius:50%;z-index:1}
+.line-avatar-badge{position:absolute;right:-5px;bottom:-2px;z-index:2;width:23px;height:17px;display:grid!important;place-items:center;margin:0!important;border:2px solid #fff;border-radius:7px;background:#06c755;color:#fff;font:800 6px/1 Arial,sans-serif;letter-spacing:-.25px;box-shadow:0 1px 4px #193c2a35}
+.conversation-title-row{display:flex!important;align-items:center;justify-content:space-between;gap:10px;margin:0!important}
+.conversation-title-row strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650}
+.conversation-title-row time{flex-shrink:0;color:#a0a8b0;font-size:10px}
+.inbox-open .conversation-item .conversation-preview{margin-top:5px;color:#7c8580;line-height:1.35}
+@media(max-width:600px){.inbox-open .conversation-item{flex-wrap:nowrap;padding:12px 9px}.inbox-open .conversation-item .conversation-details{flex-basis:auto}.inbox-open .conversation-item .chat-avatar{width:38px;height:38px;flex-basis:38px}.conversation-title-row time{display:none}}

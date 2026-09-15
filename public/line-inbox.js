@@ -60,6 +60,7 @@ export function createLineInbox() {
       image.loading = "lazy"; image.referrerPolicy = "no-referrer";
       image.addEventListener("error", () => image.remove(), { once: true }); frame.append(image);
     }
+    const badge = document.createElement("span"); badge.className = "line-avatar-badge"; badge.textContent = "LINE"; badge.title = "LINE"; frame.append(badge);
     return frame;
   }
   function showConversationHeader() {
@@ -108,9 +109,8 @@ export function createLineInbox() {
       time.dateTime = new Date(item.updatedAt).toISOString(); time.textContent = formatConversationTime(item.updatedAt);
       const details = document.createElement("span"); details.className = "conversation-details";
       preview.className = "conversation-preview";
-      const source = document.createElement("span"); source.className = "line-source"; source.textContent = "LINE";
-      const meta = document.createElement("span"); meta.className = "conversation-meta"; meta.append(source, time);
-      details.append(name, preview, meta); button.append(avatar(item), details);
+      const heading = document.createElement("span"); heading.className = "conversation-title-row"; heading.append(name, time);
+      details.append(heading, preview); button.append(avatar(item), details);
       button.addEventListener("click", () => selectConversation(item.id));
       $("line-conversations").append(button);
     }
