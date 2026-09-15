@@ -153,12 +153,12 @@ export function createLineInbox() {
           bubble.prepend(link);
         }
       }
-      if (item.direction === "outgoing" && item.status !== "sent") {
+      if (item.direction === "outgoing" && ["failed", "uncertain"].includes(item.status)) {
         const delivery = document.createElement("p"); delivery.className = "delivery-state";
-        delivery.textContent = ({ failed: "傳送失敗", uncertain: "結果待確認", pending: "傳送中" })[item.status] || "結果待確認";
+        delivery.textContent = item.status === "failed" ? "傳送失敗" : "傳送結果無法確認";
         if (item.note) delivery.title = item.note;
         bubble.append(delivery);
-        if (["uncertain", "pending"].includes(item.status)) {
+        if (item.status === "uncertain") {
           const retry = document.createElement("button"); retry.type = "button"; retry.className = "retry";
           retry.textContent = "重試確認"; retry.disabled = sending || !channel?.canReply || Date.now() - item.sentAt >= 23 * 60 * 60 * 1000;
           retry.addEventListener("click", () => void sendReply(selected, item.text, item.operationId, item.attachment)); bubble.append(retry);
