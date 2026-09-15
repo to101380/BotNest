@@ -117,6 +117,33 @@ export function createLineInbox() {
     $("line-more-conversations").hidden = !conversationNext;
     showConversationHeader();
   }
+  const trustedMediaUrl = attachment => {
+    try {
+      const url = new URL(attachment.url, location.origin);
+      return url.origin === "https://planning-with-ai-52d58.web.app" && url.pathname.startsWith("/api/line/media/") ? url : null;
+    } catch { return null; }
+  };
+  let viewerItems = [], viewerIndex = 0;
+  function renderImageViewer() {
+    const current = viewerItems[viewerIndex];
+    if (!current) return;
+    $("line-image-full").src = current.url.href; $("line-image-full").alt = current.name;
+    $("line-image-caption").textContent = current.name;
+    $("line-image-prev").hidden = $("line-image-next").hidden = viewerItems.length < 2;
+  }
+  function openImageViewer(id) {
+    viewerItems = [...messages.values()]
+      .sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id))
+      .filter(item => item.attachment?.kind === "image" && item.attachment.expiresAt > Date.now() && trustedMediaUrl(item.attachment))
+      .map(item => ({ id: item.id, name: item.attachment.name, url: trustedMediaUrl(item.attachment) }));
+    viewerIndex = Math.max(0, viewerItems.findIndex(item => item.id === id));
+    if (!viewerItems.length) return;
+    renderImageViewer(); $("line-image-viewer").showModal();
+  }
+  function moveImageViewer(step) {
+    if (viewerItems.length < 2) return;
+    viewerIndex = (viewerIndex + step + viewerItems.length) % viewerItems.length; renderImageViewer();
+  }
   function showMessages(scrollMode = "auto") {
     const previousTop = messageArea.scrollTop, previousHeight = messageArea.scrollHeight;
     const scrollToLatest = scrollMode === "bottom" || (scrollMode === "auto" && followLatest);
@@ -141,16 +168,26 @@ export function createLineInbox() {
       }
       if (item.attachment) {
         const link = document.createElement("a");
-        const url = new URL(item.attachment.url, location.origin);
-        if (url.origin === "https://planning-with-ai-52d58.web.app" && url.pathname.startsWith("/api/line/media/")) {
+        const url = trustedMediaUrl(item.attachment);
+        if (url) {
+          let imageMeta = null;
           link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer";
           link.textContent = `📎 ${item.attachment.name}`; link.className = "message-attachment";
           if (item.attachment.expiresAt <= Date.now()) { link.removeAttribute("href"); link.textContent += "（連結已過期）"; }
           else if (item.attachment.kind === "image") {
             const img = document.createElement("img"); img.src = url.href; img.alt = item.attachment.name; img.loading = "lazy";
             img.addEventListener("error", () => { img.remove(); link.textContent = `圖片暫時無法預覽，點此開啟：${item.attachment.name}`; }, { once: true }); link.prepend(img);
+            link.replaceChildren(img); link.classList.add("image-attachment"); link.setAttribute("aria-label", `開啟圖片：${item.attachment.name}`);
+            link.addEventListener("click", event => { event.preventDefault(); openImageViewer(item.id); });
+            bubble.classList.add("image-message");
+            if (item.text === "[圖片]") text.hidden = true;
+            imageMeta = document.createElement("div"); const sender = document.createElement("strong");
+            const actor = item.direction === "outgoing" ? { displayName: "你" } : conversations.get(selected) || { displayName: "LINE 使用者" };
+            imageMeta.className = "image-message-meta"; sender.textContent = item.direction === "outgoing" ? "你" : label(actor);
+            imageMeta.append(avatar(actor), sender, time);
           }
           bubble.prepend(link);
+          if (imageMeta) bubble.prepend(imageMeta);
         }
       }
       if (item.direction === "outgoing" && ["failed", "uncertain"].includes(item.status)) {
@@ -347,6 +384,11 @@ export function createLineInbox() {
   $("line-refresh").addEventListener("click", () => { historyMode(false); void refresh(); });
   $("line-more-conversations").addEventListener("click", () => void refresh(true));
   $("line-more-messages").addEventListener("click", async () => { try { await loadMessages(true); } catch (error) { report(error); } });
+  $("line-image-close").addEventListener("click", () => $("line-image-viewer").close());
+  $("line-image-prev").addEventListener("click", () => moveImageViewer(-1));
+  $("line-image-next").addEventListener("click", () => moveImageViewer(1));
+  $("line-image-viewer").addEventListener("click", event => { if (event.target === $("line-image-viewer")) $("line-image-viewer").close(); });
+  $("line-image-viewer").addEventListener("close", () => { $("line-image-full").removeAttribute("src"); viewerItems = []; });
   $("line-copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("line-webhook-url").value); status("已複製 Webhook URL。"); }
     catch { $("line-webhook-url").select(); status("請手動複製已選取的網址。"); }

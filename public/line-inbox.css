@@ -76,3 +76,23 @@ body.inbox-open{height:100dvh;min-height:0;overflow:hidden;background:#fff}
 .conversation-title-row time{flex-shrink:0;color:#a0a8b0;font-size:10px}
 .inbox-open .conversation-item .conversation-preview{margin-top:5px;color:#7c8580;line-height:1.35}
 @media(max-width:600px){.inbox-open .conversation-item{flex-wrap:nowrap;padding:12px 9px}.inbox-open .conversation-item .conversation-details{flex-basis:auto}.inbox-open .conversation-item .chat-avatar{width:38px;height:38px;flex-basis:38px}.conversation-title-row time{display:none}}
+
+/* Image messages use a clean thumbnail and open into a focused lightbox. */
+.inbox-open .message-bubble.image-message{width:min(72%,430px);max-width:430px;padding:0;border:0;background:transparent}
+.image-message-meta{display:flex;align-items:center;gap:8px;margin-bottom:7px;color:#36443d}
+.image-message-meta .chat-avatar{width:32px!important;height:32px!important;flex-basis:32px!important;font-size:13px}
+.image-message-meta .line-avatar-badge{width:16px;height:16px;right:-3px;bottom:-2px}
+.image-message-meta strong{font-size:13px;font-weight:650}.image-message-meta time{margin-left:auto!important;font-size:10px!important;color:#929ba5!important}
+.image-attachment{display:block;width:max-content;max-width:calc(100% - 40px);margin:0 0 0 40px!important;border-radius:8px;overflow:hidden;background:#e4eaee;cursor:zoom-in}
+.message-attachment.image-attachment img{display:block;width:auto;max-width:100%;height:auto;max-height:330px;margin:0;border-radius:8px;object-fit:contain}
+.image-message>p:not([hidden]){margin:7px 0 0 40px!important}.image-message>time{display:none!important}
+.image-viewer{width:100vw;height:100dvh;max-width:none;max-height:none;margin:0;padding:0;border:0;background:transparent;color:#fff;overflow:hidden}
+.image-viewer::backdrop{background:#111827d9;backdrop-filter:blur(2px)}
+.image-viewer[open]{display:grid;grid-template-columns:72px minmax(0,1fr) 72px;align-items:center}
+.image-viewer figure{min-width:0;max-width:calc(100vw - 170px);max-height:calc(100dvh - 70px);margin:auto;text-align:center}
+.image-viewer img{display:block;max-width:100%;max-height:calc(100dvh - 105px);margin:auto;object-fit:contain;box-shadow:0 12px 46px #0008}
+.image-viewer figcaption{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.image-viewer button{position:relative;z-index:2;border:0;color:#fff;background:#1118278c;cursor:pointer}
+.image-viewer-close{position:absolute!important;right:18px;top:14px;width:44px;height:44px;border-radius:50%;font-size:32px;line-height:1}
+.image-viewer-nav{width:48px;height:64px;margin:auto;border-radius:9px;font-size:42px;line-height:1}.image-viewer-prev{grid-column:1}.image-viewer-next{grid-column:3}.image-viewer figure{grid-column:2;grid-row:1}
+@media(max-width:600px){.inbox-open .message-bubble.image-message{width:94%;max-width:94%}.image-attachment{max-width:calc(100% - 34px);margin-left:34px!important}.image-viewer[open]{grid-template-columns:44px minmax(0,1fr) 44px}.image-viewer figure{max-width:calc(100vw - 96px)}.image-viewer-nav{width:36px;height:52px;font-size:34px}.image-viewer-close{right:8px;top:8px}}
