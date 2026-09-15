@@ -60,7 +60,7 @@ export function createLineInbox() {
       image.loading = "lazy"; image.referrerPolicy = "no-referrer";
       image.addEventListener("error", () => image.remove(), { once: true }); frame.append(image);
     }
-    const badge = document.createElement("span"); badge.className = "line-avatar-badge"; badge.textContent = "LINE"; badge.title = "LINE"; frame.append(badge);
+    const badge = document.createElement("span"); badge.className = "line-avatar-badge"; badge.title = "LINE"; frame.append(badge);
     return frame;
   }
   function showConversationHeader() {
