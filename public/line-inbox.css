@@ -49,3 +49,17 @@ body.inbox-open{height:100dvh;min-height:0;overflow:hidden;background:#fff}
 .inbox-open .emoji-panel{width:360px;max-width:calc(100% - 32px);grid-template-columns:repeat(8,minmax(0,1fr));gap:2px;padding:10px;box-sizing:border-box;overflow:hidden}
 .inbox-open .emoji-panel button{min-width:0;width:100%;height:38px;display:flex;align-items:center;justify-content:center;padding:0;font-size:22px!important;line-height:1;font-family:'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif}
 @media(max-width:600px){.inbox-open .emoji-panel{left:8px;max-width:calc(100% - 16px);grid-template-columns:repeat(4,minmax(0,1fr));max-height:240px;overflow-y:auto}.inbox-open .emoji-panel button{height:34px;font-size:20px!important}}
+
+/* Compact message rhythm: date groups carry the date, bubbles only show the clock. */
+.inbox-open #line-messages{gap:7px}
+.message-date-divider{width:100%;display:flex;align-items:center;gap:12px;margin:14px 0 10px;color:#8793a2;font-size:11px;line-height:1;white-space:nowrap}
+.message-date-divider::before,.message-date-divider::after{content:"";height:1px;background:#dce4eb;flex:1}
+.message-date-divider span{padding:0 4px}
+.inbox-open .message-bubble{max-width:min(68%,680px);padding:8px 12px 6px;border-radius:4px 12px 12px 12px;box-shadow:none}
+.inbox-open .message-bubble.outgoing{border-radius:12px 4px 12px 12px}
+.inbox-open .message-bubble p{margin:0 0 3px;font-size:14px;line-height:1.5}
+.inbox-open .message-bubble time{display:block;margin-top:2px;text-align:right;font-size:10px;line-height:1.2;color:#8b96a3}
+.inbox-open .message-bubble .delivery-state{margin-top:4px;font-size:10px;color:#69788d}
+.inbox-open .message-bubble:has(.message-attachment){max-width:min(78%,520px)}
+@media(max-width:800px){.inbox-open .message-bubble{max-width:84%}.inbox-open .message-bubble:has(.message-attachment){max-width:90%}}
+@media(max-width:600px){.message-date-divider{margin:10px 0 7px}.inbox-open .message-bubble{max-width:91%;padding:7px 10px 5px}}

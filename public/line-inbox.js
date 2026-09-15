@@ -1,5 +1,25 @@
 const $ = id => document.getElementById(id);
-const formatTime = value => new Date(value).toLocaleString("zh-TW", { hour12: false });
+const formatClock = value => new Date(value).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false });
+const dayKey = value => {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+};
+const formatConversationTime = value => {
+  const date = new Date(value), now = new Date();
+  if (dayKey(date) === dayKey(now)) return formatClock(date);
+  return date.toLocaleDateString("zh-TW", date.getFullYear() === now.getFullYear()
+    ? { month: "numeric", day: "numeric" }
+    : { year: "numeric", month: "numeric", day: "numeric" });
+};
+const formatDay = value => {
+  const date = new Date(value), today = new Date(), yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (dayKey(date) === dayKey(today)) return "今天";
+  if (dayKey(date) === dayKey(yesterday)) return "昨天";
+  return date.toLocaleDateString("zh-TW", date.getFullYear() === today.getFullYear()
+    ? { month: "long", day: "numeric", weekday: "short" }
+    : { year: "numeric", month: "long", day: "numeric", weekday: "short" });
+};
 export function createLineInbox() {
   let user = null, active = false, epoch = 0, controller, timer, channel = null;
   let selected = null, conversationNext = null, messageNext = null, refreshing = false, saving = false, browsingHistory = false;
@@ -85,7 +105,7 @@ export function createLineInbox() {
       button.setAttribute("aria-pressed", String(selected === item.id));
       const name = document.createElement("strong"), preview = document.createElement("span"), time = document.createElement("time");
       name.textContent = label(item); preview.textContent = item.lastText;
-      time.dateTime = new Date(item.updatedAt).toISOString(); time.textContent = formatTime(item.updatedAt);
+      time.dateTime = new Date(item.updatedAt).toISOString(); time.textContent = formatConversationTime(item.updatedAt);
       const details = document.createElement("span"); details.className = "conversation-details";
       preview.className = "conversation-preview";
       const source = document.createElement("span"); source.className = "line-source"; source.textContent = "LINE";
@@ -102,10 +122,18 @@ export function createLineInbox() {
     const scrollToLatest = scrollMode === "bottom" || (scrollMode === "auto" && followLatest);
     messageResize.disconnect();
     $("line-messages").replaceChildren();
+    let renderedDay = null;
     for (const item of [...messages.values()].sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id))) {
+      const itemDay = dayKey(item.sentAt);
+      if (itemDay !== renderedDay) {
+        const divider = document.createElement("div"), label = document.createElement("span");
+        divider.className = "message-date-divider"; divider.setAttribute("role", "separator");
+        label.textContent = formatDay(item.sentAt); divider.append(label); $("line-messages").append(divider);
+        renderedDay = itemDay;
+      }
       const bubble = document.createElement("article"), text = document.createElement("p"), time = document.createElement("time");
       bubble.className = `message-bubble${item.unsent ? " unsent" : ""}${item.direction === "outgoing" ? " outgoing" : ""}`;
-      text.textContent = item.text; time.textContent = formatTime(item.sentAt); time.dateTime = new Date(item.sentAt).toISOString();
+      text.textContent = item.text; time.textContent = formatClock(item.sentAt); time.dateTime = new Date(item.sentAt).toISOString();
       bubble.append(text, time);
       if (item.type === "image" && !item.attachment && !item.unsent) {
         const note = document.createElement("p"); note.className = "note";
@@ -125,9 +153,9 @@ export function createLineInbox() {
           bubble.prepend(link);
         }
       }
-      if (item.direction === "outgoing") {
+      if (item.direction === "outgoing" && item.status !== "sent") {
         const delivery = document.createElement("p"); delivery.className = "delivery-state";
-        delivery.textContent = ({ sent: "已交給 LINE", failed: "傳送失敗", uncertain: "結果待確認", pending: "傳送確認中" })[item.status] || "結果待確認";
+        delivery.textContent = ({ failed: "傳送失敗", uncertain: "結果待確認", pending: "傳送中" })[item.status] || "結果待確認";
         if (item.note) delivery.title = item.note;
         bubble.append(delivery);
         if (["uncertain", "pending"].includes(item.status)) {
@@ -186,7 +214,7 @@ export function createLineInbox() {
       conversationNext = data.next; showConversations();
       if (more) historyMode(true);
       await loadMessages();
-      status(`已更新 · ${new Date().toLocaleTimeString("zh-TW", { hour12: false })}`);
+      status("");
     } catch (error) { report(error); }
     finally { if (currentEpoch === epoch) { refreshing = false; $("line-refresh").disabled = false; } }
   }
@@ -214,7 +242,7 @@ export function createLineInbox() {
       const data = await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId, attachmentId: attachment?.id || null }) });
       localReplies.set(operationId, { conversationId, message: data.message });
       if (selected === conversationId) { messages.set(data.message.id, data.message); showMessages(); }
-      status(data.message.note || "傳送狀態已更新。", data.message.status !== "sent");
+      status(data.message.status === "sent" ? "" : data.message.note || "傳送狀態待確認。", data.message.status !== "sent");
     } catch (error) {
       if (currentEpoch !== epoch) return;
       if (error.status && error.status < 500 && !isRetry) {
