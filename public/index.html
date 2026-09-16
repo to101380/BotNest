@@ -133,7 +133,7 @@
               </section>
               <section class="message-panel" aria-labelledby="line-conversation-title">
                 <div id="line-chat-empty" class="chat-empty"><span aria-hidden="true">☏</span><strong>選擇對話開始聊天</strong><p>從左側列表選擇一位聊天者</p></div>
-                <div class="chat-heading"><div id="line-chat-avatar"></div><div><h3 id="line-conversation-title">選擇一段對話</h3><p id="line-chat-source">在左側選擇聊天者，開始回覆</p></div></div>
+                <div class="chat-heading"><div id="line-chat-avatar"></div><div><h3 id="line-conversation-title">選擇一段對話</h3><p id="line-chat-source">在左側選擇聊天者，開始回覆</p></div><button id="customer-toggle" class="customer-toggle" type="button" aria-expanded="false">客戶資料</button></div>
                 <button id="line-more-messages" class="retry" type="button" hidden>載入更早訊息</button>
                 <div id="line-messages" aria-label="訊息內容"></div>
                 <form id="line-reply-form" class="reply-form">
@@ -153,6 +153,53 @@
                   <p class="note">圖片自動壓縮；文件上限 5 MB，以 30 天有效的下載連結傳送。</p>
                 </form>
               </section>
+              <aside id="customer-panel" class="customer-panel" aria-label="客戶資料" hidden>
+                <div class="customer-panel-heading">
+                  <div id="customer-avatar"></div>
+                  <div><strong id="customer-title">客戶資料</strong><span>來自 LINE</span></div>
+                  <button id="customer-close" type="button" aria-label="關閉客戶資料">×</button>
+                </div>
+                <form id="customer-form" autocomplete="off">
+                  <section class="customer-section customer-summary">
+                    <label for="customer-name">顯示名稱</label>
+                    <input id="customer-name" name="name" maxlength="100" placeholder="輸入客戶名稱">
+                  </section>
+                  <details class="customer-section" open>
+                    <summary>記事本</summary>
+                    <div class="customer-section-body">
+                      <label for="customer-note">新增記事</label>
+                      <textarea id="customer-note" maxlength="1000" rows="3" placeholder="記下需求、偏好或跟進內容"></textarea>
+                      <button id="customer-add-note" class="customer-secondary" type="button">＋ 新增記事</button>
+                      <div id="customer-notes" class="customer-notes"></div>
+                    </div>
+                  </details>
+                  <details class="customer-section" open>
+                    <summary>標籤</summary>
+                    <div class="customer-section-body">
+                      <div id="customer-tags" class="customer-tags"></div>
+                      <div class="customer-tag-entry"><input id="customer-tag" maxlength="40" placeholder="新增標籤"><button id="customer-add-tag" type="button">新增</button></div>
+                    </div>
+                  </details>
+                  <details class="customer-section" open>
+                    <summary>基本資料</summary>
+                    <div class="customer-fields">
+                      <label for="customer-phone">行動電話</label><input id="customer-phone" name="phone" inputmode="tel" maxlength="30" placeholder="例如 +886 912 345 678">
+                      <label for="customer-email">電子信箱</label><input id="customer-email" name="email" type="email" maxlength="254" placeholder="name@example.com">
+                      <label for="customer-birthday">生日</label><input id="customer-birthday" name="birthday" type="date">
+                      <label for="customer-gender">性別</label><select id="customer-gender" name="gender"><option value="">未設定</option><option value="female">女性</option><option value="male">男性</option><option value="nonbinary">非二元</option><option value="undisclosed">不透露</option></select>
+                      <label for="customer-language">語言</label><input id="customer-language" name="language" maxlength="60" placeholder="例如 繁體中文">
+                      <label for="customer-country">國家</label><input id="customer-country" name="country" maxlength="100" placeholder="國家">
+                      <label for="customer-city">現居城市</label><input id="customer-city" name="city" maxlength="100" placeholder="現居城市">
+                      <label for="customer-address">地址</label><textarea id="customer-address" name="address" maxlength="300" rows="2" placeholder="地址"></textarea>
+                      <label for="customer-about">關於</label><textarea id="customer-about" name="about" maxlength="1000" rows="3" placeholder="備註更多關於此客戶"></textarea>
+                      <label for="customer-custom1">自訂 1</label><input id="customer-custom1" name="custom1" maxlength="300" placeholder="輸入自訂內容">
+                      <label for="customer-custom2">自訂 2</label><input id="customer-custom2" name="custom2" maxlength="300" placeholder="輸入自訂內容">
+                      <label for="customer-custom3">自訂 3</label><input id="customer-custom3" name="custom3" maxlength="300" placeholder="輸入自訂內容">
+                    </div>
+                  </details>
+                  <div class="customer-save-bar"><span id="customer-status" role="status"></span><button id="customer-save" class="email-primary" type="submit">儲存客戶資料</button></div>
+                </form>
+              </aside>
             </div>
           </section>
           <dialog id="line-image-viewer" class="image-viewer" aria-label="圖片預覽">

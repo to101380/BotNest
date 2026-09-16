@@ -93,6 +93,31 @@ test("users cannot select another tenant through query parameters or guessed con
   const guessed = await f.request(`/api/line/conversations/${alice.id}/messages`, { token: "bob" });
   assert.deepEqual(guessed.body.items, []);
 });
+test("customer profile and notes are stored with the conversation and isolated by tenant", async () => {
+  const f = await fixture(); await f.webhook([event()]);
+  const id = (await f.request("/api/line/conversations")).body.items[0].id;
+  const profile = { name: "林小姐", phone: "+886 912 345 678", email: "lin@example.com", birthday: "1990-05-06", gender: "female", language: "繁體中文", country: "台灣", city: "台北", address: "信義區", about: "偏好文字聯絡", custom1: "VIP", custom2: "", custom3: "", tags: ["潛在客戶", "VIP"] };
+  const saved = await f.request(`/api/line/conversations/${id}/customer`, { method: "PUT", body: profile });
+  assert.equal(saved.code, 200); assert.equal(saved.body.customer.name, "林小姐");
+  const noted = await f.request(`/api/line/conversations/${id}/customer/notes`, { method: "POST", body: { text: "下週二回電" } });
+  assert.equal(noted.code, 200); assert.equal(noted.body.customer.notes[0].text, "下週二回電");
+  const listed = await f.request("/api/line/conversations");
+  assert.equal(listed.body.items[0].customer.email, "lin@example.com");
+  assert.equal(listed.body.items[0].customer.notes.length, 1);
+  assert.equal((await f.request(`/api/line/conversations/${id}/customer`, { token: "bob", method: "PUT", body: profile })).code, 404);
+  assert.equal((await f.request(`/api/line/conversations/${id}/customer/notes`, { token: "bob", method: "POST", body: { text: "偷改" } })).code, 404);
+});
+test("customer endpoints reject unknown fields, invalid contact data and oversized content", async () => {
+  const f = await fixture(); await f.webhook([event()]);
+  const id = (await f.request("/api/line/conversations")).body.items[0].id;
+  const base = { name: "", phone: "", email: "", birthday: "", gender: "", language: "", country: "", city: "", address: "", about: "", custom1: "", custom2: "", custom3: "", tags: [] };
+  for (const body of [
+    { ...base, admin: true }, { ...base, email: "not-an-email" }, { ...base, phone: "DROP TABLE" },
+    { ...base, tags: Array.from({ length: 21 }, (_, i) => `tag-${i}`) }, { ...base, about: "x".repeat(1001) },
+  ]) assert.equal((await f.request(`/api/line/conversations/${id}/customer`, { method: "PUT", body })).code, 400);
+  assert.equal((await f.request(`/api/line/conversations/${id}/customer/notes`, { method: "POST", body: { text: "x".repeat(1001) } })).code, 400);
+  assert.equal((await f.request(`/api/line/conversations/${id}/customer`, { method: "PUT", body: base, headers: { origin: "https://evil.example" } })).code, 403);
+});
 test("account response never reveals encrypted credentials, token, or owner UID", async () => {
   const f = await fixture();
   const result = await f.request("/api/line/account");

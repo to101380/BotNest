@@ -47,6 +47,30 @@ export function normalizeEvent(event) {
   };
 }
 
+const CUSTOMER_LIMITS = { name: 100, phone: 30, email: 254, birthday: 10, gender: 20, language: 60, country: 100, city: 100, address: 300, about: 1000, custom1: 300, custom2: 300, custom3: 300 };
+const CUSTOMER_GENDERS = new Set(["", "female", "male", "nonbinary", "undisclosed"]);
+function cleanCustomer(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new HttpError(400, "客戶資料格式錯誤。");
+  const extra = Object.keys(input).filter(key => !Object.hasOwn(CUSTOMER_LIMITS, key) && key !== "tags");
+  if (extra.length) throw new HttpError(400, "客戶資料包含不支援的欄位。");
+  const result = {};
+  for (const [key, limit] of Object.entries(CUSTOMER_LIMITS)) {
+    const value = input[key] ?? "";
+    if (typeof value !== "string" || value.length > limit) throw new HttpError(400, "客戶資料內容過長或格式錯誤。");
+    result[key] = value.trim();
+  }
+  if (result.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email)) throw new HttpError(400, "請輸入有效的電子信箱。");
+  if (result.phone && !/^[0-9+().\-\s]{3,30}$/.test(result.phone)) throw new HttpError(400, "請輸入有效的電話號碼。");
+  if (result.birthday && !/^\d{4}-\d{2}-\d{2}$/.test(result.birthday)) throw new HttpError(400, "生日格式錯誤。");
+  if (!CUSTOMER_GENDERS.has(result.gender)) throw new HttpError(400, "性別選項錯誤。");
+  if (!Array.isArray(input.tags) || input.tags.length > 20) throw new HttpError(400, "標籤最多 20 個。");
+  result.tags = [...new Set(input.tags.map(tag => {
+    if (typeof tag !== "string" || !tag.trim() || tag.trim().length > 40) throw new HttpError(400, "每個標籤需為 1～40 個字。");
+    return tag.trim();
+  }))];
+  return result;
+}
+
 export function createHandler({ store, verifyToken, getKey, media, fetchLine = fetch, now = Date.now }) {
   async function lineRequest(path, options) {
     const response = await fetchLine(`https://api.line.me${path}`, { ...options, signal: AbortSignal.timeout(12000) });
@@ -163,6 +187,20 @@ export function createHandler({ store, verifyToken, getKey, media, fetchLine = f
           Object.assign(item, profile);
         }));
         return res.json(page);
+      }
+      const customer = /^\/api\/line\/conversations\/([a-f0-9]{64})\/customer$/.exec(path);
+      if (customer && req.method === "PUT") {
+        const origin = req.get("origin");
+        if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站更新客戶資料。");
+        return res.json({ customer: await store.saveCustomer(account.channelId, customer[1], cleanCustomer(req.body), now()) });
+      }
+      const customerNotes = /^\/api\/line\/conversations\/([a-f0-9]{64})\/customer\/notes$/.exec(path);
+      if (customerNotes && req.method === "POST") {
+        const origin = req.get("origin");
+        if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站新增記事。");
+        const text = req.body?.text;
+        if (typeof text !== "string" || !text.trim() || text.trim().length > 1000) throw new HttpError(400, "記事需為 1～1000 個字。");
+        return res.json({ customer: await store.addCustomerNote(account.channelId, customerNotes[1], text.trim(), now()) });
       }
       const messages = /^\/api\/line\/conversations\/([a-f0-9]{64})\/messages$/.exec(path);
       if (messages && req.method === "GET") {

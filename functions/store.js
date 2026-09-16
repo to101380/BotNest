@@ -59,6 +59,29 @@ export function createStore(db) {
     async saveProfile(id, conversationId, profile) {
       await channels.doc(id).collection("conversations").doc(conversationId).set(profile, { merge: true });
     },
+    async saveCustomer(id, conversationId, profile, at) {
+      const ref = channels.doc(id).collection("conversations").doc(conversationId);
+      return db.runTransaction(async tx => {
+        const snapshot = await tx.get(ref);
+        if (!snapshot.exists) throw new HttpError(404, "找不到這位客戶。");
+        const prior = snapshot.data().customer || {};
+        const customer = { ...profile, notes: Array.isArray(prior.notes) ? prior.notes.slice(0, 30) : [], updatedAt: at };
+        tx.set(ref, { customer }, { merge: true });
+        return customer;
+      });
+    },
+    async addCustomerNote(id, conversationId, text, at) {
+      const ref = channels.doc(id).collection("conversations").doc(conversationId);
+      return db.runTransaction(async tx => {
+        const snapshot = await tx.get(ref);
+        if (!snapshot.exists) throw new HttpError(404, "找不到這位客戶。");
+        const prior = snapshot.data().customer || {};
+        const notes = [{ id: randomUUID(), text, createdAt: at }, ...(Array.isArray(prior.notes) ? prior.notes : [])].slice(0, 30);
+        const customer = { ...prior, notes, updatedAt: at };
+        tx.set(ref, { customer }, { merge: true });
+        return customer;
+      });
+    },
     async prepareReply(id, conversationId, operationId, text, at, attachmentId = null) {
       const channel = channels.doc(id), conversation = channel.collection("conversations").doc(conversationId);
       const outbox = channel.collection("outbox").doc(operationId);

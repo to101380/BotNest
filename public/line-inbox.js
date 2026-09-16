@@ -26,7 +26,8 @@ export function createLineInbox() {
   const conversations = new Map(), messages = new Map();
   const drafts = new Map(), localReplies = new Map();
   const attachments = new Map();
-  let sending = false, uploading = false;
+  let sending = false, uploading = false, customerSaving = false;
+  let customerTags = [];
   let followLatest = true;
   const messageArea = $("line-messages");
   messageArea.addEventListener("scroll", () => {
@@ -50,7 +51,7 @@ export function createLineInbox() {
     browsingHistory = value;
     $("line-polling-note").textContent = value ? "正在瀏覽較早紀錄，自動更新已暫停；按「重新整理」回到最新訊息。" : "每 10 秒更新。";
   }
-  const label = item => item.displayName || `${({ user: "使用者", group: "群組", room: "聊天室" })[item.sourceType] || "對話"} · ${item.sourceId.slice(-8)}`;
+  const label = item => item?.customer?.name || item?.displayName || `${({ user: "使用者", group: "群組", room: "聊天室" })[item?.sourceType] || "對話"} · ${(item?.sourceId || "").slice(-8)}`;
   function avatar(item) {
     const frame = document.createElement("span"); frame.className = "chat-avatar";
     frame.textContent = item.displayName ? [...item.displayName][0] : "人";
@@ -70,6 +71,46 @@ export function createLineInbox() {
     $("line-conversation-title").textContent = item ? label(item) : "選擇一段對話";
     $("line-chat-avatar").replaceChildren(...(item ? [avatar(item)] : []));
     $("line-chat-source").textContent = item ? "來自 LINE" : "在左側選擇聊天者，開始回覆";
+  }
+  const customerFields = ["name", "phone", "email", "birthday", "gender", "language", "country", "city", "address", "about", "custom1", "custom2", "custom3"];
+  function renderCustomerTags() {
+    $("customer-tags").replaceChildren(...customerTags.map(tag => {
+      const chip = document.createElement("span"); chip.className = "customer-tag";
+      const text = document.createElement("span"); text.textContent = tag;
+      const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×"; remove.setAttribute("aria-label", `移除標籤 ${tag}`);
+      remove.addEventListener("click", () => { customerTags = customerTags.filter(value => value !== tag); renderCustomerTags(); customerStatus("尚未儲存"); });
+      chip.append(text, remove); return chip;
+    }));
+  }
+  function renderCustomerNotes(notes = []) {
+    $("customer-notes").replaceChildren(...notes.map(note => {
+      const card = document.createElement("article"); card.className = "customer-note-card";
+      const text = document.createElement("p"); text.textContent = note.text;
+      const time = document.createElement("time"); time.dateTime = new Date(note.createdAt).toISOString(); time.textContent = new Date(note.createdAt).toLocaleString("zh-TW", { dateStyle: "medium", timeStyle: "short" });
+      card.append(text, time); return card;
+    }));
+  }
+  function customerStatus(text, error = false) { $("customer-status").textContent = text; $("customer-status").classList.toggle("error", error); }
+  function showCustomerPanel() {
+    const item = conversations.get(selected), panel = $("customer-panel");
+    panel.hidden = !item;
+    if (!item) return;
+    $("customer-avatar").replaceChildren(avatar(item)); $("customer-title").textContent = label(item);
+    const customer = item.customer || {};
+    for (const field of customerFields) $(`customer-${field}`).value = customer[field] || "";
+    customerTags = Array.isArray(customer.tags) ? [...customer.tags] : [];
+    renderCustomerTags(); renderCustomerNotes(Array.isArray(customer.notes) ? customer.notes : []); customerStatus("");
+  }
+  function setCustomerBusy(value) {
+    customerSaving = value;
+    $("customer-form").querySelectorAll("input,textarea,select,button").forEach(control => { control.disabled = value; });
+    $("customer-save").textContent = value ? "儲存中…" : "儲存客戶資料";
+  }
+  function updateCustomer(customer) {
+    const item = conversations.get(selected);
+    if (!item) return;
+    conversations.set(selected, { ...item, customer });
+    showConversations(); showCustomerPanel();
   }
   async function api(path, options = {}) {
     const currentEpoch = epoch, currentUser = user, signal = controller.signal;
@@ -231,7 +272,7 @@ export function createLineInbox() {
     historyMode(false);
     $("line-reply-text").value = drafts.get(id) || ""; replyControls();
     $("line-conversation-title").textContent = label(conversations.get(id));
-    showConversations(); showMessages();
+    showConversations(); showMessages(); showCustomerPanel();
     try { await loadMessages(false, "bottom"); } catch (error) { report(error); }
   }
   async function refresh(more = false) {
@@ -329,6 +370,41 @@ export function createLineInbox() {
     $(`line-pick-${kind}`).addEventListener("click", () => $(`line-${kind}-input`).click());
     $(`line-${kind}-input`).addEventListener("change", event => { const file = event.target.files[0]; event.target.value = ""; void uploadFile(file, kind); });
   }
+  $("customer-toggle").addEventListener("click", () => {
+    const open = $("customer-panel").classList.toggle("open");
+    $("customer-toggle").setAttribute("aria-expanded", String(open));
+  });
+  $("customer-close").addEventListener("click", () => { $("customer-panel").classList.remove("open"); $("customer-toggle").setAttribute("aria-expanded", "false"); });
+  function addCustomerTag() {
+    const input = $("customer-tag"), tag = input.value.trim();
+    if (!tag || customerTags.includes(tag)) { input.value = ""; return; }
+    if (customerTags.length >= 20) { customerStatus("標籤最多 20 個。", true); return; }
+    customerTags.push(tag); input.value = ""; renderCustomerTags(); customerStatus("尚未儲存");
+  }
+  $("customer-add-tag").addEventListener("click", addCustomerTag);
+  $("customer-tag").addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); addCustomerTag(); } });
+  $("customer-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    const conversationId = selected;
+    if (!conversationId || customerSaving) return;
+    const payload = Object.fromEntries(customerFields.map(field => [field, $(`customer-${field}`).value])); payload.tags = customerTags;
+    setCustomerBusy(true); customerStatus("正在儲存…");
+    try {
+      const data = await api(`conversations/${conversationId}/customer`, { method: "PUT", body: JSON.stringify(payload) });
+      if (selected === conversationId) { updateCustomer(data.customer); customerStatus("已儲存"); }
+    } catch (error) { if (selected === conversationId) customerStatus(error.message, true); }
+    finally { setCustomerBusy(false); }
+  });
+  $("customer-add-note").addEventListener("click", async () => {
+    const conversationId = selected, input = $("customer-note"), text = input.value.trim();
+    if (!conversationId || !text || customerSaving) return;
+    setCustomerBusy(true); customerStatus("正在新增記事…");
+    try {
+      const data = await api(`conversations/${conversationId}/customer/notes`, { method: "POST", body: JSON.stringify({ text }) });
+      if (selected === conversationId) { input.value = ""; updateCustomer(data.customer); customerStatus("記事已新增"); }
+    } catch (error) { if (selected === conversationId) customerStatus(error.message, true); }
+    finally { setCustomerBusy(false); }
+  });
   $("line-remove-attachment").addEventListener("click", () => { attachments.delete(selected); replyControls(); });
   $("line-pick-emoji").addEventListener("click", () => {
     $("line-emoji-panel").hidden = !$("line-emoji-panel").hidden;
@@ -401,12 +477,13 @@ export function createLineInbox() {
       epoch++; controller?.abort(); clearInterval(timer); controller = new AbortController();
       messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; channel = null; selected = null; refreshing = false; saving = false;
-      sending = false; uploading = false; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
+      sending = false; uploading = false; customerSaving = false; customerTags = []; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
       $("line-emoji-panel").hidden = true; $("line-pick-emoji").setAttribute("aria-expanded", "false");
       conversationNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
       historyMode(false);
       $("line-oa-name").textContent = $("line-webhook-url").value = $("line-channel-id").value = "";
       $("line-conversation-title").textContent = "選擇一段對話";
+      $("customer-panel").hidden = true; $("customer-panel").classList.remove("open"); $("customer-toggle").setAttribute("aria-expanded", "false");
       $("line-channel-id").readOnly = false; $("line-connect-fields").disabled = false; $("line-refresh").disabled = false;
       $("line-account").hidden = $("line-inbox").hidden = $("line-connect-form").hidden = true;
       showConversations(); showMessages(); status("");
