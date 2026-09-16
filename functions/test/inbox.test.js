@@ -57,6 +57,7 @@ test("webhook delivery is durable, deduplicated, and out-of-order events do not 
   const conversations = await f.store.conversations("1234567890");
   assert.equal(conversations.items.length, 1);
   assert.equal(conversations.items[0].lastText, "message 2");
+  assert.equal(conversations.items[0].createdAt, 1000);
   assert.equal((await f.store.messages("1234567890", conversations.items[0].id)).items.length, 2);
 });
 test("unsend removes text and preview; redelivery cannot restore it", async () => {

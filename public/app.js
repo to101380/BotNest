@@ -1,7 +1,9 @@
 import { hasFirebaseConfig, providerName, authErrorMessage, linkProviderAccount, reauthenticateForLink, validateEmailRegistration, reauthenticatePasswordForLink, linkEmailPassword } from "./auth-helpers.js";
 import { createLineInbox } from "./line-inbox.js";
+import { createCustomerManager } from "./customer-manager.js";
 const $ = id => document.getElementById(id);
 const lineInbox = createLineInbox();
+const customerManager = createCustomerManager();
 let auth;
 let sdk;
 let busy = false;
@@ -12,20 +14,25 @@ let proofTimeout;
 function renderPage(moveFocus = false) {
   const signedIn = !!auth?.currentUser;
   const aiPage = signedIn && location.hash === "#ai-robot";
+  const customersPage = signedIn && location.hash === "#customers";
   $("app-nav").hidden = !signedIn;
   document.body.classList.toggle("authenticated", signedIn);
-  $("account-page").hidden = aiPage;
+  $("account-page").hidden = aiPage || customersPage;
   $("ai-page").hidden = !aiPage;
-  $("signed-in").setAttribute("aria-labelledby", aiPage ? "ai-title" : "welcome");
-  document.querySelector(".login-card").setAttribute("aria-labelledby", signedIn ? (aiPage ? "ai-title" : "welcome") : "title");
-  document.body.classList.toggle("inbox-open", aiPage);
+  $("customers-page").hidden = !customersPage;
+  const pageTitle = aiPage ? "ai-title" : customersPage ? "customers-title" : "welcome";
+  $("signed-in").setAttribute("aria-labelledby", pageTitle);
+  document.querySelector(".login-card").setAttribute("aria-labelledby", signedIn ? pageTitle : "title");
+  document.body.classList.toggle("inbox-open", aiPage || customersPage);
+  document.body.classList.toggle("customers-open", customersPage);
   lineInbox.setSession(auth?.currentUser || null, aiPage);
-  for (const [id, active] of [["nav-account", !aiPage], ["nav-ai", aiPage]]) {
+  customerManager.setSession(auth?.currentUser || null, customersPage);
+  for (const [id, active] of [["nav-account", !aiPage && !customersPage], ["nav-ai", aiPage], ["nav-customers", customersPage]]) {
     if (signedIn && active) $(id).setAttribute("aria-current", "page");
     else $(id).removeAttribute("aria-current");
   }
-  document.title = signedIn ? `${aiPage ? "AI機器人" : "帳號資訊"}｜Identity` : "登入｜Identity";
-  if (moveFocus && aiPage) $("ai-title").focus();
+  document.title = signedIn ? `${aiPage ? "AI機器人" : customersPage ? "顧客管理" : "帳號資訊"}｜Identity` : "登入｜Identity";
+  if (moveFocus && (aiPage || customersPage)) $(pageTitle).focus();
 }
 window.addEventListener("hashchange", () => renderPage(true));
 function clearLinkProof() {

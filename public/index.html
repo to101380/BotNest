@@ -7,6 +7,7 @@
   <meta name="description" content="使用 Google 或 Facebook 登入，查看你的帳號身分。">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/line-inbox.css">
+  <link rel="stylesheet" href="/customer-manager.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -16,6 +17,7 @@
       <p class="nav-caption">工作空間</p>
       <a id="nav-account" href="#account">帳號資訊</a>
       <a id="nav-ai" href="#ai-robot">AI機器人</a>
+      <a id="nav-customers" href="#customers">顧客管理</a>
     </nav>
     <section class="login-card" aria-labelledby="title">
       <div class="card-top"><span class="eyebrow">ACCOUNT ACCESS</span><span id="state" class="state">準備中</span></div>
@@ -208,6 +210,26 @@
             <figure><img id="line-image-full" alt=""><figcaption id="line-image-caption"></figcaption></figure>
             <button id="line-image-next" class="image-viewer-nav image-viewer-next" type="button" aria-label="下一張圖片">›</button>
           </dialog>
+        </section>
+        <section id="customers-page" hidden aria-labelledby="customers-title">
+          <div class="customers-toolbar">
+            <div><h1 id="customers-title" tabindex="-1">顧客管理</h1><p>集中查看從 LINE 建立的顧客名單與聯絡資料</p></div>
+            <span id="customers-count">0 位顧客</span>
+          </div>
+          <div class="customers-controls">
+            <label for="customers-search">搜尋顧客</label>
+            <span class="customers-search-wrap"><span aria-hidden="true">⌕</span><input id="customers-search" type="search" placeholder="搜尋姓名、電話、Email 或標籤"></span>
+            <button id="customers-refresh" type="button">重新整理</button>
+          </div>
+          <p id="customers-status" class="customers-status" role="status" aria-live="polite"></p>
+          <div class="customers-table-wrap">
+            <table class="customers-table">
+              <thead><tr><th scope="col">顧客姓名</th><th scope="col">加入時間</th><th scope="col">最近對話時間</th><th scope="col">行動電話</th><th scope="col">電子信箱</th><th scope="col">標籤</th></tr></thead>
+              <tbody id="customers-list"></tbody>
+            </table>
+            <div id="customers-empty" class="customers-empty" hidden><strong>目前沒有顧客</strong><span>LINE 使用者傳送訊息後，會自動出現在這裡。</span></div>
+          </div>
+          <button id="customers-more" class="customers-more" type="button" hidden>載入更多顧客</button>
         </section>
         <button id="logout" class="logout">登出帳號</button>
       </section>

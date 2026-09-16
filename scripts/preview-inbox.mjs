@@ -24,18 +24,27 @@ const handler = createHandler({ store, getKey: () => key,
   },
 });
 const previewScript = `import { createLineInbox } from '/line-inbox.js';
+import { createCustomerManager } from '/customer-manager.js';
 document.body.classList.add('authenticated','inbox-open');
 document.getElementById('signed-out').hidden=true;
 document.getElementById('signed-in').hidden=false;
-document.getElementById('account-page').hidden=true;
-document.getElementById('ai-page').hidden=false;
 document.getElementById('app-nav').hidden=false;
-document.getElementById('nav-ai').setAttribute('aria-current','page');
 document.getElementById('state').textContent='本機示範';
 document.getElementById('status').textContent='這是虛構資料的本機畫面預覽，回覆僅模擬，不會真的傳送到 LINE。請勿在此輸入真實憑證。';
 document.getElementById('logout').hidden=true;
-document.title='LINE 收件匣｜本機示範';
-createLineInbox().setSession({uid:'preview',getIdToken:async()=> 'preview-token'},true);`;
+const previewUser={uid:'preview',getIdToken:async()=> 'preview-token'};
+const inbox=createLineInbox(), customers=createCustomerManager();
+function renderPreview(){
+  const customerPage=location.hash==='#customers';
+  document.getElementById('account-page').hidden=true;
+  document.getElementById('ai-page').hidden=customerPage;
+  document.getElementById('customers-page').hidden=!customerPage;
+  document.body.classList.toggle('customers-open',customerPage);
+  for(const [id,active] of [['nav-account',false],['nav-ai',!customerPage],['nav-customers',customerPage]]) document.getElementById(id).toggleAttribute('aria-current',active);
+  inbox.setSession(previewUser,!customerPage); customers.setSession(previewUser,customerPage);
+  document.title=(customerPage?'顧客管理':'LINE 收件匣')+'｜本機示範';
+}
+addEventListener('hashchange',renderPreview); renderPreview();`;
 const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8" };
 http.createServer(async (req, res) => {
   res.setHeader("Cache-Control", "no-store");

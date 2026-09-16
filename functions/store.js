@@ -177,7 +177,9 @@ export function createStore(db) {
           if (summary?.lastMessageId === event.messageId) tx.update(conversation, { lastText: "[訊息已收回]" });
         } else if (!old?.unsent) {
           tx.set(message, { type: event.type, text: event.text, sentAt: event.sentAt, unsent: false, direction: "incoming" });
-          if (!summary || event.sentAt >= summary.updatedAt) tx.set(conversation, { sourceType: event.sourceType, sourceId: event.sourceId, lastText: event.text, lastMessageId: event.messageId, updatedAt: event.sentAt }, { merge: true });
+          const createdAt = summary?.createdAt == null ? event.sentAt : Math.min(summary.createdAt, event.sentAt);
+          if (!summary || event.sentAt >= summary.updatedAt) tx.set(conversation, { sourceType: event.sourceType, sourceId: event.sourceId, lastText: event.text, lastMessageId: event.messageId, updatedAt: event.sentAt, createdAt }, { merge: true });
+          else if (createdAt !== summary.createdAt) tx.set(conversation, { createdAt }, { merge: true });
         }
         tx.set(receipt, { receivedAt: Date.now() });
       });

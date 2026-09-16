@@ -6,7 +6,7 @@ service cloud.firestore {
     // botnest/state/channels/{id}: ownerUid, channelId, botUserId, displayName,
     //   basicId (strings), secret {iv,tag,data} (AES-GCM ciphertext), timestamps.
     // channels/{id}/conversations/{sha256}: sourceType, sourceId, lastText,
-    //   lastMessageId (strings), updatedAt (milliseconds), customer (private
+    //   lastMessageId (strings), createdAt/updatedAt (milliseconds), customer (private
     //   CRM map containing contact fields, tags, notes, and updatedAt).
     // conversations/{id}/messages/{id}: type,text,direction (strings),
     //   sentAt (milliseconds), unsent (boolean).

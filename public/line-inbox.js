@@ -290,6 +290,12 @@ export function createLineInbox() {
       if (!more) conversations.clear();
       for (const item of data.items) conversations.set(item.id, item);
       conversationNext = data.next; showConversations();
+      let pendingConversation = null;
+      try { pendingConversation = sessionStorage.getItem("botnest-open-conversation"); } catch { /* Storage may be unavailable. */ }
+      if (pendingConversation && conversations.has(pendingConversation)) {
+        try { sessionStorage.removeItem("botnest-open-conversation"); } catch { /* Storage may be unavailable. */ }
+        await selectConversation(pendingConversation); status(""); return;
+      }
       if (more) historyMode(true);
       await loadMessages();
       status("");
