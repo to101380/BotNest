@@ -21,7 +21,7 @@ const formatDay = value => {
     : { year: "numeric", month: "long", day: "numeric", weekday: "short" });
 };
 export function createLineInbox() {
-  let user = null, active = false, epoch = 0, controller, timer, channel = null;
+  let user = null, active = false, pageMode = null, epoch = 0, controller, timer, channel = null;
   let selected = null, conversationNext = null, messageNext = null, refreshing = false, saving = false, browsingHistory = false;
   const conversations = new Map(), messages = new Map();
   const drafts = new Map(), localReplies = new Map();
@@ -45,7 +45,9 @@ export function createLineInbox() {
     $("line-send").textContent = sending ? "傳送中…" : "傳送回覆";
     $("line-reply-hint").textContent = !channel?.canReply ? "請更新上方 OA 連線憑證，啟用回覆。" : !selected ? "先選擇一段對話。" : "最多 5000 字";
   }
-  const status = (text, error = false) => { $("line-status").textContent = text; $("line-status").classList.toggle("error", error); };
+  const status = (text, error = false) => {
+    for (const id of ["line-status", "channel-status"]) { $(id).textContent = text; $(id).classList.toggle("error", error); }
+  };
   const clearSecrets = () => { $("line-channel-secret").value = $("line-access-token").value = ""; };
   function historyMode(value) {
     browsingHistory = value;
@@ -127,8 +129,10 @@ export function createLineInbox() {
   function showAccount() {
     $("line-account").hidden = $("line-inbox").hidden = !channel;
     $("line-connect-form").hidden = !!channel;
+    $("line-not-connected").hidden = !!channel;
     $("line-settings-toggle").setAttribute("aria-expanded", "false");
-    $("inbox-settings").open = !channel;
+    $("line-card-state").textContent = channel ? "已連接" : "未連接";
+    $("line-card-state").classList.toggle("connected", !!channel);
     replyControls();
     if (!channel) return;
     $("line-oa-name").textContent = `${channel.displayName} ${channel.basicId}`;
@@ -308,9 +312,11 @@ export function createLineInbox() {
     try {
       channel = (await api("account")).channel;
       showAccount();
-      if (channel) await refresh();
-      else status("連接 OA 後即可開始接收新訊息。");
-      if (currentEpoch === epoch) timer = setInterval(() => { if (!document.hidden && !browsingHistory) void refresh(); }, 10000);
+      if (channel) {
+        if (pageMode === "inbox") await refresh();
+        else status(channel.verifiedAt ? "LINE 官方帳號已連接，Webhook 運作正常。" : "LINE 官方帳號已連接，等待 Webhook 驗證。");
+      } else status("尚未連接 LINE 官方帳號。請填寫下方資訊完成連接。");
+      if (currentEpoch === epoch && pageMode === "inbox") timer = setInterval(() => { if (!document.hidden && !browsingHistory) void refresh(); }, 10000);
     } catch (error) { report(error); }
   }
   async function sendReply(conversationId, text, operationId, attachment) {
@@ -477,12 +483,12 @@ export function createLineInbox() {
   });
   window.addEventListener("pagehide", () => { clearSecrets(); controller?.abort(); clearInterval(timer); messageResize.disconnect(); });
   return {
-    setSession(nextUser, visible) {
-      const nextActive = !!nextUser && visible;
-      if (user?.uid === nextUser?.uid && active === nextActive) { user = nextUser; return; }
+    setSession(nextUser, nextMode) {
+      const nextActive = !!nextUser && !!nextMode;
+      if (user?.uid === nextUser?.uid && active === nextActive && pageMode === nextMode) { user = nextUser; return; }
       epoch++; controller?.abort(); clearInterval(timer); controller = new AbortController();
       messageResize.disconnect(); followLatest = true;
-      user = nextUser; active = nextActive; channel = null; selected = null; refreshing = false; saving = false;
+      user = nextUser; active = nextActive; pageMode = nextMode; channel = null; selected = null; refreshing = false; saving = false;
       sending = false; uploading = false; customerSaving = false; customerTags = []; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
       $("line-emoji-panel").hidden = true; $("line-pick-emoji").setAttribute("aria-expanded", "false");
       conversationNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
@@ -491,7 +497,8 @@ export function createLineInbox() {
       $("line-conversation-title").textContent = "選擇一段對話";
       $("customer-panel").hidden = true; $("customer-panel").classList.remove("open"); $("customer-toggle").setAttribute("aria-expanded", "false");
       $("line-channel-id").readOnly = false; $("line-connect-fields").disabled = false; $("line-refresh").disabled = false;
-      $("line-account").hidden = $("line-inbox").hidden = $("line-connect-form").hidden = true;
+      $("line-account").hidden = $("line-inbox").hidden = $("line-connect-form").hidden = $("line-not-connected").hidden = true;
+      $("line-card-state").textContent = "讀取中"; $("line-card-state").classList.remove("connected");
       showConversations(); showMessages(); status("");
       if (active) void start();
     },

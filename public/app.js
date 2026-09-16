@@ -15,24 +15,27 @@ function renderPage(moveFocus = false) {
   const signedIn = !!auth?.currentUser;
   const aiPage = signedIn && location.hash === "#ai-robot";
   const customersPage = signedIn && location.hash === "#customers";
+  const channelsPage = signedIn && location.hash === "#channels";
   $("app-nav").hidden = !signedIn;
   document.body.classList.toggle("authenticated", signedIn);
-  $("account-page").hidden = aiPage || customersPage;
+  $("account-page").hidden = aiPage || customersPage || channelsPage;
   $("ai-page").hidden = !aiPage;
   $("customers-page").hidden = !customersPage;
-  const pageTitle = aiPage ? "ai-title" : customersPage ? "customers-title" : "welcome";
+  $("channels-page").hidden = !channelsPage;
+  const pageTitle = aiPage ? "ai-title" : customersPage ? "customers-title" : channelsPage ? "channels-title" : "welcome";
   $("signed-in").setAttribute("aria-labelledby", pageTitle);
   document.querySelector(".login-card").setAttribute("aria-labelledby", signedIn ? pageTitle : "title");
-  document.body.classList.toggle("inbox-open", aiPage || customersPage);
+  document.body.classList.toggle("inbox-open", aiPage || customersPage || channelsPage);
   document.body.classList.toggle("customers-open", customersPage);
-  lineInbox.setSession(auth?.currentUser || null, aiPage);
+  document.body.classList.toggle("channels-open", channelsPage);
+  lineInbox.setSession(auth?.currentUser || null, aiPage ? "inbox" : channelsPage ? "settings" : null);
   customerManager.setSession(auth?.currentUser || null, customersPage);
-  for (const [id, active] of [["nav-account", !aiPage && !customersPage], ["nav-ai", aiPage], ["nav-customers", customersPage]]) {
+  for (const [id, active] of [["nav-account", !aiPage && !customersPage && !channelsPage], ["nav-ai", aiPage], ["nav-customers", customersPage], ["nav-channels", channelsPage]]) {
     if (signedIn && active) $(id).setAttribute("aria-current", "page");
     else $(id).removeAttribute("aria-current");
   }
-  document.title = signedIn ? `${aiPage ? "AI機器人" : customersPage ? "顧客管理" : "帳號資訊"}｜Identity` : "登入｜Identity";
-  if (moveFocus && (aiPage || customersPage)) $(pageTitle).focus();
+  document.title = signedIn ? `${aiPage ? "AI機器人" : customersPage ? "顧客管理" : channelsPage ? "渠道設定" : "帳號資訊"}｜Identity` : "登入｜Identity";
+  if (moveFocus && (aiPage || customersPage || channelsPage)) $(pageTitle).focus();
 }
 window.addEventListener("hashchange", () => renderPage(true));
 function clearLinkProof() {

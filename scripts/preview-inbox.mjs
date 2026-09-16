@@ -36,13 +36,16 @@ const previewUser={uid:'preview',getIdToken:async()=> 'preview-token'};
 const inbox=createLineInbox(), customers=createCustomerManager();
 function renderPreview(){
   const customerPage=location.hash==='#customers';
+  const channelPage=location.hash==='#channels';
   document.getElementById('account-page').hidden=true;
-  document.getElementById('ai-page').hidden=customerPage;
+  document.getElementById('ai-page').hidden=customerPage||channelPage;
   document.getElementById('customers-page').hidden=!customerPage;
+  document.getElementById('channels-page').hidden=!channelPage;
   document.body.classList.toggle('customers-open',customerPage);
-  for(const [id,active] of [['nav-account',false],['nav-ai',!customerPage],['nav-customers',customerPage]]) document.getElementById(id).toggleAttribute('aria-current',active);
-  inbox.setSession(previewUser,!customerPage); customers.setSession(previewUser,customerPage);
-  document.title=(customerPage?'顧客管理':'LINE 收件匣')+'｜本機示範';
+  document.body.classList.toggle('channels-open',channelPage);
+  for(const [id,active] of [['nav-account',false],['nav-ai',!customerPage&&!channelPage],['nav-customers',customerPage],['nav-channels',channelPage]]) document.getElementById(id).toggleAttribute('aria-current',active);
+  inbox.setSession(previewUser,channelPage?'settings':customerPage?null:'inbox'); customers.setSession(previewUser,customerPage);
+  document.title=(customerPage?'顧客管理':channelPage?'渠道設定':'LINE 收件匣')+'｜本機示範';
 }
 addEventListener('hashchange',renderPreview); renderPreview();`;
 const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8" };
