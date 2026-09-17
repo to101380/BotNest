@@ -28,6 +28,8 @@ export function createLineInbox() {
   const attachments = new Map();
   let sending = false, uploading = false, customerSaving = false, aiSaving = false;
   let customerTags = [];
+  let customerSaveTimer = null, pendingCustomerSave = null, customerSaveRevision = 0;
+  let customerSaveChain = Promise.resolve();
   let followLatest = true;
   const messageArea = $("line-messages");
   messageArea.addEventListener("scroll", () => {
@@ -80,7 +82,7 @@ export function createLineInbox() {
       const chip = document.createElement("span"); chip.className = "customer-tag";
       const text = document.createElement("span"); text.textContent = tag;
       const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×"; remove.setAttribute("aria-label", `移除標籤 ${tag}`);
-      remove.addEventListener("click", () => { customerTags = customerTags.filter(value => value !== tag); renderCustomerTags(); customerStatus("尚未儲存"); });
+      remove.addEventListener("click", () => { customerTags = customerTags.filter(value => value !== tag); renderCustomerTags(); queueCustomerSave(); });
       chip.append(text, remove); return chip;
     }));
   }
@@ -94,6 +96,8 @@ export function createLineInbox() {
       remove.addEventListener("click", async () => {
         const conversationId = selected;
         if (!conversationId || customerSaving || !confirm("確定要刪除這則記事嗎？刪除後無法復原。")) return;
+        await flushCustomerSave();
+        if (selected !== conversationId) return;
         setCustomerBusy(true); customerStatus("正在刪除記事…");
         try {
           const data = await api(`conversations/${conversationId}/customer/notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
@@ -118,7 +122,6 @@ export function createLineInbox() {
   function setCustomerBusy(value) {
     customerSaving = value;
     $("customer-form").querySelectorAll("input,textarea,select,button").forEach(control => { control.disabled = value; });
-    $("customer-save").textContent = value ? "儲存中…" : "儲存客戶資料";
   }
   function updateCustomer(customer) {
     const item = conversations.get(selected);
@@ -302,6 +305,7 @@ export function createLineInbox() {
     messageNext = data.next; showMessages(older ? "older" : scrollMode);
   }
   async function selectConversation(id) {
+    flushCustomerSave();
     selected = id; messages.clear(); messageNext = null;
     historyMode(false);
     $("line-reply-text").value = drafts.get(id) || ""; replyControls();
@@ -425,25 +429,57 @@ export function createLineInbox() {
     const input = $("customer-tag"), tag = input.value.trim();
     if (!tag || customerTags.includes(tag)) { input.value = ""; return; }
     if (customerTags.length >= 20) { customerStatus("標籤最多 20 個。", true); return; }
-    customerTags.push(tag); input.value = ""; renderCustomerTags(); customerStatus("尚未儲存");
+    customerTags.push(tag); input.value = ""; renderCustomerTags(); queueCustomerSave();
   }
   $("customer-add-tag").addEventListener("click", addCustomerTag);
   $("customer-tag").addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); addCustomerTag(); } });
-  $("customer-form").addEventListener("submit", async event => {
+  function customerPayload() {
+    const payload = Object.fromEntries(customerFields.map(field => [field, $(`customer-${field}`).value]));
+    payload.tags = [...customerTags];
+    return payload;
+  }
+  function persistCustomer(task) {
+    customerSaveChain = customerSaveChain.catch(() => {}).then(async () => {
+      if (!active || !user) return;
+      if (selected === task.conversationId && task.revision === customerSaveRevision) customerStatus("自動儲存中…");
+      try {
+        const data = await api(`conversations/${task.conversationId}/customer`, { method: "PUT", body: JSON.stringify(task.payload) });
+        const item = conversations.get(task.conversationId);
+        if (item) { conversations.set(task.conversationId, { ...item, customer: data.customer }); showConversations(); }
+        if (selected === task.conversationId && task.revision === customerSaveRevision) customerStatus("已自動儲存");
+      } catch (error) {
+        if (selected === task.conversationId && task.revision === customerSaveRevision) customerStatus(error.message, true);
+      }
+    });
+    return customerSaveChain;
+  }
+  function queueCustomerSave(delay = 700) {
+    if (!selected || customerSaving) return;
+    pendingCustomerSave = { conversationId: selected, payload: customerPayload(), revision: ++customerSaveRevision };
+    clearTimeout(customerSaveTimer);
+    customerSaveTimer = setTimeout(flushCustomerSave, delay);
+    customerStatus("等待自動儲存…");
+  }
+  function flushCustomerSave() {
+    clearTimeout(customerSaveTimer); customerSaveTimer = null;
+    const task = pendingCustomerSave; pendingCustomerSave = null;
+    return task ? persistCustomer(task) : customerSaveChain;
+  }
+  $("customer-form").addEventListener("input", event => {
+    if (customerFields.includes(event.target.name)) queueCustomerSave();
+  });
+  $("customer-form").addEventListener("change", event => {
+    if (customerFields.includes(event.target.name)) queueCustomerSave(0);
+  });
+  $("customer-form").addEventListener("submit", event => {
     event.preventDefault();
-    const conversationId = selected;
-    if (!conversationId || customerSaving) return;
-    const payload = Object.fromEntries(customerFields.map(field => [field, $(`customer-${field}`).value])); payload.tags = customerTags;
-    setCustomerBusy(true); customerStatus("正在儲存…");
-    try {
-      const data = await api(`conversations/${conversationId}/customer`, { method: "PUT", body: JSON.stringify(payload) });
-      if (selected === conversationId) { updateCustomer(data.customer); customerStatus("已儲存"); }
-    } catch (error) { if (selected === conversationId) customerStatus(error.message, true); }
-    finally { setCustomerBusy(false); }
+    queueCustomerSave(0);
   });
   $("customer-add-note").addEventListener("click", async () => {
     const conversationId = selected, input = $("customer-note"), text = input.value.trim();
     if (!conversationId || !text || customerSaving) return;
+    await flushCustomerSave();
+    if (selected !== conversationId) return;
     setCustomerBusy(true); customerStatus("正在新增記事…");
     try {
       const data = await api(`conversations/${conversationId}/customer/notes`, { method: "POST", body: JSON.stringify({ text }) });
@@ -525,12 +561,13 @@ export function createLineInbox() {
     try { await navigator.clipboard.writeText($("line-webhook-url").value); status("已複製 Webhook URL。"); }
     catch { $("line-webhook-url").select(); status("請手動複製已選取的網址。"); }
   });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushCustomerSave(); });
   window.addEventListener("pagehide", () => { clearSecrets(); controller?.abort(); clearInterval(timer); messageResize.disconnect(); });
   return {
     setSession(nextUser, nextMode) {
       const nextActive = !!nextUser && !!nextMode;
       if (user?.uid === nextUser?.uid && active === nextActive && pageMode === nextMode) { user = nextUser; return; }
-      epoch++; controller?.abort(); clearInterval(timer); controller = new AbortController();
+      epoch++; controller?.abort(); clearInterval(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
       messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; pageMode = nextMode; channel = null; selected = null; refreshing = false; saving = false;
       sending = false; uploading = false; customerSaving = false; aiSaving = false; customerTags = []; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
