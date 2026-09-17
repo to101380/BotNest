@@ -26,6 +26,8 @@ const handler = createHandler({ store, getKey: () => key,
 });
 const previewScript = `import { createLineInbox } from '/line-inbox.js';
 import { createCustomerManager } from '/customer-manager.js';
+document.body.classList.remove('auth-pending');
+document.getElementById('auth-loading').hidden=true;
 document.body.classList.add('authenticated','inbox-open');
 document.getElementById('signed-out').hidden=true;
 document.getElementById('signed-in').hidden=false;

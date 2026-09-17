@@ -11,7 +11,13 @@
   <link rel="stylesheet" href="/channel-settings.css">
   <script type="module" src="/app.js"></script>
 </head>
-<body>
+<body class="auth-pending">
+  <div id="auth-loading" class="auth-loading" role="status" aria-live="polite" aria-label="正在確認登入狀態">
+    <span class="auth-loading-mark" aria-hidden="true">i</span>
+    <span class="auth-loading-spinner" aria-hidden="true"></span>
+    <strong>正在載入工作空間</strong>
+    <span>正在確認登入狀態…</span>
+  </div>
   <header><a href="/" class="brand"><span class="brand-mark" aria-hidden="true">i</span>identity<span class="brand-dot">.</span></a><span class="header-caption">你的帳號，從這裡開始</span></header>
   <main>
     <nav id="app-nav" class="app-nav" aria-label="主要導覽" hidden>
@@ -23,7 +29,7 @@
     </nav>
     <section class="login-card" aria-labelledby="title">
       <div class="card-top"><span class="eyebrow">ACCOUNT ACCESS</span><span id="state" class="state">準備中</span></div>
-      <section id="signed-out">
+      <section id="signed-out" hidden>
         <h1 id="title">歡迎回來<span class="dot">.</span></h1>
         <p class="intro">使用 Email 或你習慣的第三方帳號登入。</p>
         <div class="providers">

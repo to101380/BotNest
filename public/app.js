@@ -11,6 +11,10 @@ let emailMode = "login";
 let mailReadyAt = 0;
 let linkProof = null;
 let proofTimeout;
+function finishAuthLoading() {
+  document.body.classList.remove("auth-pending");
+  $("auth-loading").hidden = true;
+}
 function renderPage(moveFocus = false) {
   const signedIn = !!auth?.currentUser;
   const aiPage = signedIn && location.hash === "#ai-robot";
@@ -79,6 +83,7 @@ function renderAvatar(user) {
   loadNext();
 }
 function render(user) {
+  finishAuthLoading();
   clearLinkProof();
   $("account-password").value = $("confirm-password").value = $("reauth-password").value = $("new-password").value = $("new-password-confirm").value = "";
   $("signed-out").hidden = !!user;
@@ -120,6 +125,8 @@ async function initialize() {
     if (!response.ok) throw new Error("config");
     const config = await response.json();
     if (!hasFirebaseConfig(config)) {
+      finishAuthLoading();
+      $("signed-out").hidden = false;
       $("setup").hidden = false;
       $("state").textContent = "尚未設定";
       setStatus("尚未連接 Firebase，完成下方設定後即可登入。");
@@ -137,8 +144,14 @@ async function initialize() {
     await sdk.setPersistence(candidate, sdk.browserSessionPersistence);
     auth = candidate;
     $("setup").hidden = true;
-    sdk.onAuthStateChanged(auth, render, () => setStatus("無法讀取登入狀態，請重新整理頁面。", true));
+    sdk.onAuthStateChanged(auth, render, () => {
+      finishAuthLoading();
+      $("signed-out").hidden = false;
+      setStatus("無法讀取登入狀態，請重新整理頁面。", true);
+    });
   } catch {
+    finishAuthLoading();
+    $("signed-out").hidden = false;
     $("setup").hidden = false;
     $("state").textContent = "連線未完成";
     $("retry").hidden = false;
