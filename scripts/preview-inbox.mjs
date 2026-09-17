@@ -10,6 +10,7 @@ import { memoryDb } from "../functions/test/memory.js";
 const root = fileURLToPath(new URL("../public/", import.meta.url));
 const store = createStore(memoryDb()), key = randomBytes(32).toString("base64");
 await store.bind("preview", { channelId: "1234567890", ownerUid: "preview", botUserId: `U${"a".repeat(32)}`, displayName: "BotNest 示範帳號", basicId: "@demo", secret: seal("a".repeat(32), key, "1234567890"), accessToken: seal("demo-only-token", key, "1234567890:access-token"), verifiedAt: Date.now() });
+await store.saveAiSettings("1234567890", { enabled: true, instructions: "以繁體中文簡短回覆。", model: "gpt-5.4-mini" }, Date.now());
 for (const [i, text] of ["你好，我想了解服務內容。", "可以告訴我目前的營業時間嗎？", "謝謝！我晚點再和你聯絡。"].entries()) {
   await store.ingest("1234567890", normalizeEvent({ type: "message", webhookEventId: `demo-${i}`, timestamp: Date.now() - (3 - i) * 60000, source: { type: "user", userId: `U${"b".repeat(32)}` }, message: { type: "text", id: String(i), text } }));
 }

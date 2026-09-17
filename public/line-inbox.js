@@ -154,6 +154,7 @@ export function createLineInbox() {
     $("ai-key-state").textContent = settings.configured ? "OpenAI API 已安全設定於 Firebase 後端。" : "尚未設定 OpenAI API Key。";
     $("ai-card-state").textContent = !settings.configured ? "待設定 API Key" : settings.enabled ? "自動回覆中" : "已關閉";
     $("ai-card-state").classList.toggle("connected", !!settings.configured && !!settings.enabled);
+    $("ai-reply-indicator").hidden = !(settings.configured && settings.enabled);
   }
   function aiStatus(text, error = false) {
     $("ai-settings-status").textContent = text;
@@ -330,10 +331,10 @@ export function createLineInbox() {
       channel = (await api("account")).channel;
       showAccount();
       if (channel) {
+        const ai = await api("ai-settings");
+        showAiSettings(ai.settings);
         if (pageMode === "inbox") await refresh();
         else {
-          const ai = await api("ai-settings");
-          showAiSettings(ai.settings);
           status(channel.verifiedAt ? "LINE 官方帳號已連接，Webhook 運作正常。" : "LINE 官方帳號已連接，等待 Webhook 驗證。");
         }
       } else status("尚未連接 LINE 官方帳號。請填寫下方資訊完成連接。");
@@ -531,6 +532,7 @@ export function createLineInbox() {
       $("line-account").hidden = $("line-inbox").hidden = $("line-connect-form").hidden = $("line-not-connected").hidden = true;
       $("line-card-state").textContent = "讀取中"; $("line-card-state").classList.remove("connected");
       $("ai-enabled").checked = false; $("ai-instructions").value = ""; $("ai-card-state").textContent = "讀取中"; $("ai-card-state").classList.remove("connected"); aiStatus("");
+      $("ai-reply-indicator").hidden = true;
       showConversations(); showMessages(); status("");
       if (active) void start();
     },
