@@ -71,7 +71,7 @@ function cleanCustomer(input) {
   return result;
 }
 
-export function createHandler({ store, verifyToken, getKey, media, fetchLine = fetch, now = Date.now }) {
+export function createHandler({ store, verifyToken, getKey, openAiConfigured = () => false, media, fetchLine = fetch, now = Date.now }) {
   async function lineRequest(path, options) {
     const response = await fetchLine(`https://api.line.me${path}`, { ...options, signal: AbortSignal.timeout(12000) });
     if (!response.ok) throw new HttpError(response.status >= 500 || response.status === 429 ? 503 : 400, "LINE 憑證驗證失敗，請確認 Channel ID 與長期 Access Token。");
@@ -149,6 +149,19 @@ export function createHandler({ store, verifyToken, getKey, media, fetchLine = f
       }
       const account = await store.account(user.uid);
       if (!account || account.ownerUid !== user.uid) throw new HttpError(404, "請先綁定 OA。");
+      if (path === "/api/line/ai-settings" && req.method === "GET") {
+        const ai = account.ai || {};
+        return res.json({ settings: { enabled: !!ai.enabled, instructions: ai.instructions || "", model: ai.model || "gpt-5.4-mini", configured: openAiConfigured() } });
+      }
+      if (path === "/api/line/ai-settings" && req.method === "PUT") {
+        const origin = req.get("origin");
+        if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站更新 AI 設定。");
+        const enabled = req.body?.enabled, instructions = req.body?.instructions ?? "";
+        if (typeof enabled !== "boolean" || typeof instructions !== "string" || instructions.length > 4000) throw new HttpError(400, "AI 設定格式錯誤，指示詞最多 4000 字。");
+        if (enabled && !openAiConfigured()) throw new HttpError(409, "請先在 Firebase 設定 OpenAI API Key。");
+        const settings = await store.saveAiSettings(account.channelId, { enabled, instructions: instructions.trim(), model: "gpt-5.4-mini" }, now());
+        return res.json({ settings: { ...settings, configured: openAiConfigured() } });
+      }
       const query = new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
       const before = query.get("before");
       if (before && !/^[a-zA-Z0-9_-]{1,128}$/.test(before)) throw new HttpError(400, "分頁參數無效。");

@@ -5,6 +5,7 @@ import { createHandler, seal, unseal, validSignature, normalizeEvent } from "../
 import { createStore } from "../store.js";
 import { memoryDb } from "./memory.js";
 import { validateUpload } from "../media.js";
+import { createAiResponder } from "../ai.js";
 
 const key = randomBytes(32).toString("base64"), secret = "a".repeat(32), botId = `U${"b".repeat(32)}`;
 const event = (id = "1", timestamp = 1000) => ({ type: "message", webhookEventId: `event-${id}`, timestamp, source: { type: "user", userId: `U${"c".repeat(32)}` }, message: { id, type: "text", text: `message ${id}` } });
@@ -388,4 +389,42 @@ test('failed image loads keep inbox available and concurrent unsend cannot resto
   await f.webhook([{...event('img'),type:'unsend',webhookEventId:'unsend-race',unsend:{messageId:'img'}}]);
   const result=await f.store.finishIncomingImage('1234567890',id,'img',{attachment:{url:'should-not-restore'}});
   assert.equal(result.unsent,true); assert.equal(result.id,'img'); assert.equal(result.attachment,undefined);
+});
+
+test('AI settings are owner scoped, validated, and cannot be enabled before the server key exists', async () => {
+  const f = await fixture();
+  const initial = await f.request('/api/line/ai-settings');
+  assert.equal(initial.code, 200); assert.equal(initial.body.settings.configured, false);
+  const denied = await f.request('/api/line/ai-settings', { method: 'PUT', body: { enabled: true, instructions: '回答產品問題' } });
+  assert.equal(denied.code, 409);
+  const enabled = await fixture({ openAiConfigured: () => true });
+  const saved = await enabled.request('/api/line/ai-settings', { method: 'PUT', body: { enabled: true, instructions: '回答產品問題' } });
+  assert.equal(saved.code, 200); assert.equal(saved.body.settings.enabled, true); assert.equal(saved.body.settings.model, 'gpt-5.4-mini');
+  assert.equal((await enabled.request('/api/line/ai-settings', { token: 'bob' })).body.settings.enabled, false);
+  assert.equal((await enabled.request('/api/line/ai-settings', { method: 'PUT', body: { enabled: false, instructions: 'x'.repeat(4001) } })).code, 400);
+});
+
+test('AI responder sends one idempotent LINE reply with recent conversation context', async () => {
+  const f = await fixture();
+  await f.webhook([event('ai-message')]);
+  const conversationId = (await f.store.conversations('1234567890')).items[0].id;
+  await f.store.saveAiSettings('1234567890', { enabled: true, instructions: '回答測試問題', model: 'gpt-5.4-mini' }, 1000000);
+  let openAiCalls = 0, lineCalls = 0;
+  const responder = createAiResponder({ store: f.store, getKey: () => key, getOpenAiKey: () => 'sk-test', now: () => 1000000,
+    fetchOpenAi: async (url, options) => {
+      openAiCalls++; assert.equal(url, 'https://api.openai.com/v1/responses');
+      const body = JSON.parse(options.body); assert.equal(body.store, false); assert.equal(body.input.at(-1).content, 'message ai-message');
+      return new Response(JSON.stringify({ output: [{ content: [{ type: 'output_text', text: '您好，這是 AI 回覆。' }] }] }), { headers: { 'content-type': 'application/json' } });
+    },
+    fetchLine: async (url, options) => {
+      lineCalls++; assert.equal(url, 'https://api.line.me/v2/bot/message/push');
+      assert.equal(JSON.parse(options.body).messages[0].text, '您好，這是 AI 回覆。');
+      return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    },
+  });
+  assert.deepEqual(await responder({ channelId: '1234567890', conversationId, messageId: 'ai-message' }), { sent: true });
+  assert.deepEqual(await responder({ channelId: '1234567890', conversationId, messageId: 'ai-message' }), { skipped: true });
+  assert.equal(openAiCalls, 1); assert.equal(lineCalls, 1);
+  const messages = await f.store.messages('1234567890', conversationId);
+  assert.equal(messages.items.filter(item => item.direction === 'outgoing').length, 1);
 });

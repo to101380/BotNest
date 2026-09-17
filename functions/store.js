@@ -47,6 +47,38 @@ export function createStore(db) {
     async saveAttachment(id, attachmentId, value) { await channels.doc(id).collection("attachments").doc(attachmentId).set(value); },
     async getAttachment(id, attachmentId) { return (await channels.doc(id).collection("attachments").doc(attachmentId).get()).data(); },
     async getMessage(id, conversationId, messageId) { return (await channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId).get()).data(); },
+    async saveAiSettings(id, settings, at) {
+      await channels.doc(id).set({ ai: { ...settings, updatedAt: at } }, { merge: true });
+      return { ...settings, updatedAt: at };
+    },
+    async claimAiReply(id, conversationId, messageId, at) {
+      const channel = channels.doc(id), ref = channel.collection("conversations").doc(conversationId).collection("messages").doc(messageId);
+      const limitRef = channel.collection("limits").doc("ai");
+      let result = false;
+      await db.runTransaction(async tx => {
+        const [message, limit] = await tx.getAll(ref, limitRef), value = message.data(), usage = limit.data();
+        if (!value || value.direction !== "incoming" || value.type !== "text" || value.unsent || value.aiStatus === "sent") return;
+        if (value.aiLeaseUntil > at || (value.aiAttempts || 0) >= 3) return;
+        const sameMinute = usage && at - usage.minuteSince < 60000, sameDay = usage && at - usage.daySince < 86400000;
+        if ((sameMinute ? usage.minuteCount : 0) >= 20 || (sameDay ? usage.dayCount : 0) >= 500) {
+          tx.set(ref, { aiStatus: "throttled", aiLeaseUntil: 0, aiUpdatedAt: at }, { merge: true });
+          return;
+        }
+        tx.set(ref, { aiStatus: "processing", aiLeaseUntil: at + 60000, aiAttempts: (value.aiAttempts || 0) + 1 }, { merge: true });
+        tx.set(limitRef, { minuteSince: sameMinute ? usage.minuteSince : at, minuteCount: (sameMinute ? usage.minuteCount : 0) + 1,
+          daySince: sameDay ? usage.daySince : at, dayCount: (sameDay ? usage.dayCount : 0) + 1 });
+        result = true;
+      });
+      return result;
+    },
+    async finishAiReply(id, conversationId, messageId, status, at) {
+      await channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId)
+        .set({ aiStatus: status, aiLeaseUntil: 0, aiUpdatedAt: at }, { merge: true });
+    },
+    async recentMessages(id, conversationId, limit = 16) {
+      const result = await page(channels.doc(id).collection("conversations").doc(conversationId).collection("messages"), "sentAt", null, limit);
+      return result.items.reverse();
+    },
     async claimProfile(id, conversationId, at) {
       const ref = channels.doc(id).collection("conversations").doc(conversationId);
       return db.runTransaction(async tx => {

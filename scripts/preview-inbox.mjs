@@ -15,6 +15,7 @@ for (const [i, text] of ["你好，我想了解服務內容。", "可以告訴�
 }
 const previewMedia = new Map();
 const handler = createHandler({ store, getKey: () => key,
+  openAiConfigured: () => true,
   media: { save: async (path, bytes) => previewMedia.set(path, bytes), read: async path => previewMedia.get(path) },
   verifyToken: async token => { if (token !== "preview-token") throw new Error("Invalid preview token"); return { uid: "preview", auth_time: 0, firebase: { sign_in_provider: "google.com" } }; },
   fetchLine: async url => {

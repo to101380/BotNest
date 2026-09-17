@@ -26,7 +26,7 @@ export function createLineInbox() {
   const conversations = new Map(), messages = new Map();
   const drafts = new Map(), localReplies = new Map();
   const attachments = new Map();
-  let sending = false, uploading = false, customerSaving = false;
+  let sending = false, uploading = false, customerSaving = false, aiSaving = false;
   let customerTags = [];
   let followLatest = true;
   const messageArea = $("line-messages");
@@ -133,6 +133,12 @@ export function createLineInbox() {
     $("line-settings-toggle").setAttribute("aria-expanded", "false");
     $("line-card-state").textContent = channel ? "已連接" : "未連接";
     $("line-card-state").classList.toggle("connected", !!channel);
+    for (const control of $("ai-settings-form").querySelectorAll("input,textarea,button")) control.disabled = !channel || aiSaving;
+    if (!channel) {
+      $("ai-card-state").textContent = "需先連接 LINE";
+      $("ai-card-state").classList.remove("connected");
+      $("ai-key-state").textContent = "連接 LINE 官方帳號後即可設定。";
+    }
     replyControls();
     if (!channel) return;
     $("line-oa-name").textContent = `${channel.displayName} ${channel.basicId}`;
@@ -141,6 +147,17 @@ export function createLineInbox() {
     $("line-webhook-url").value = channel.webhookUrl;
     $("line-channel-id").value = channel.channelId;
     $("line-channel-id").readOnly = true;
+  }
+  function showAiSettings(settings) {
+    $("ai-enabled").checked = !!settings.enabled;
+    $("ai-instructions").value = settings.instructions || "";
+    $("ai-key-state").textContent = settings.configured ? "OpenAI API 已安全設定於 Firebase 後端。" : "尚未設定 OpenAI API Key。";
+    $("ai-card-state").textContent = !settings.configured ? "待設定 API Key" : settings.enabled ? "自動回覆中" : "已關閉";
+    $("ai-card-state").classList.toggle("connected", !!settings.configured && !!settings.enabled);
+  }
+  function aiStatus(text, error = false) {
+    $("ai-settings-status").textContent = text;
+    $("ai-settings-status").classList.toggle("error", error);
   }
   function showConversations() {
     $("line-conversations").replaceChildren();
@@ -314,7 +331,11 @@ export function createLineInbox() {
       showAccount();
       if (channel) {
         if (pageMode === "inbox") await refresh();
-        else status(channel.verifiedAt ? "LINE 官方帳號已連接，Webhook 運作正常。" : "LINE 官方帳號已連接，等待 Webhook 驗證。");
+        else {
+          const ai = await api("ai-settings");
+          showAiSettings(ai.settings);
+          status(channel.verifiedAt ? "LINE 官方帳號已連接，Webhook 運作正常。" : "LINE 官方帳號已連接，等待 Webhook 驗證。");
+        }
       } else status("尚未連接 LINE 官方帳號。請填寫下方資訊完成連接。");
       if (currentEpoch === epoch && pageMode === "inbox") timer = setInterval(() => { if (!document.hidden && !browsingHistory) void refresh(); }, 10000);
     } catch (error) { report(error); }
@@ -465,6 +486,16 @@ export function createLineInbox() {
     } catch (error) { report(error); }
     finally { if (currentEpoch === epoch) { saving = false; $("line-connect-fields").disabled = false; replyControls(); } }
   });
+  $("ai-settings-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!channel || aiSaving) return;
+    aiSaving = true; showAccount(); aiStatus("正在儲存…");
+    try {
+      const data = await api("ai-settings", { method: "PUT", body: JSON.stringify({ enabled: $("ai-enabled").checked, instructions: $("ai-instructions").value }) });
+      showAiSettings(data.settings); aiStatus("AI 自動回覆設定已儲存。");
+    } catch (error) { aiStatus(error.message, true); }
+    finally { aiSaving = false; showAccount(); }
+  });
   $("line-settings-toggle").addEventListener("click", () => {
     $("line-connect-form").hidden = !$("line-connect-form").hidden;
     $("line-settings-toggle").setAttribute("aria-expanded", String(!$("line-connect-form").hidden)); clearSecrets();
@@ -489,7 +520,7 @@ export function createLineInbox() {
       epoch++; controller?.abort(); clearInterval(timer); controller = new AbortController();
       messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; pageMode = nextMode; channel = null; selected = null; refreshing = false; saving = false;
-      sending = false; uploading = false; customerSaving = false; customerTags = []; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
+      sending = false; uploading = false; customerSaving = false; aiSaving = false; customerTags = []; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
       $("line-emoji-panel").hidden = true; $("line-pick-emoji").setAttribute("aria-expanded", "false");
       conversationNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
       historyMode(false);
@@ -499,6 +530,7 @@ export function createLineInbox() {
       $("line-channel-id").readOnly = false; $("line-connect-fields").disabled = false; $("line-refresh").disabled = false;
       $("line-account").hidden = $("line-inbox").hidden = $("line-connect-form").hidden = $("line-not-connected").hidden = true;
       $("line-card-state").textContent = "讀取中"; $("line-card-state").classList.remove("connected");
+      $("ai-enabled").checked = false; $("ai-instructions").value = ""; $("ai-card-state").textContent = "讀取中"; $("ai-card-state").classList.remove("connected"); aiStatus("");
       showConversations(); showMessages(); status("");
       if (active) void start();
     },

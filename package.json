@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/serve.mjs",
-    "check": "node --check public/app.js && node --check public/auth-helpers.js && node --check public/line-inbox.js && node --check public/customer-manager.js && node --check scripts/serve.mjs && node --check scripts/preview-inbox.mjs && node --check functions/index.js && node --check functions/core.js && node --check functions/store.js && node --check functions/media.js",
+    "check": "node --check public/app.js && node --check public/auth-helpers.js && node --check public/line-inbox.js && node --check public/customer-manager.js && node --check scripts/serve.mjs && node --check scripts/preview-inbox.mjs && node --check functions/index.js && node --check functions/core.js && node --check functions/store.js && node --check functions/media.js && node --check functions/ai.js",
     "test": "node --test --test-isolation=none tests/auth-helpers.test.mjs functions/test/*.test.js"
   },
   "engines": { "node": ">=22" }
