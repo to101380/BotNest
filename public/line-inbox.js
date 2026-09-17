@@ -90,7 +90,7 @@ export function createLineInbox() {
       const text = document.createElement("p"); text.textContent = note.text;
       const time = document.createElement("time"); time.dateTime = new Date(note.createdAt).toISOString(); time.textContent = new Date(note.createdAt).toLocaleString("zh-TW", { dateStyle: "medium", timeStyle: "short" });
       const footer = document.createElement("div"); footer.className = "customer-note-footer";
-      const remove = document.createElement("button"); remove.type = "button"; remove.className = "customer-note-delete"; remove.textContent = "刪除"; remove.setAttribute("aria-label", `刪除記事：${note.text.slice(0, 30)}`);
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "customer-note-delete"; remove.textContent = "×"; remove.title = "刪除記事"; remove.setAttribute("aria-label", `刪除記事：${note.text.slice(0, 30)}`);
       remove.addEventListener("click", async () => {
         const conversationId = selected;
         if (!conversationId || customerSaving || !confirm("確定要刪除這則記事嗎？刪除後無法復原。")) return;
