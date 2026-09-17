@@ -103,11 +103,16 @@ test("customer profile and notes are stored with the conversation and isolated b
   assert.equal(saved.code, 200); assert.equal(saved.body.customer.name, "林小姐");
   const noted = await f.request(`/api/line/conversations/${id}/customer/notes`, { method: "POST", body: { text: "下週二回電" } });
   assert.equal(noted.code, 200); assert.equal(noted.body.customer.notes[0].text, "下週二回電");
+  const noteId = noted.body.customer.notes[0].id;
   const listed = await f.request("/api/line/conversations");
   assert.equal(listed.body.items[0].customer.email, "lin@example.com");
   assert.equal(listed.body.items[0].customer.notes.length, 1);
   assert.equal((await f.request(`/api/line/conversations/${id}/customer`, { token: "bob", method: "PUT", body: profile })).code, 404);
   assert.equal((await f.request(`/api/line/conversations/${id}/customer/notes`, { token: "bob", method: "POST", body: { text: "偷改" } })).code, 404);
+  assert.equal((await f.request(`/api/line/conversations/${id}/customer/notes/${noteId}`, { token: "bob", method: "DELETE" })).code, 404);
+  const deleted = await f.request(`/api/line/conversations/${id}/customer/notes/${noteId}`, { method: "DELETE" });
+  assert.equal(deleted.code, 200); assert.deepEqual(deleted.body.customer.notes, []);
+  assert.equal((await f.request(`/api/line/conversations/${id}/customer/notes/${noteId}`, { method: "DELETE" })).code, 404);
 });
 test("customer endpoints reject unknown fields, invalid contact data and oversized content", async () => {
   const f = await fixture(); await f.webhook([event()]);

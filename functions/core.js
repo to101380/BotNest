@@ -215,6 +215,12 @@ export function createHandler({ store, verifyToken, getKey, openAiConfigured = (
         if (typeof text !== "string" || !text.trim() || text.trim().length > 1000) throw new HttpError(400, "記事需為 1～1000 個字。");
         return res.json({ customer: await store.addCustomerNote(account.channelId, customerNotes[1], text.trim(), now()) });
       }
+      const customerNote = /^\/api\/line\/conversations\/([a-f0-9]{64})\/customer\/notes\/([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/.exec(path);
+      if (customerNote && req.method === "DELETE") {
+        const origin = req.get("origin");
+        if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站刪除記事。");
+        return res.json({ customer: await store.deleteCustomerNote(account.channelId, customerNote[1], customerNote[2], now()) });
+      }
       const messages = /^\/api\/line\/conversations\/([a-f0-9]{64})\/messages$/.exec(path);
       if (messages && req.method === "GET") {
         const page = await store.messages(account.channelId, messages[1], before);

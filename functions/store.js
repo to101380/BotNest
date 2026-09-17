@@ -114,6 +114,20 @@ export function createStore(db) {
         return customer;
       });
     },
+    async deleteCustomerNote(id, conversationId, noteId, at) {
+      const ref = channels.doc(id).collection("conversations").doc(conversationId);
+      return db.runTransaction(async tx => {
+        const snapshot = await tx.get(ref);
+        if (!snapshot.exists) throw new HttpError(404, "找不到這位客戶。");
+        const prior = snapshot.data().customer || {};
+        const oldNotes = Array.isArray(prior.notes) ? prior.notes : [];
+        const notes = oldNotes.filter(note => note.id !== noteId);
+        if (notes.length === oldNotes.length) throw new HttpError(404, "找不到這則記事。");
+        const customer = { ...prior, notes, updatedAt: at };
+        tx.set(ref, { customer }, { merge: true });
+        return customer;
+      });
+    },
     async prepareReply(id, conversationId, operationId, text, at, attachmentId = null) {
       const channel = channels.doc(id), conversation = channel.collection("conversations").doc(conversationId);
       const outbox = channel.collection("outbox").doc(operationId);

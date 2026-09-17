@@ -89,7 +89,19 @@ export function createLineInbox() {
       const card = document.createElement("article"); card.className = "customer-note-card";
       const text = document.createElement("p"); text.textContent = note.text;
       const time = document.createElement("time"); time.dateTime = new Date(note.createdAt).toISOString(); time.textContent = new Date(note.createdAt).toLocaleString("zh-TW", { dateStyle: "medium", timeStyle: "short" });
-      card.append(text, time); return card;
+      const footer = document.createElement("div"); footer.className = "customer-note-footer";
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "customer-note-delete"; remove.textContent = "刪除"; remove.setAttribute("aria-label", `刪除記事：${note.text.slice(0, 30)}`);
+      remove.addEventListener("click", async () => {
+        const conversationId = selected;
+        if (!conversationId || customerSaving || !confirm("確定要刪除這則記事嗎？刪除後無法復原。")) return;
+        setCustomerBusy(true); customerStatus("正在刪除記事…");
+        try {
+          const data = await api(`conversations/${conversationId}/customer/notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
+          if (selected === conversationId) { updateCustomer(data.customer); customerStatus("記事已刪除"); }
+        } catch (error) { if (selected === conversationId) customerStatus(error.message, true); }
+        finally { setCustomerBusy(false); }
+      });
+      footer.append(time, remove); card.append(text, footer); return card;
     }));
   }
   function customerStatus(text, error = false) { $("customer-status").textContent = text; $("customer-status").classList.toggle("error", error); }
