@@ -62,3 +62,40 @@ export function createAiResponder({ store, getKey, getOpenAiKey, fetchOpenAi = f
     }
   };
 }
+
+export function createZernioAiResponder({ store, getOpenAiKey, getZernioKey, fetchOpenAi = fetch, fetchZernio = fetch, now = Date.now }) {
+  return async ({ uid, conversationId, messageId }) => {
+    const [settings, message] = await Promise.all([store.accountAiSettings(uid), store.getZernioMessage(uid, conversationId, messageId)]);
+    if (!settings?.enabled || !message?.text?.trim() || !getOpenAiKey() || !getZernioKey()) return { skipped: true };
+    if (!await store.claimZernioAiReply(uid, conversationId, messageId, now())) return { skipped: true };
+    try {
+      const historyResponse = await fetchZernio(`https://zernio.com/api/v1/inbox/conversations/${encodeURIComponent(message.remoteConversationId)}/messages?accountId=${encodeURIComponent(message.accountId)}&limit=16&sortOrder=desc`, {
+        headers: { Authorization: `Bearer ${getZernioKey()}`, "Content-Type": "application/json" }, signal: AbortSignal.timeout(12000),
+      });
+      const historyData = await historyResponse.json().catch(() => ({}));
+      if (!historyResponse.ok) throw new Error(`zernio_history_${historyResponse.status}`);
+      const history = (Array.isArray(historyData.messages) ? historyData.messages : []).slice().reverse()
+        .filter(item => !item.isDeleted && typeof item.message === "string" && item.message.trim())
+        .map(item => ({ role: item.direction === "outgoing" ? "assistant" : "user", content: item.message.slice(0, 2000) }));
+      if (!history.some(item => item.role === "user" && item.content === message.text.slice(0, 2000))) history.push({ role: "user", content: message.text.slice(0, 2000) });
+      const response = await fetchOpenAi("https://api.openai.com/v1/responses", {
+        method: "POST", headers: { Authorization: `Bearer ${getOpenAiKey()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: settings.model || "gpt-5.4-mini",
+          instructions: `${DEFAULT_INSTRUCTIONS.replace("LINE", "Facebook Messenger")}\n\n品牌指示：\n${settings.instructions || "請回答常見問題，資料不足時轉由真人客服。"}`,
+          input: history, max_output_tokens: 500, store: false }), signal: AbortSignal.timeout(25000),
+      });
+      const data = await response.json().catch(() => ({})), text = outputText(data).slice(0, 5000);
+      if (!response.ok || !text) throw new Error(`openai_${response.status || "empty"}`);
+      const sent = await fetchZernio(`https://zernio.com/api/v1/inbox/conversations/${encodeURIComponent(message.remoteConversationId)}/messages`, {
+        method: "POST", headers: { Authorization: `Bearer ${getZernioKey()}`, "Content-Type": "application/json", "Idempotency-Key": operationId(message.remoteMessageId) },
+        body: JSON.stringify({ accountId: message.accountId, message: text }), signal: AbortSignal.timeout(15000),
+      });
+      if (!sent.ok) throw new Error(`zernio_send_${sent.status}`);
+      await store.finishZernioAiReply(uid, conversationId, messageId, "sent", now());
+      return { sent: true };
+    } catch (error) {
+      await store.finishZernioAiReply(uid, conversationId, messageId, "failed", now());
+      throw error;
+    }
+  };
+}

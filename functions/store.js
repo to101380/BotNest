@@ -1,5 +1,7 @@
 import { HttpError } from "./core.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+
+const digestId = value => createHash("sha256").update(String(value)).digest("hex");
 
 export function createStore(db) {
   const state = db.collection("botnest").doc("state");
@@ -34,6 +36,11 @@ export function createStore(db) {
       const snapshot = await accounts.where("zernio.profileId", "==", profileId).limit(1).get();
       if (snapshot.empty) return null;
       return { uid: snapshot.docs[0].id, zernio: snapshot.docs[0].data().zernio };
+    },
+    async zernioOwnerByAccount(accountId) {
+      const snapshot = await accounts.where("zernio.facebook.accountId", "==", accountId).limit(1).get();
+      if (snapshot.empty) return null;
+      return { uid: snapshot.docs[0].id, account: snapshot.docs[0].data() };
     },
     async bindZernioFacebook(uid, profileId, account, at) {
       const ref = accounts.doc(uid);
@@ -84,6 +91,60 @@ export function createStore(db) {
         tx.set(ref, { customer }, { merge: true });
         return customer;
       });
+    },
+    async accountAiSettings(uid) {
+      const value = (await accounts.doc(uid).get()).data() || {};
+      if (value.ai) return value.ai;
+      if (!value.channelId) return {};
+      return (await channels.doc(value.channelId).get()).data()?.ai || {};
+    },
+    async saveAccountAiSettings(uid, settings, at) {
+      const ref = accounts.doc(uid), value = { ...settings, updatedAt: at };
+      const account = (await ref.get()).data() || {};
+      await ref.set({ ai: value }, { merge: true });
+      if (account.channelId) await channels.doc(account.channelId).set({ ai: value }, { merge: true });
+      return value;
+    },
+    async ingestZernio(uid, event) {
+      const account = accounts.doc(uid), conversationId = digestId(`${event.accountId}:${event.remoteConversationId}`);
+      const conversation = account.collection("zernioConversations").doc(conversationId);
+      const messageId = digestId(`${event.accountId}:${event.remoteMessageId}`), message = conversation.collection("messages").doc(messageId);
+      const receipt = account.collection("zernioReceipts").doc(digestId(event.eventId));
+      let created = false;
+      await db.runTransaction(async tx => {
+        const [seen, prior] = await tx.getAll(receipt, conversation);
+        if (seen.exists) return;
+        const old = prior.data(), stored = { ...event, id: messageId, conversationId, direction: "incoming", type: "text", unsent: false };
+        tx.set(message, stored);
+        if (!old || event.sentAt >= old.updatedAt) tx.set(conversation, { remoteConversationId: event.remoteConversationId, accountId: event.accountId,
+          displayName: event.displayName, pictureUrl: event.pictureUrl, lastText: event.text, updatedAt: event.sentAt,
+          createdAt: old?.createdAt == null ? event.sentAt : Math.min(old.createdAt, event.sentAt) }, { merge: true });
+        tx.set(receipt, { receivedAt: Date.now() }); created = true;
+      });
+      return { created, conversationId, messageId };
+    },
+    async getZernioMessage(uid, conversationId, messageId) {
+      return (await accounts.doc(uid).collection("zernioConversations").doc(conversationId).collection("messages").doc(messageId).get()).data();
+    },
+    async claimZernioAiReply(uid, conversationId, messageId, at) {
+      const account = accounts.doc(uid), ref = account.collection("zernioConversations").doc(conversationId).collection("messages").doc(messageId);
+      const limitRef = account.collection("limits").doc("zernioAi"); let result = false;
+      await db.runTransaction(async tx => {
+        const [message, limit] = await tx.getAll(ref, limitRef), value = message.data(), usage = limit.data();
+        if (!value || value.aiStatus === "sent" || value.aiLeaseUntil > at || (value.aiAttempts || 0) >= 3) return;
+        const sameMinute = usage && at - usage.minuteSince < 60000, sameDay = usage && at - usage.daySince < 86400000;
+        if ((sameMinute ? usage.minuteCount : 0) >= 20 || (sameDay ? usage.dayCount : 0) >= 500) {
+          tx.set(ref, { aiStatus: "throttled", aiLeaseUntil: 0, aiUpdatedAt: at }, { merge: true }); return;
+        }
+        tx.set(ref, { aiStatus: "processing", aiLeaseUntil: at + 60000, aiAttempts: (value.aiAttempts || 0) + 1 }, { merge: true });
+        tx.set(limitRef, { minuteSince: sameMinute ? usage.minuteSince : at, minuteCount: (sameMinute ? usage.minuteCount : 0) + 1,
+          daySince: sameDay ? usage.daySince : at, dayCount: (sameDay ? usage.dayCount : 0) + 1 }); result = true;
+      });
+      return result;
+    },
+    async finishZernioAiReply(uid, conversationId, messageId, status, at) {
+      await accounts.doc(uid).collection("zernioConversations").doc(conversationId).collection("messages").doc(messageId)
+        .set({ aiStatus: status, aiLeaseUntil: 0, aiUpdatedAt: at }, { merge: true });
     },
     async claimIncomingImage(id, conversationId, messageId, at) {
       const ref = channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId);
@@ -249,7 +310,7 @@ export function createStore(db) {
     async getChannel(id) { return (await channels.doc(id).get()).data() || null; },
     async account(uid) {
       const account = (await accounts.doc(uid).get()).data();
-      if (!account) return null;
+      if (!account?.channelId) return null;
       const channel = (await channels.doc(account.channelId).get()).data();
       if (channel?.ownerUid !== uid) throw new HttpError(403, "無權查看此 OA。");
       return channel;

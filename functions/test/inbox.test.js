@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { randomBytes, createHmac, randomUUID } from "node:crypto";
+import { randomBytes, createHash, createHmac, randomUUID } from "node:crypto";
 import { createHandler, seal, unseal, validSignature, normalizeEvent } from "../core.js";
 import { createStore } from "../store.js";
 import { memoryDb } from "./memory.js";
 import { validateUpload } from "../media.js";
-import { createAiResponder } from "../ai.js";
+import { createAiResponder, createZernioAiResponder } from "../ai.js";
 
 const key = randomBytes(32).toString("base64"), secret = "a".repeat(32), botId = `U${"b".repeat(32)}`;
 const event = (id = "1", timestamp = 1000) => ({ type: "message", webhookEventId: `event-${id}`, timestamp, source: { type: "user", userId: `U${"c".repeat(32)}` }, message: { id, type: "text", text: `message ${id}` } });
@@ -137,9 +137,35 @@ test("Zernio inbox is tenant scoped and supports listing, reading and replying",
   const noted = await f.request(`/api/zernio/customer/notes?conversationId=${conversationId}`, { method: "POST", body: { text: "明天回覆" } });
   assert.equal(noted.body.customer.notes[0].text, "明天回覆");
   assert.equal((await f.request(`/api/zernio/customer?conversationId=${conversationId}`)).body.customer.phone, "0912345678");
+  assert.equal((await f.request("/api/zernio/conversations")).body.items[0].customer.phone, "0912345678");
   const bobProfile = "1".repeat(24), bobAccount = "2".repeat(24);
   await f.store.saveZernioProfile("bob", bobProfile, 900000); await f.store.bindZernioFacebook("bob", bobProfile, { accountId: bobAccount, platform: "facebook" }, 900000);
   assert.deepEqual((await f.request(`/api/zernio/customer?conversationId=${conversationId}`, { token: "bob" })).body.customer, {});
+});
+test("Zernio webhook securely ingests Messenger messages once and AI replies through the bound page", async () => {
+  const profileId = "3".repeat(24), accountId = "4".repeat(24), remoteConversationId = "messenger-thread-1", sends = [];
+  const fetchZernio = async (url, options = {}) => {
+    if (options.method === "POST") { sends.push({ url, options }); return new Response(JSON.stringify({ success: true, messageId: "reply-1" }), { headers: { "Content-Type": "application/json" } }); }
+    return new Response(JSON.stringify({ messages: [{ id: "incoming-1", accountId, conversationId: remoteConversationId, platform: "facebook", direction: "incoming", message: "請問今天有營業嗎？", createdAt: "2026-09-18T03:00:00Z" }] }), { headers: { "Content-Type": "application/json" } });
+  };
+  const f = await fixture({ openAiConfigured: () => true, getZernioKey: () => "zernio-key", fetchZernio });
+  await f.store.saveZernioProfile("alice", profileId, 1); await f.store.bindZernioFacebook("alice", profileId, { accountId, platform: "facebook" }, 2);
+  await f.store.saveAccountAiSettings("alice", { enabled: true, instructions: "每天十點營業", model: "gpt-5.4-mini" }, 3);
+  const raw = Buffer.from(JSON.stringify({ id: "event-1", event: "message.received", data: { platform: "facebook", account: { id: accountId, platform: "facebook" },
+    conversation: { id: remoteConversationId, participantName: "陳小姐" }, message: { id: "incoming-1", direction: "incoming", text: "請問今天有營業嗎？", createdAt: "2026-09-18T03:00:00Z" } } }));
+  const webhookToken = createHmac("sha256", Buffer.from(key, "base64")).update("botnest-zernio-webhook-v1").digest("hex");
+  const first = await f.request("/zernio-webhook", { token: null, method: "POST", raw, headers: { "x-botnest-webhook": webhookToken } });
+  const duplicate = await f.request("/zernio-webhook", { token: null, method: "POST", raw, headers: { "x-botnest-webhook": webhookToken } });
+  assert.equal(first.code, 200); assert.equal(first.body.created, true); assert.equal(duplicate.body.created, false);
+  assert.equal((await f.request("/zernio-webhook", { token: null, method: "POST", raw })).code, 401);
+  const conversationId = createHash("sha256").update(`${accountId}:${remoteConversationId}`).digest("hex");
+  const messageId = createHash("sha256").update(`${accountId}:incoming-1`).digest("hex");
+  const responder = createZernioAiResponder({ store: f.store, getOpenAiKey: () => "openai-key", getZernioKey: () => "zernio-key", fetchZernio,
+    fetchOpenAi: async (_url, options) => { const body = JSON.parse(options.body); assert.match(body.instructions, /每天十點營業/); assert.equal(body.store, false); return new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: "有的，今天十點開始營業。" }] }] }), { headers: { "Content-Type": "application/json" } }); }, now: () => 2000000 });
+  assert.deepEqual(await responder({ uid: "alice", conversationId, messageId }), { sent: true });
+  assert.deepEqual(await responder({ uid: "alice", conversationId, messageId }), { skipped: true });
+  assert.equal(sends.length, 1); assert.match(sends[0].url, /messenger-thread-1\/messages$/);
+  assert.deepEqual(JSON.parse(sends[0].options.body), { accountId, message: "有的，今天十點開始營業。" });
 });
 test("anonymous and unverified password accounts cannot access private endpoints", async () => {
   for (const provider of ["anonymous", "password"]) {

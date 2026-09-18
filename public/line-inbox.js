@@ -164,6 +164,16 @@ export function createLineInbox() {
     if (!response.ok || data.error) throw new Error(data.error || "Zernio 服務暫時無法使用。");
     return data;
   }
+  async function aiApi(path, options = {}) {
+    const currentEpoch = epoch, currentUser = user, signal = controller.signal;
+    if (!active || !currentUser) throw new DOMException("Inactive", "AbortError");
+    const token = await currentUser.getIdToken();
+    if (currentEpoch !== epoch) throw new DOMException("Session changed", "AbortError");
+    const response = await fetch(`/api/ai/${path}`, { ...options, signal, cache: "no-store", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } });
+    const data = await response.json().catch(() => ({ error: "AI 設定服務暫時無法使用。" }));
+    if (!response.ok || data.error) throw new Error(data.error || "AI 設定服務暫時無法使用。");
+    return data;
+  }
   function customerRequest(conversationId, suffix = "", options = {}) {
     const item = conversations.get(conversationId);
     if (item?.provider === "facebook") return zernioApi(`customer${suffix}?conversationId=${encodeURIComponent(item.remoteId)}`, options);
@@ -201,11 +211,11 @@ export function createLineInbox() {
     $("line-settings-toggle").setAttribute("aria-expanded", "false");
     $("line-card-state").textContent = channel ? "已連接" : "未連接";
     $("line-card-state").classList.toggle("connected", !!channel);
-    for (const control of $("ai-settings-form").querySelectorAll("input,textarea,button")) control.disabled = !channel || aiSaving;
-    if (!channel) {
-      $("ai-card-state").textContent = "需先連接 LINE";
+    for (const control of $("ai-settings-form").querySelectorAll("input,textarea,button")) control.disabled = (!channel && !facebookAccount) || aiSaving;
+    if (!channel && !facebookAccount) {
+      $("ai-card-state").textContent = "需先連接訊息渠道";
       $("ai-card-state").classList.remove("connected");
-      $("ai-key-state").textContent = "連接 LINE 官方帳號後即可設定。";
+      $("ai-key-state").textContent = "連接 LINE 或 Facebook Messenger 後即可設定。";
     }
     replyControls();
     if (!channel) return;
@@ -420,10 +430,10 @@ export function createLineInbox() {
       if (lineResult.status === "fulfilled") channel = lineResult.value.channel;
       if (zernioResult.status === "fulfilled") showZernioAccount(zernioResult.value);
       showAccount();
-      if (channel) {
-        const ai = await api("ai-settings");
+      if (channel || facebookAccount) {
+        const ai = await aiApi("settings");
         showAiSettings(ai.settings);
-        if (pageMode !== "inbox") {
+        if (channel && pageMode !== "inbox") {
           status(channel.verifiedAt ? "LINE 官方帳號已連接，Webhook 運作正常。" : "LINE 官方帳號已連接，等待 Webhook 驗證。");
         }
       } else if (!facebookAccount) status("尚未連接任何訊息渠道。請先前往渠道設定。");
@@ -617,10 +627,10 @@ export function createLineInbox() {
   });
   $("ai-settings-form").addEventListener("submit", async event => {
     event.preventDefault();
-    if (!channel || aiSaving) return;
+    if ((!channel && !facebookAccount) || aiSaving) return;
     aiSaving = true; showAccount(); aiStatus("正在儲存…");
     try {
-      const data = await api("ai-settings", { method: "PUT", body: JSON.stringify({ enabled: $("ai-enabled").checked, instructions: $("ai-instructions").value }) });
+      const data = await aiApi("settings", { method: "PUT", body: JSON.stringify({ enabled: $("ai-enabled").checked, instructions: $("ai-instructions").value }) });
       showAiSettings(data.settings); aiStatus("AI 自動回覆設定已儲存。");
     } catch (error) { aiStatus(error.message, true); }
     finally { aiSaving = false; showAccount(); }

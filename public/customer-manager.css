@@ -5,3 +5,4 @@
 @media(max-width:1050px){.customers-table{min-width:980px}.customers-toolbar{padding:20px 18px 14px}.customers-controls,.customers-status{padding-left:18px;padding-right:18px}}
 @media(max-width:600px){.customers-toolbar{align-items:flex-start}.customers-controls{flex-wrap:wrap}.customers-search-wrap{width:100%}.customers-controls button{width:100%}}
 .customer-line-badge{display:block}
+.customer-messenger-badge{position:absolute;right:-2px;bottom:-2px;width:17px;height:17px;border:2px solid #fff;border-radius:50%;background:#fff url('/messenger-icon.svg') center/contain no-repeat}

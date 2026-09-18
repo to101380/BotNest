@@ -7,7 +7,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { createHandler } from "./core.js";
 import { createStore } from "./store.js";
-import { createAiResponder } from "./ai.js";
+import { createAiResponder, createZernioAiResponder } from "./ai.js";
 
 initializeApp();
 const encryptionKey = defineSecret("BOTNEST_ENCRYPTION_KEY");
@@ -39,4 +39,16 @@ export const lineAiAutoReply = onDocumentCreated({
   if (!message || message.direction !== "incoming" || message.type !== "text" || message.unsent) return;
   aiResponder ||= createAiResponder({ store: createStore(getFirestore()), getKey: () => encryptionKey.value(), getOpenAiKey: () => openAiKey.value() });
   return aiResponder(event.params);
+});
+
+let zernioAiResponder;
+export const facebookAiAutoReply = onDocumentCreated({
+  document: "botnest/state/accounts/{uid}/zernioConversations/{conversationId}/messages/{messageId}",
+  region: "us-central1", timeoutSeconds: 60, memory: "256MiB", maxInstances: 5,
+  secrets: [openAiKey, zernioApiKey], retry: false,
+}, event => {
+  const message = event.data?.data();
+  if (!message || message.direction !== "incoming" || message.type !== "text" || message.unsent) return;
+  zernioAiResponder ||= createZernioAiResponder({ store: createStore(getFirestore()), getOpenAiKey: () => openAiKey.value(), getZernioKey: () => zernioApiKey.value() });
+  return zernioAiResponder(event.params);
 });

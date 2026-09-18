@@ -72,6 +72,9 @@ function cleanCustomer(input) {
 }
 
 export function createHandler({ store, verifyToken, getKey, openAiConfigured = () => false, getZernioKey = () => "", media, fetchLine = fetch, fetchZernio = fetch, now = Date.now }) {
+  const zernioWebhookUrl = "https://planning-with-ai-52d58.web.app/zernio-webhook";
+  const zernioWebhookToken = () => createHmac("sha256", Buffer.from(getKey(), "base64")).update("botnest-zernio-webhook-v1").digest("hex");
+  let zernioWebhookReady = false, zernioWebhookSetup;
   async function lineRequest(path, options) {
     const response = await fetchLine(`https://api.line.me${path}`, { ...options, signal: AbortSignal.timeout(12000) });
     if (!response.ok) throw new HttpError(response.status >= 500 || response.status === 429 ? 503 : 400, "LINE 憑證驗證失敗，請確認 Channel ID 與長期 Access Token。");
@@ -102,6 +105,19 @@ export function createHandler({ store, verifyToken, getKey, openAiConfigured = (
     }
     return data;
   }
+  async function ensureZernioWebhook() {
+    if (zernioWebhookReady) return true;
+    if (zernioWebhookSetup) return zernioWebhookSetup;
+    zernioWebhookSetup = (async () => {
+      const listed = await zernioRequest("/webhooks/settings");
+      const hooks = listed.webhooks || listed.data || [];
+      const existing = hooks.find(item => item.url === zernioWebhookUrl && (item.events || []).includes("message.received") && item.isActive !== false && item.customHeaders?.["X-BotNest-Webhook"] === zernioWebhookToken());
+      if (!existing) await zernioRequest("/webhooks/settings", { method: "POST", body: JSON.stringify({ name: "BotNest Messenger AI", url: zernioWebhookUrl,
+        events: ["message.received"], isActive: true, secret: zernioWebhookToken(), customHeaders: { "X-BotNest-Webhook": zernioWebhookToken() } }) });
+      zernioWebhookReady = true; return true;
+    })().finally(() => { zernioWebhookSetup = null; });
+    return zernioWebhookSetup;
+  }
   const publicChannel = channel => channel ? ({ channelId: channel.channelId, displayName: channel.displayName, basicId: channel.basicId,
     webhookUrl: `https://planning-with-ai-52d58.web.app/line-webhook/${channel.channelId}`,
     verifiedAt: channel.verifiedAt || null, lastReceivedAt: channel.lastReceivedAt || null, canReply: !!channel.accessToken }) : null;
@@ -111,6 +127,33 @@ export function createHandler({ store, verifyToken, getKey, openAiConfigured = (
     res.set("X-Content-Type-Options", "nosniff");
     try {
       const path = new URL(req.originalUrl || req.url, "https://botnest.invalid").pathname;
+      if (path === "/zernio-webhook") {
+        if (req.method !== "POST") throw new HttpError(405, "請由 Zernio 傳送 POST Webhook。");
+        if (!req.rawBody || req.rawBody.length > 1024 * 1024) throw new HttpError(413, "Webhook 內容過大。");
+        const expected = Buffer.from(zernioWebhookToken()), supplied = Buffer.from(req.get("x-botnest-webhook") || "");
+        if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) throw new HttpError(401, "Webhook 驗證失敗。");
+        let body; try { body = JSON.parse(req.rawBody.toString("utf8")); } catch { throw new HttpError(400, "Webhook 格式錯誤。"); }
+        const eventType = body.event || body.type, payload = body.data || body.payload || body;
+        if (eventType !== "message.received") return res.status(200).json({ ok: true, ignored: true });
+        const message = payload.message || body.message || {}, conversation = payload.conversation || body.conversation || {}, account = payload.account || body.account || {};
+        const accountId = String(account.accountId || account.id || account._id || message.accountId || payload.accountId || "");
+        // Zernio's inbox APIs address conversations by their Zernio id; platformConversationId is only a fallback.
+        const remoteConversationId = String(conversation.id || conversation._id || message.conversationId || payload.conversationId || conversation.platformConversationId || "");
+        const remoteMessageId = String(message.platformMessageId || message.id || message._id || payload.messageId || "");
+        const platform = String(message.platform || payload.platform || account.platform || conversation.platform || "").toLowerCase();
+        const text = String(message.text ?? message.message ?? payload.text ?? "").trim();
+        const direction = String(message.direction || payload.direction || "incoming").toLowerCase();
+        if (platform !== "facebook" || direction === "outgoing" || !accountId || !remoteConversationId || !remoteMessageId || !text) return res.status(200).json({ ok: true, ignored: true });
+        if ([accountId, remoteConversationId, remoteMessageId].some(value => value.length > 512 || /[\u0000-\u001f]/.test(value))) throw new HttpError(400, "Webhook 識別資料無效。");
+        const owner = await store.zernioOwnerByAccount(accountId);
+        if (!owner) return res.status(200).json({ ok: true, ignored: true });
+        const timestamp = Date.parse(message.createdAt || payload.createdAt || body.createdAt || body.timestamp);
+        const sender = message.sender || payload.sender || {};
+        const saved = await store.ingestZernio(owner.uid, { eventId: String(body.id || body.eventId || `${remoteMessageId}:received`).slice(0, 512), accountId, remoteConversationId, remoteMessageId,
+          text: text.slice(0, 10000), sentAt: Number.isFinite(timestamp) ? timestamp : now(), displayName: String(sender.name || conversation.participantName || "Facebook 使用者").slice(0, 100),
+          pictureUrl: String(sender.avatarUrl || sender.picture || conversation.participantPicture || "").slice(0, 2048) });
+        return res.status(200).json({ ok: true, created: saved.created });
+      }
       if (path === "/zernio-callback" && req.method === "GET") {
         const callback = new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
         const redirect = new URL("https://planning-with-ai-52d58.web.app/");
@@ -162,11 +205,31 @@ export function createHandler({ store, verifyToken, getKey, openAiConfigured = (
         return res.status(200).json({ ok: true });
       }
       if (path === "/api/line/health" && req.method === "GET") return res.json({ ok: true });
+      if (path.startsWith("/api/ai/")) {
+        const user = await authenticated(req), account = await store.zernioAccount(user.uid), line = await store.account(user.uid);
+        if (!account?.facebook?.accountId && !line) throw new HttpError(404, "請先連接至少一個訊息渠道。");
+        if (path === "/api/ai/settings" && req.method === "GET") {
+          const ai = await store.accountAiSettings(user.uid);
+          return res.json({ settings: { enabled: !!ai.enabled, instructions: ai.instructions || "", model: ai.model || "gpt-5.4-mini", configured: openAiConfigured() } });
+        }
+        if (path === "/api/ai/settings" && req.method === "PUT") {
+          const origin = req.get("origin");
+          if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站更新 AI 設定。");
+          const enabled = req.body?.enabled, instructions = req.body?.instructions ?? "";
+          if (typeof enabled !== "boolean" || typeof instructions !== "string" || instructions.length > 4000) throw new HttpError(400, "AI 設定格式錯誤，指示詞最多 4000 字。");
+          if (enabled && !openAiConfigured()) throw new HttpError(409, "請先在 Firebase 設定 OpenAI API Key。");
+          const settings = await store.saveAccountAiSettings(user.uid, { enabled, instructions: instructions.trim(), model: "gpt-5.4-mini" }, now());
+          return res.json({ settings: { ...settings, configured: openAiConfigured() } });
+        }
+        throw new HttpError(404, "找不到 AI API。");
+      }
       if (path.startsWith("/api/zernio/")) {
         const user = await authenticated(req);
         if (path === "/api/zernio/account" && req.method === "GET") {
           const value = await store.zernioAccount(user.uid);
-          return res.json({ configured: !!getZernioKey(), profileId: value?.profileId || null, facebook: value?.facebook || null });
+          let webhookReady = false;
+          if (getZernioKey()) try { webhookReady = await ensureZernioWebhook(); } catch { /* The inbox remains available while webhook setup is retried later. */ }
+          return res.json({ configured: !!getZernioKey(), webhookReady, profileId: value?.profileId || null, facebook: value?.facebook || null });
         }
         if (path === "/api/zernio/connect/facebook" && req.method === "POST") {
           const origin = req.get("origin");
@@ -219,6 +282,7 @@ export function createHandler({ store, verifyToken, getKey, openAiConfigured = (
             displayName: String(item.participantName || "Facebook 使用者").slice(0, 100), pictureUrl: String(item.participantPicture || contactByParticipant.get(String(item.participantId || ""))?.avatarUrl || (/^\d{5,30}$/.test(String(item.participantId || "")) ? `https://graph.facebook.com/${item.participantId}/picture?type=large` : "")).slice(0, 2048),
             lastText: String(item.lastMessage || "").slice(0, 10000), updatedAt: Number.isFinite(Date.parse(item.updatedTime)) ? Date.parse(item.updatedTime) : now(), unreadCount: Number(item.unreadCount || 0),
           }));
+          await Promise.all(items.map(async item => { item.customer = await store.zernioCustomer(user.uid, digest(`${facebook.accountId}:${item.remoteId}`)); }));
           return res.json({ items, next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
         }
         if (path === "/api/zernio/messages" && req.method === "GET") {
