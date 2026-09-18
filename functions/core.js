@@ -183,6 +183,43 @@ export function createHandler({ store, verifyToken, getKey, openAiConfigured = (
           if (typeof connected.authUrl !== "string" || !/^https:\/\//i.test(connected.authUrl)) throw new HttpError(503, "Zernio 未回傳 Facebook 授權網址。");
           return res.json({ authUrl: connected.authUrl });
         }
+        const zernio = await store.zernioAccount(user.uid), facebook = zernio?.facebook;
+        if (!facebook?.accountId) throw new HttpError(409, "請先在渠道設定連接 Facebook 粉絲專頁。");
+        const query = new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
+        if (path === "/api/zernio/conversations" && req.method === "GET") {
+          const cursor = query.get("cursor");
+          if (cursor && (cursor.length > 1024 || /[\u0000-\u001f]/.test(cursor))) throw new HttpError(400, "分頁參數無效。");
+          const data = await zernioRequest(`/inbox/conversations?accountId=${encodeURIComponent(facebook.accountId)}&platform=facebook&limit=30${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+          const items = (Array.isArray(data.data) ? data.data : []).filter(item => item.platform === "facebook" && item.accountId === facebook.accountId).map(item => ({
+            id: `facebook-${digest(`${facebook.accountId}:${item.id}`)}`, provider: "facebook", remoteId: String(item.id), sourceType: "user", sourceId: String(item.participantId || ""),
+            displayName: String(item.participantName || "Facebook 使用者").slice(0, 100), pictureUrl: typeof item.participantPicture === "string" ? item.participantPicture.slice(0, 2048) : "",
+            lastText: String(item.lastMessage || "").slice(0, 10000), updatedAt: Number.isFinite(Date.parse(item.updatedTime)) ? Date.parse(item.updatedTime) : now(), unreadCount: Number(item.unreadCount || 0),
+          }));
+          return res.json({ items, next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
+        }
+        if (path === "/api/zernio/messages" && req.method === "GET") {
+          const conversationId = query.get("conversationId"), cursor = query.get("cursor");
+          if (!conversationId || conversationId.length > 512 || /[\u0000-\u001f]/.test(conversationId) || (cursor && (cursor.length > 1024 || /[\u0000-\u001f]/.test(cursor)))) throw new HttpError(400, "Facebook 對話參數無效。");
+          const data = await zernioRequest(`/inbox/conversations/${encodeURIComponent(conversationId)}/messages?accountId=${encodeURIComponent(facebook.accountId)}&limit=50&sortOrder=desc${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+          const labels = { image: "[圖片]", video: "[影片]", audio: "[語音]", file: "[檔案]", sticker: "[貼圖]", share: "[分享內容]" };
+          const items = (Array.isArray(data.messages) ? data.messages : []).filter(item => item.accountId === facebook.accountId && item.conversationId === conversationId).map(item => {
+            const attachment = Array.isArray(item.attachments) ? item.attachments[0] : null, kind = attachment?.type;
+            const sentAt = Number.isFinite(Date.parse(item.createdAt)) ? Date.parse(item.createdAt) : now();
+            const normalizedAttachment = attachment && typeof attachment.url === "string" ? { kind: kind === "image" ? "image" : "file", name: attachment.filename || labels[kind] || "Facebook 附件", url: attachment.url.slice(0, 4096), external: true, expiresAt: sentAt + 86400000 } : null;
+            return { id: `facebook-${digest(`${facebook.accountId}:${item.id}`)}`, remoteId: String(item.id), direction: item.direction === "outgoing" ? "outgoing" : "incoming", type: kind || "text", text: String(item.message || labels[kind] || "").slice(0, 10000), sentAt, unsent: !!item.isDeleted, status: item.deliveryStatus || (item.direction === "outgoing" ? "sent" : undefined), ...(normalizedAttachment ? { attachment: normalizedAttachment } : {}) };
+          });
+          return res.json({ items, next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
+        }
+        if (path === "/api/zernio/messages" && req.method === "POST") {
+          const origin = req.get("origin");
+          if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站回覆 Facebook 訊息。");
+          const { conversationId, text, operationId } = req.body || {};
+          if (typeof conversationId !== "string" || !conversationId || conversationId.length > 512 || /[\u0000-\u001f]/.test(conversationId) || typeof text !== "string" || !text.trim() || text.length > 5000 || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(operationId || "")) throw new HttpError(400, "Facebook 回覆格式錯誤。");
+          await store.zernioSendAttempt(user.uid, now());
+          const data = await zernioRequest(`/inbox/conversations/${encodeURIComponent(conversationId)}/messages`, { method: "POST", headers: { "Idempotency-Key": operationId }, body: JSON.stringify({ accountId: facebook.accountId, message: text.trim() }) });
+          const messageId = String(data.messageId || data.data?.messageId || `out-${operationId}`);
+          return res.json({ message: { id: `facebook-${digest(`${facebook.accountId}:${messageId}`)}`, remoteId: messageId, operationId, direction: "outgoing", type: "text", text: text.trim(), sentAt: now(), status: "sent", unsent: false } });
+        }
         throw new HttpError(404, "找不到 Zernio API。");
       }
       if (!path.startsWith("/api/line/")) throw new HttpError(404, "找不到頁面。");

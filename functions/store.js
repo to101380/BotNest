@@ -44,6 +44,14 @@ export function createStore(db) {
         tx.set(ref, { zernio: { ...prior, facebook: { ...account, connectedAt: at }, updatedAt: at } }, { merge: true });
       });
     },
+    async zernioSendAttempt(uid, at) {
+      const ref = accounts.doc(uid).collection("limits").doc("zernioSend");
+      await db.runTransaction(async tx => {
+        const old = (await tx.get(ref)).data(), active = old && at - old.since < 60000;
+        if (active && old.count >= 20) throw new HttpError(429, "Facebook 回覆頻率過高，請一分鐘後再試。");
+        tx.set(ref, { since: active ? old.since : at, count: active ? old.count + 1 : 1 });
+      });
+    },
     async claimIncomingImage(id, conversationId, messageId, at) {
       const ref = channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId);
       return db.runTransaction(async tx => {

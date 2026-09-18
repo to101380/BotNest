@@ -2,6 +2,7 @@
   "firestore": { "rules": "firestore.botnest.rules" },
   "functions": [{ "source": "functions", "codebase": "botnest", "ignore": ["node_modules", ".git", "test", "*-debug.log", "*.local"] }],
   "hosting": {
+    "site": "planning-with-ai-52d58",
     "public": "public",
     "rewrites": [
       { "source": "/api/zernio/**", "function": { "functionId": "botnestApi", "region": "us-central1" } },

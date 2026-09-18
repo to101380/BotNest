@@ -22,11 +22,11 @@ const formatDay = value => {
 };
 export function createLineInbox() {
   let user = null, active = false, pageMode = null, epoch = 0, controller, timer, channel = null;
-  let selected = null, conversationNext = null, messageNext = null, refreshing = false, saving = false, browsingHistory = false;
+  let selected = null, conversationNext = null, zernioConversationNext = null, messageNext = null, refreshing = false, saving = false, browsingHistory = false;
   const conversations = new Map(), messages = new Map();
   const drafts = new Map(), localReplies = new Map();
   const attachments = new Map();
-  let sending = false, uploading = false, customerSaving = false, aiSaving = false, zernioBusy = false;
+  let sending = false, uploading = false, customerSaving = false, aiSaving = false, zernioBusy = false, facebookAccount = null;
   let customerTags = [];
   let customerSaveTimer = null, pendingCustomerSave = null, customerSaveRevision = 0;
   let customerSaveChain = Promise.resolve();
@@ -39,13 +39,16 @@ export function createLineInbox() {
     if (active && followLatest) messageArea.scrollTop = messageArea.scrollHeight;
   });
   function replyControls() {
-    const enabled = active && !!selected && !!channel?.canReply && !saving && !sending && !uploading;
+    const current = conversations.get(selected), facebook = current?.provider === "facebook";
+    const canReply = facebook ? !!facebookAccount : !!channel?.canReply;
+    const enabled = active && !!selected && canReply && !saving && !sending && !uploading;
     $("line-reply-text").disabled = $("line-send").disabled = !enabled;
-    for (const id of ["line-pick-image", "line-pick-file", "line-pick-emoji", "line-remove-attachment"]) $(id).disabled = !enabled;
+    for (const id of ["line-pick-image", "line-pick-file", "line-remove-attachment"]) $(id).disabled = !enabled || facebook;
+    $("line-pick-emoji").disabled = !enabled;
     $("line-attachment-preview").hidden = !attachments.has(selected) && !uploading;
     $("line-attachment-name").textContent = uploading ? "正在準備附件…" : attachments.has(selected) ? `${attachments.get(selected).kind === "image" ? "圖片" : "文件"}：${attachments.get(selected).name}（待傳送）` : "";
     $("line-send").textContent = sending ? "傳送中…" : "傳送回覆";
-    $("line-reply-hint").textContent = !channel?.canReply ? "請更新上方 OA 連線憑證，啟用回覆。" : !selected ? "先選擇一段對話。" : "最多 5000 字";
+    $("line-reply-hint").textContent = !selected ? "先選擇一段對話。" : !canReply ? "請先到渠道設定完成連線。" : facebook ? "Facebook 文字回覆 · 最多 5000 字" : "最多 5000 字";
   }
   const status = (text, error = false) => {
     for (const id of ["line-status", "channel-status"]) { $(id).textContent = text; $(id).classList.toggle("error", error); }
@@ -60,12 +63,14 @@ export function createLineInbox() {
     const frame = document.createElement("span"); frame.className = "chat-avatar";
     frame.textContent = item.displayName ? [...item.displayName][0] : "人";
     frame.setAttribute("aria-hidden", "true");
-    if (item.pictureUrl && /^https:\/\/[^/]+\.line-scdn\.net\//i.test(item.pictureUrl)) {
+    let trustedPicture = false;
+    try { const url = new URL(item.pictureUrl); trustedPicture = item.provider === "facebook" ? /(^|\.)fbcdn\.net$/i.test(url.hostname) : /(^|\.)line-scdn\.net$/i.test(url.hostname); } catch { /* Invalid profile image. */ }
+    if (item.pictureUrl && trustedPicture) {
       const image = document.createElement("img"); image.alt = ""; image.src = item.pictureUrl;
       image.loading = "lazy"; image.referrerPolicy = "no-referrer";
       image.addEventListener("error", () => image.remove(), { once: true }); frame.append(image);
     }
-    const badge = document.createElement("span"); badge.className = "line-avatar-badge"; badge.title = "LINE"; frame.append(badge);
+    const badge = document.createElement("span"); badge.className = item.provider === "facebook" ? "facebook-avatar-badge" : "line-avatar-badge"; badge.title = item.provider === "facebook" ? "Facebook Messenger" : "LINE"; if (item.provider === "facebook") badge.textContent = "f"; frame.append(badge);
     return frame;
   }
   function showConversationHeader() {
@@ -74,7 +79,7 @@ export function createLineInbox() {
     $("line-chat-empty").parentElement.classList.toggle("has-conversation", !!item);
     $("line-conversation-title").textContent = item ? label(item) : "選擇一段對話";
     $("line-chat-avatar").replaceChildren(...(item ? [avatar(item)] : []));
-    $("line-chat-source").textContent = item ? "來自 LINE" : "在左側選擇聊天者，開始回覆";
+    $("line-chat-source").textContent = item ? `來自 ${item.provider === "facebook" ? "Facebook Messenger" : "LINE"}` : "在左側選擇聊天者，開始回覆";
   }
   const customerFields = ["name", "phone", "email", "birthday", "gender", "language", "country", "city", "address", "about", "custom1", "custom2", "custom3"];
   function renderCustomerTags() {
@@ -111,8 +116,13 @@ export function createLineInbox() {
   function customerStatus(text, error = false) { $("customer-status").textContent = text; $("customer-status").classList.toggle("error", error); }
   function showCustomerPanel() {
     const item = conversations.get(selected), panel = $("customer-panel");
-    panel.hidden = !item;
-    if (!item) return;
+    panel.hidden = !item || item.provider === "facebook";
+    $("customer-toggle").hidden = !item || item.provider === "facebook";
+    if (!item || item.provider === "facebook") {
+      panel.classList.remove("open");
+      $("customer-toggle").setAttribute("aria-expanded", "false");
+      return;
+    }
     $("customer-avatar").replaceChildren(avatar(item)); $("customer-title").textContent = label(item);
     const customer = item.customer || {};
     for (const field of customerFields) $(`customer-${field}`).value = customer[field] || "";
@@ -153,12 +163,14 @@ export function createLineInbox() {
   }
   function showZernioAccount(data) {
     const connected = !!data.facebook;
+    facebookAccount = data.facebook || null;
     $("facebook-card-state").textContent = connected ? "已連接" : data.configured ? "未連接" : "尚未設定";
     $("facebook-card-state").classList.toggle("connected", connected);
     $("facebook-page-name").textContent = connected ? data.facebook.displayName : "尚未連接 Facebook 粉絲專頁";
     $("facebook-page-detail").textContent = connected ? `@${data.facebook.username || "Facebook"} · 由 Zernio 管理連線` : data.configured ? "授權時可選擇你管理的粉絲專頁" : "請先設定 Zernio API Key";
     $("facebook-connect").textContent = connected ? "重新授權" : "使用 Facebook 授權";
     $("facebook-connect").disabled = !data.configured || zernioBusy;
+    showAccount(); replyControls();
   }
   async function loadZernioAccount() {
     try {
@@ -174,9 +186,10 @@ export function createLineInbox() {
   }
   function report(error) { if (error.name !== "AbortError") status(error.message, true); }
   function showAccount() {
-    $("line-account").hidden = $("line-inbox").hidden = !channel;
+    $("line-account").hidden = !channel;
+    $("line-inbox").hidden = !channel && !facebookAccount;
     $("line-connect-form").hidden = !!channel;
-    $("line-not-connected").hidden = !!channel;
+    $("line-not-connected").hidden = !!channel || !!facebookAccount;
     $("line-settings-toggle").setAttribute("aria-expanded", "false");
     $("line-card-state").textContent = channel ? "已連接" : "未連接";
     $("line-card-state").classList.toggle("connected", !!channel);
@@ -224,13 +237,15 @@ export function createLineInbox() {
       button.addEventListener("click", () => selectConversation(item.id));
       $("line-conversations").append(button);
     }
-    $("line-more-conversations").hidden = !conversationNext;
+    $("line-more-conversations").hidden = !conversationNext && !zernioConversationNext;
     showConversationHeader();
   }
   const trustedMediaUrl = attachment => {
     try {
       const url = new URL(attachment.url, location.origin);
-      return url.origin === "https://planning-with-ai-52d58.web.app" && url.pathname.startsWith("/api/line/media/") ? url : null;
+      if (url.origin === "https://planning-with-ai-52d58.web.app" && url.pathname.startsWith("/api/line/media/")) return url;
+      if (attachment.external && url.protocol === "https:" && /(^|\.)fbcdn\.net$/i.test(url.hostname)) return url;
+      return null;
     } catch { return null; }
   };
   let viewerItems = [], viewerIndex = 0;
@@ -307,7 +322,8 @@ export function createLineInbox() {
         bubble.append(delivery);
         if (item.status === "uncertain") {
           const retry = document.createElement("button"); retry.type = "button"; retry.className = "retry";
-          retry.textContent = "重試確認"; retry.disabled = sending || !channel?.canReply || Date.now() - item.sentAt >= 23 * 60 * 60 * 1000;
+          const selectedProvider = conversations.get(selected)?.provider;
+          retry.textContent = "重試確認"; retry.disabled = sending || (selectedProvider === "facebook" ? !facebookAccount : !channel?.canReply) || Date.now() - item.sentAt >= 23 * 60 * 60 * 1000;
           retry.addEventListener("click", () => void sendReply(selected, item.text, item.operationId, item.attachment)); bubble.append(retry);
         }
         if (item.status !== "sent" && item.note) { const note = document.createElement("p"); note.className = "note"; note.textContent = item.note; bubble.append(note); }
@@ -323,7 +339,10 @@ export function createLineInbox() {
   async function loadMessages(older = false, scrollMode = "auto") {
     const id = selected;
     if (!id) return;
-    const data = await api(`conversations/${id}/messages${older && messageNext ? `?before=${encodeURIComponent(messageNext)}` : ""}`);
+    const current = conversations.get(id);
+    const data = current?.provider === "facebook"
+      ? await zernioApi(`messages?conversationId=${encodeURIComponent(current.remoteId)}${older && messageNext ? `&cursor=${encodeURIComponent(messageNext)}` : ""}`)
+      : await api(`conversations/${id}/messages${older && messageNext ? `?before=${encodeURIComponent(messageNext)}` : ""}`);
     if (selected !== id) return;
     if (older) historyMode(true);
     // Refresh replaces the window, including any retracted messages.
@@ -346,20 +365,27 @@ export function createLineInbox() {
     try { await loadMessages(false, "bottom"); } catch (error) { report(error); }
   }
   async function refresh(more = false) {
-    if (refreshing || !channel || !active || saving) return;
+    if (refreshing || (!channel && !facebookAccount) || !active || saving) return;
     const currentEpoch = epoch;
     refreshing = true; $("line-refresh").disabled = true;
     try {
-      const [account, data] = await Promise.all([api("account"), api(`conversations${more && conversationNext ? `?before=${encodeURIComponent(conversationNext)}` : ""}`)]);
-      channel = account.channel;
+      const linePromise = channel ? Promise.all([api("account"), api(`conversations${more && conversationNext ? `?before=${encodeURIComponent(conversationNext)}` : ""}`)]) : null;
+      const facebookPromise = facebookAccount ? zernioApi(`conversations${more && zernioConversationNext ? `?cursor=${encodeURIComponent(zernioConversationNext)}` : ""}`) : null;
+      const [lineState, facebookState] = await Promise.allSettled([linePromise, facebookPromise]);
+      const lineResult = lineState.status === "fulfilled" ? lineState.value : null;
+      const facebookResult = facebookState.status === "fulfilled" ? facebookState.value : null;
+      const refreshError = lineState.status === "rejected" ? lineState.reason : facebookState.status === "rejected" ? facebookState.reason : null;
+      const account = lineResult?.[0], data = lineResult?.[1];
+      if (account) channel = account.channel;
       replyControls();
       if (channel) {
         $("line-oa-state").textContent = channel.verifiedAt ? "Webhook 已接通" : "等待 Webhook 驗證";
         $("line-oa-state").classList.toggle("active", !!channel.verifiedAt);
       }
       if (!more) conversations.clear();
-      for (const item of data.items) conversations.set(item.id, item);
-      conversationNext = data.next; showConversations();
+      for (const item of data?.items || []) conversations.set(item.id, item);
+      for (const item of facebookResult?.items || []) conversations.set(item.id, item);
+      conversationNext = data?.next || null; zernioConversationNext = facebookResult?.next || null; showConversations();
       let pendingConversation = null;
       try { pendingConversation = sessionStorage.getItem("botnest-open-conversation"); } catch { /* Storage may be unavailable. */ }
       if (pendingConversation && conversations.has(pendingConversation)) {
@@ -368,7 +394,7 @@ export function createLineInbox() {
       }
       if (more) historyMode(true);
       await loadMessages();
-      status("");
+      if (refreshError) report(refreshError); else status("");
     } catch (error) { report(error); }
     finally { if (currentEpoch === epoch) { refreshing = false; $("line-refresh").disabled = false; } }
   }
@@ -376,22 +402,26 @@ export function createLineInbox() {
     const currentEpoch = epoch;
     status("正在讀取 OA 連線狀態…");
     try {
-      channel = (await api("account")).channel;
+      const [lineResult, zernioResult] = await Promise.allSettled([api("account"), zernioApi("account")]);
+      if (lineResult.status === "fulfilled") channel = lineResult.value.channel;
+      if (zernioResult.status === "fulfilled") showZernioAccount(zernioResult.value);
       showAccount();
       if (channel) {
         const ai = await api("ai-settings");
         showAiSettings(ai.settings);
-        if (pageMode === "inbox") await refresh();
-        else {
+        if (pageMode !== "inbox") {
           status(channel.verifiedAt ? "LINE 官方帳號已連接，Webhook 運作正常。" : "LINE 官方帳號已連接，等待 Webhook 驗證。");
         }
-      } else status("尚未連接 LINE 官方帳號。請填寫下方資訊完成連接。");
-      if (pageMode === "settings") await loadZernioAccount();
+      } else if (!facebookAccount) status("尚未連接任何訊息渠道。請先前往渠道設定。");
+      if (pageMode === "inbox" && (channel || facebookAccount)) await refresh();
+      if (pageMode === "settings" && zernioResult.status === "rejected") await loadZernioAccount();
       if (currentEpoch === epoch && pageMode === "inbox") timer = setInterval(() => { if (!document.hidden && !browsingHistory) void refresh(); }, 10000);
     } catch (error) { report(error); }
   }
   async function sendReply(conversationId, text, operationId, attachment) {
-    if (sending || !active || !channel?.canReply || !conversationId || (!text.trim() && !attachment)) return;
+    const currentConversation = conversations.get(conversationId), facebook = currentConversation?.provider === "facebook";
+    const canReply = facebook ? !!facebookAccount : !!channel?.canReply;
+    if (sending || !active || !canReply || !conversationId || (!text.trim() && !attachment) || (facebook && attachment)) return;
     const isRetry = !!operationId;
     operationId ||= crypto.randomUUID();
     const currentEpoch = epoch;
@@ -400,7 +430,9 @@ export function createLineInbox() {
     localReplies.set(operationId, { conversationId, message: initial });
     if (selected === conversationId) { historyMode(false); messages.set(initial.id, initial); showMessages("bottom"); }
     try {
-      const data = await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId, attachmentId: attachment?.id || null }) });
+      const data = facebook
+        ? await zernioApi("messages", { method: "POST", body: JSON.stringify({ conversationId: currentConversation.remoteId, text, operationId }) })
+        : await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId, attachmentId: attachment?.id || null }) });
       localReplies.set(operationId, { conversationId, message: data.message });
       if (selected === conversationId) { messages.set(data.message.id, data.message); showMessages(); }
       status(data.message.status === "sent" ? "" : data.message.note || "傳送狀態待確認。", data.message.status !== "sent");
@@ -419,7 +451,7 @@ export function createLineInbox() {
     } finally { if (currentEpoch === epoch) { sending = false; replyControls(); showMessages(); } }
   }
   async function uploadFile(file, kind) {
-    if (!file || uploading || sending || !selected || !active || !channel?.canReply) return;
+    if (!file || uploading || sending || !selected || !active || !channel?.canReply || conversations.get(selected)?.provider === "facebook") return;
     const conversationId = selected, currentEpoch = epoch;
     uploading = true; replyControls();
     try {
@@ -548,7 +580,8 @@ export function createLineInbox() {
     event.preventDefault();
     const text = $("line-reply-text").value;
     const attachment = attachments.get(selected);
-    if (sending || uploading || !selected || !channel?.canReply || (!text.trim() && !attachment) || text.length > 5000) return;
+    const current = conversations.get(selected), canReply = current?.provider === "facebook" ? !!facebookAccount : !!channel?.canReply;
+    if (sending || uploading || !selected || !canReply || (!text.trim() && !attachment) || text.length > 5000) return;
     drafts.delete(selected); $("line-reply-text").value = "";
     attachments.delete(selected);
     void sendReply(selected, text, undefined, attachment);
@@ -610,10 +643,10 @@ export function createLineInbox() {
       if (user?.uid === nextUser?.uid && active === nextActive && pageMode === nextMode) { user = nextUser; return; }
       epoch++; controller?.abort(); clearInterval(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
       messageResize.disconnect(); followLatest = true;
-      user = nextUser; active = nextActive; pageMode = nextMode; channel = null; selected = null; refreshing = false; saving = false;
+      user = nextUser; active = nextActive; pageMode = nextMode; channel = null; facebookAccount = null; selected = null; refreshing = false; saving = false;
       sending = false; uploading = false; customerSaving = false; aiSaving = false; zernioBusy = false; customerTags = []; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
       $("line-emoji-panel").hidden = true; $("line-pick-emoji").setAttribute("aria-expanded", "false");
-      conversationNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
+      conversationNext = zernioConversationNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
       historyMode(false);
       $("line-oa-name").textContent = $("line-webhook-url").value = $("line-channel-id").value = "";
       $("line-conversation-title").textContent = "選擇一段對話";
