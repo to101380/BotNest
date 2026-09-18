@@ -64,7 +64,7 @@ export function createLineInbox() {
     frame.textContent = item.displayName ? [...item.displayName][0] : "人";
     frame.setAttribute("aria-hidden", "true");
     let trustedPicture = false;
-    try { const url = new URL(item.pictureUrl); trustedPicture = item.provider === "facebook" ? /(^|\.)fbcdn\.net$/i.test(url.hostname) : /(^|\.)line-scdn\.net$/i.test(url.hostname); } catch { /* Invalid profile image. */ }
+    try { const url = new URL(item.pictureUrl); trustedPicture = url.protocol === "https:" && (item.provider === "facebook" ? /(^|\.)(fbcdn\.net|facebook\.com)$/i.test(url.hostname) : /(^|\.)line-scdn\.net$/i.test(url.hostname)); } catch { /* Invalid profile image. */ }
     if (item.pictureUrl && trustedPicture) {
       const image = document.createElement("img"); image.alt = ""; image.src = item.pictureUrl;
       image.loading = "lazy"; image.referrerPolicy = "no-referrer";
@@ -105,7 +105,7 @@ export function createLineInbox() {
         if (selected !== conversationId) return;
         setCustomerBusy(true); customerStatus("正在刪除記事…");
         try {
-          const data = await api(`conversations/${conversationId}/customer/notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
+          const data = await customerRequest(conversationId, `/notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
           if (selected === conversationId) { updateCustomer(data.customer); customerStatus("記事已刪除"); }
         } catch (error) { if (selected === conversationId) customerStatus(error.message, true); }
         finally { setCustomerBusy(false); }
@@ -116,9 +116,9 @@ export function createLineInbox() {
   function customerStatus(text, error = false) { $("customer-status").textContent = text; $("customer-status").classList.toggle("error", error); }
   function showCustomerPanel() {
     const item = conversations.get(selected), panel = $("customer-panel");
-    panel.hidden = !item || item.provider === "facebook";
-    $("customer-toggle").hidden = !item || item.provider === "facebook";
-    if (!item || item.provider === "facebook") {
+    panel.hidden = !item;
+    $("customer-toggle").hidden = !item;
+    if (!item) {
       panel.classList.remove("open");
       $("customer-toggle").setAttribute("aria-expanded", "false");
       return;
@@ -160,6 +160,11 @@ export function createLineInbox() {
     if (currentEpoch !== epoch) throw new DOMException("Session changed", "AbortError");
     if (!response.ok || data.error) throw new Error(data.error || "Zernio 服務暫時無法使用。");
     return data;
+  }
+  function customerRequest(conversationId, suffix = "", options = {}) {
+    const item = conversations.get(conversationId);
+    if (item?.provider === "facebook") return zernioApi(`customer${suffix}?conversationId=${encodeURIComponent(item.remoteId)}`, options);
+    return api(`conversations/${conversationId}/customer${suffix}`, options);
   }
   function showZernioAccount(data) {
     const connected = !!data.facebook;
@@ -362,7 +367,13 @@ export function createLineInbox() {
     $("line-reply-text").value = drafts.get(id) || ""; replyControls();
     $("line-conversation-title").textContent = label(conversations.get(id));
     showConversations(); showMessages(); showCustomerPanel();
-    try { await loadMessages(false, "bottom"); } catch (error) { report(error); }
+    const tasks = [loadMessages(false, "bottom")];
+    if (conversations.get(id)?.provider === "facebook") tasks.push(customerRequest(id).then(data => {
+      if (selected !== id) return;
+      const item = conversations.get(id); conversations.set(id, { ...item, customer: data.customer || {} }); showCustomerPanel(); showConversations();
+    }));
+    const results = await Promise.allSettled(tasks);
+    const failed = results.find(result => result.status === "rejected"); if (failed) report(failed.reason);
   }
   async function refresh(more = false) {
     if (refreshing || (!channel && !facebookAccount) || !active || saving) return;
@@ -508,7 +519,7 @@ export function createLineInbox() {
       if (!active || !user) return;
       if (selected === task.conversationId && task.revision === customerSaveRevision) customerStatus("自動儲存中…");
       try {
-        const data = await api(`conversations/${task.conversationId}/customer`, { method: "PUT", body: JSON.stringify(task.payload) });
+        const data = await customerRequest(task.conversationId, "", { method: "PUT", body: JSON.stringify(task.payload) });
         const item = conversations.get(task.conversationId);
         if (item) { conversations.set(task.conversationId, { ...item, customer: data.customer }); showConversations(); }
         if (selected === task.conversationId && task.revision === customerSaveRevision) customerStatus("已自動儲存");
@@ -547,7 +558,7 @@ export function createLineInbox() {
     if (selected !== conversationId) return;
     setCustomerBusy(true); customerStatus("正在新增記事…");
     try {
-      const data = await api(`conversations/${conversationId}/customer/notes`, { method: "POST", body: JSON.stringify({ text }) });
+      const data = await customerRequest(conversationId, "/notes", { method: "POST", body: JSON.stringify({ text }) });
       if (selected === conversationId) { input.value = ""; updateCustomer(data.customer); customerStatus("記事已新增"); }
     } catch (error) { if (selected === conversationId) customerStatus(error.message, true); }
     finally { setCustomerBusy(false); }

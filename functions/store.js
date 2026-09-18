@@ -52,6 +52,39 @@ export function createStore(db) {
         tx.set(ref, { since: active ? old.since : at, count: active ? old.count + 1 : 1 });
       });
     },
+    async zernioCustomer(uid, conversationId) {
+      return (await accounts.doc(uid).collection("zernioCustomers").doc(conversationId).get()).data()?.customer || {};
+    },
+    async saveZernioCustomer(uid, conversationId, profile, at) {
+      const ref = accounts.doc(uid).collection("zernioCustomers").doc(conversationId);
+      return db.runTransaction(async tx => {
+        const prior = (await tx.get(ref)).data()?.customer || {};
+        const customer = { ...profile, notes: Array.isArray(prior.notes) ? prior.notes.slice(0, 30) : [], updatedAt: at };
+        tx.set(ref, { customer }, { merge: true });
+        return customer;
+      });
+    },
+    async addZernioCustomerNote(uid, conversationId, text, at) {
+      const ref = accounts.doc(uid).collection("zernioCustomers").doc(conversationId);
+      return db.runTransaction(async tx => {
+        const prior = (await tx.get(ref)).data()?.customer || {};
+        const notes = [{ id: randomUUID(), text, createdAt: at }, ...(Array.isArray(prior.notes) ? prior.notes : [])].slice(0, 30);
+        const customer = { ...prior, notes, updatedAt: at };
+        tx.set(ref, { customer }, { merge: true });
+        return customer;
+      });
+    },
+    async deleteZernioCustomerNote(uid, conversationId, noteId, at) {
+      const ref = accounts.doc(uid).collection("zernioCustomers").doc(conversationId);
+      return db.runTransaction(async tx => {
+        const prior = (await tx.get(ref)).data()?.customer || {}, oldNotes = Array.isArray(prior.notes) ? prior.notes : [];
+        const notes = oldNotes.filter(note => note.id !== noteId);
+        if (notes.length === oldNotes.length) throw new HttpError(404, "找不到這則記事。");
+        const customer = { ...prior, notes, updatedAt: at };
+        tx.set(ref, { customer }, { merge: true });
+        return customer;
+      });
+    },
     async claimIncomingImage(id, conversationId, messageId, at) {
       const ref = channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId);
       return db.runTransaction(async tx => {

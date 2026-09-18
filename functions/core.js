@@ -186,6 +186,24 @@ export function createHandler({ store, verifyToken, getKey, openAiConfigured = (
         const zernio = await store.zernioAccount(user.uid), facebook = zernio?.facebook;
         if (!facebook?.accountId) throw new HttpError(409, "請先在渠道設定連接 Facebook 粉絲專頁。");
         const query = new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
+        const customerRoute = path === "/api/zernio/customer" || path === "/api/zernio/customer/notes" || /^\/api\/zernio\/customer\/notes\/[a-f0-9-]{36}$/.test(path);
+        if (customerRoute) {
+          const remoteId = query.get("conversationId");
+          if (!remoteId || remoteId.length > 512 || /[\u0000-\u001f]/.test(remoteId)) throw new HttpError(400, "Facebook 對話參數無效。");
+          const customerId = digest(`${facebook.accountId}:${remoteId}`);
+          if (path === "/api/zernio/customer" && req.method === "GET") return res.json({ customer: await store.zernioCustomer(user.uid, customerId) });
+          const origin = req.get("origin");
+          if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站更新客戶資料。");
+          if (path === "/api/zernio/customer" && req.method === "PUT") return res.json({ customer: await store.saveZernioCustomer(user.uid, customerId, cleanCustomer(req.body), now()) });
+          if (path === "/api/zernio/customer/notes" && req.method === "POST") {
+            const text = req.body?.text;
+            if (typeof text !== "string" || !text.trim() || text.trim().length > 1000) throw new HttpError(400, "記事需為 1～1000 個字。");
+            return res.json({ customer: await store.addZernioCustomerNote(user.uid, customerId, text.trim(), now()) });
+          }
+          const noteId = /^\/api\/zernio\/customer\/notes\/([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/.exec(path)?.[1];
+          if (noteId && req.method === "DELETE") return res.json({ customer: await store.deleteZernioCustomerNote(user.uid, customerId, noteId, now()) });
+          throw new HttpError(405, "不支援的客戶資料操作。");
+        }
         if (path === "/api/zernio/conversations" && req.method === "GET") {
           const cursor = query.get("cursor");
           if (cursor && (cursor.length > 1024 || /[\u0000-\u001f]/.test(cursor))) throw new HttpError(400, "分頁參數無效。");

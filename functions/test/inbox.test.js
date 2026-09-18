@@ -115,14 +115,14 @@ test("Zernio inbox is tenant scoped and supports listing, reading and replying",
     let body;
     if (url.includes(`/inbox/conversations/${conversationId}/messages`) && options.method === "POST") body = { success: true, data: { messageId: "sent-1" } };
     else if (url.includes(`/inbox/conversations/${conversationId}/messages`)) body = { messages: [{ id: "message-1", conversationId, accountId, platform: "facebook", message: "您好", direction: "incoming", createdAt: "2026-09-18T01:00:00Z", attachments: [] }], pagination: { hasMore: false } };
-    else body = { data: [{ id: conversationId, platform: "facebook", accountId, participantId: "customer-1", participantName: "王小姐", lastMessage: "您好", updatedTime: "2026-09-18T01:00:00Z", unreadCount: 1 }], pagination: { hasMore: false } };
+    else body = { data: [{ id: conversationId, platform: "facebook", accountId, participantId: "customer-1", participantName: "王小姐", participantPicture: "https://graph.facebook.com/customer-1/picture", lastMessage: "您好", updatedTime: "2026-09-18T01:00:00Z", unreadCount: 1 }], pagination: { hasMore: false } };
     return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
   };
   const f = await fixture({ getZernioKey: () => "server-only-key", fetchZernio });
   await f.store.saveZernioProfile("alice", profileId, 900000);
   await f.store.bindZernioFacebook("alice", profileId, { accountId, username: "botnest", displayName: "BotNest", platform: "facebook" }, 900000);
   const conversations = await f.request("/api/zernio/conversations?accountId=attacker-account");
-  assert.equal(conversations.code, 200); assert.equal(conversations.body.items[0].provider, "facebook"); assert.equal(conversations.body.items[0].displayName, "王小姐");
+  assert.equal(conversations.code, 200); assert.equal(conversations.body.items[0].provider, "facebook"); assert.equal(conversations.body.items[0].displayName, "王小姐"); assert.match(conversations.body.items[0].pictureUrl, /graph\.facebook\.com/);
   const listed = calls.at(-1); assert.match(listed.url, new RegExp(`accountId=${accountId}`)); assert.doesNotMatch(listed.url, /attacker-account/);
   const messages = await f.request(`/api/zernio/messages?conversationId=${conversationId}`);
   assert.equal(messages.body.items[0].text, "您好"); assert.equal(messages.body.items[0].direction, "incoming");
@@ -131,6 +131,14 @@ test("Zernio inbox is tenant scoped and supports listing, reading and replying",
   assert.equal(sent.code, 200); assert.equal(sent.body.message.status, "sent");
   const sendCall = calls.at(-1), sentBody = JSON.parse(sendCall.options.body);
   assert.deepEqual(sentBody, { accountId, message: "很高興為您服務" }); assert.equal(sendCall.options.headers["Idempotency-Key"], operationId);
+  const customer = await f.request(`/api/zernio/customer?conversationId=${conversationId}`, { method: "PUT", body: { name: "王小姐", phone: "0912345678", tags: ["Facebook 客戶"] } });
+  assert.equal(customer.code, 200); assert.equal(customer.body.customer.name, "王小姐");
+  const noted = await f.request(`/api/zernio/customer/notes?conversationId=${conversationId}`, { method: "POST", body: { text: "明天回覆" } });
+  assert.equal(noted.body.customer.notes[0].text, "明天回覆");
+  assert.equal((await f.request(`/api/zernio/customer?conversationId=${conversationId}`)).body.customer.phone, "0912345678");
+  const bobProfile = "1".repeat(24), bobAccount = "2".repeat(24);
+  await f.store.saveZernioProfile("bob", bobProfile, 900000); await f.store.bindZernioFacebook("bob", bobProfile, { accountId: bobAccount, platform: "facebook" }, 900000);
+  assert.deepEqual((await f.request(`/api/zernio/customer?conversationId=${conversationId}`, { token: "bob" })).body.customer, {});
 });
 test("anonymous and unverified password accounts cannot access private endpoints", async () => {
   for (const provider of ["anonymous", "password"]) {
