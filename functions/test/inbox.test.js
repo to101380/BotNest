@@ -115,7 +115,8 @@ test("Zernio inbox is tenant scoped and supports listing, reading and replying",
     let body;
     if (url.includes(`/inbox/conversations/${conversationId}/messages`) && options.method === "POST") body = { success: true, data: { messageId: "sent-1" } };
     else if (url.includes(`/inbox/conversations/${conversationId}/messages`)) body = { messages: [{ id: "message-1", conversationId, accountId, platform: "facebook", message: "您好", direction: "incoming", createdAt: "2026-09-18T01:00:00Z", attachments: [] }], pagination: { hasMore: false } };
-    else body = { data: [{ id: conversationId, platform: "facebook", accountId, participantId: "customer-1", participantName: "王小姐", participantPicture: "https://graph.facebook.com/customer-1/picture", lastMessage: "您好", updatedTime: "2026-09-18T01:00:00Z", unreadCount: 1 }], pagination: { hasMore: false } };
+    else if (url.includes("/contacts?")) body = { contacts: [{ platformIdentifier: "1234567890", avatarUrl: "https://graph.facebook.com/1234567890/picture" }] };
+    else body = { data: [{ id: conversationId, platform: "facebook", accountId, participantId: "1234567890", participantName: "王小姐", lastMessage: "您好", updatedTime: "2026-09-18T01:00:00Z", unreadCount: 1 }], pagination: { hasMore: false } };
     return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
   };
   const f = await fixture({ getZernioKey: () => "server-only-key", fetchZernio });

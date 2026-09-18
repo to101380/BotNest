@@ -49,6 +49,8 @@ export function createLineInbox() {
     $("line-attachment-name").textContent = uploading ? "正在準備附件…" : attachments.has(selected) ? `${attachments.get(selected).kind === "image" ? "圖片" : "文件"}：${attachments.get(selected).name}（待傳送）` : "";
     $("line-send").textContent = sending ? "傳送中…" : "傳送回覆";
     $("line-reply-hint").textContent = !selected ? "先選擇一段對話。" : !canReply ? "請先到渠道設定完成連線。" : facebook ? "Facebook 文字回覆 · 最多 5000 字" : "最多 5000 字";
+    $("reply-channel-note").textContent = facebook ? "Enter 傳送，Shift＋Enter 換行。回覆會透過 Facebook Messenger 傳送。" : "Enter 傳送，Shift＋Enter 換行。回覆會使用 OA 的 LINE 訊息額度。";
+    $("reply-attachment-note").hidden = !!facebook;
   }
   const status = (text, error = false) => {
     for (const id of ["line-status", "channel-status"]) { $(id).textContent = text; $(id).classList.toggle("error", error); }
@@ -64,13 +66,13 @@ export function createLineInbox() {
     frame.textContent = item.displayName ? [...item.displayName][0] : "人";
     frame.setAttribute("aria-hidden", "true");
     let trustedPicture = false;
-    try { const url = new URL(item.pictureUrl); trustedPicture = url.protocol === "https:" && (item.provider === "facebook" ? /(^|\.)(fbcdn\.net|facebook\.com)$/i.test(url.hostname) : /(^|\.)line-scdn\.net$/i.test(url.hostname)); } catch { /* Invalid profile image. */ }
+    try { const url = new URL(item.pictureUrl); trustedPicture = url.protocol === "https:" && (item.provider === "facebook" ? /(^|\.)(fbcdn\.net|facebook\.com|fbsbx\.com)$/i.test(url.hostname) : /(^|\.)line-scdn\.net$/i.test(url.hostname)); } catch { /* Invalid profile image. */ }
     if (item.pictureUrl && trustedPicture) {
       const image = document.createElement("img"); image.alt = ""; image.src = item.pictureUrl;
       image.loading = "lazy"; image.referrerPolicy = "no-referrer";
       image.addEventListener("error", () => image.remove(), { once: true }); frame.append(image);
     }
-    const badge = document.createElement("span"); badge.className = item.provider === "facebook" ? "facebook-avatar-badge" : "line-avatar-badge"; badge.title = item.provider === "facebook" ? "Facebook Messenger" : "LINE"; if (item.provider === "facebook") badge.textContent = "f"; frame.append(badge);
+    const badge = document.createElement("span"); badge.className = item.provider === "facebook" ? "facebook-avatar-badge" : "line-avatar-badge"; badge.title = item.provider === "facebook" ? "Facebook Messenger" : "LINE"; frame.append(badge);
     return frame;
   }
   function showConversationHeader() {
@@ -124,6 +126,7 @@ export function createLineInbox() {
       return;
     }
     $("customer-avatar").replaceChildren(avatar(item)); $("customer-title").textContent = label(item);
+    $("customer-source").textContent = `來自 ${item.provider === "facebook" ? "Facebook Messenger" : "LINE"}`;
     const customer = item.customer || {};
     for (const field of customerFields) $(`customer-${field}`).value = customer[field] || "";
     customerTags = Array.isArray(customer.tags) ? [...customer.tags] : [];

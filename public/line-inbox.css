@@ -72,7 +72,7 @@ body.inbox-open{height:100dvh;min-height:0;overflow:hidden;background:#fff}
 .inbox-open .chat-avatar{overflow:visible;isolation:isolate}
 .inbox-open .chat-avatar>img{border-radius:50%;z-index:1}
 .line-avatar-badge{position:absolute;right:-4px;bottom:-3px;z-index:2;width:21px;height:21px;display:block!important;margin:0!important;background:transparent url('/line-icon.svg') center/contain no-repeat;filter:drop-shadow(0 1px 2px #193c2a35)}
-.facebook-avatar-badge{position:absolute;right:-4px;bottom:-3px;z-index:2;width:20px;height:20px;display:grid!important;place-items:center;margin:0!important;border:2px solid #fff;border-radius:50%;background:#1877f2;color:#fff;font:700 14px/1 Arial,sans-serif;filter:drop-shadow(0 1px 2px #102d5c35)}
+.facebook-avatar-badge{position:absolute;right:-4px;bottom:-3px;z-index:2;width:20px;height:20px;display:block!important;margin:0!important;border:2px solid #fff;border-radius:50%;background:#fff url('/messenger-icon.svg') center/contain no-repeat;filter:drop-shadow(0 1px 2px #102d5c35)}
 .conversation-title-row{display:flex!important;align-items:center;justify-content:space-between;gap:10px;margin:0!important}
 .conversation-title-row strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650}
 .conversation-title-row time{flex-shrink:0;color:#a0a8b0;font-size:10px}

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" role="img" aria-label="Messenger">
+  <defs><linearGradient id="g" x1="6" y1="31" x2="30" y2="5" gradientUnits="userSpaceOnUse"><stop stop-color="#a033ff"/><stop offset=".5" stop-color="#168aff"/><stop offset="1" stop-color="#00c6ff"/></linearGradient></defs>
+  <circle cx="18" cy="18" r="17" fill="url(#g)"/>
+  <path fill="#fff" d="M18 7.2c-6.2 0-11.2 4.65-11.2 10.4 0 3.28 1.63 6.2 4.17 8.1v4.1l3.82-2.1c1.02.28 2.1.43 3.21.43 6.2 0 11.2-4.65 11.2-10.53S24.2 7.2 18 7.2Zm1.12 14.02-2.85-3.04-5.57 3.04 6.13-6.5 2.92 3.04 5.48-3.04-6.11 6.5Z"/>
+</svg>

@@ -208,9 +208,15 @@ export function createHandler({ store, verifyToken, getKey, openAiConfigured = (
           const cursor = query.get("cursor");
           if (cursor && (cursor.length > 1024 || /[\u0000-\u001f]/.test(cursor))) throw new HttpError(400, "分頁參數無效。");
           const data = await zernioRequest(`/inbox/conversations?accountId=${encodeURIComponent(facebook.accountId)}&platform=facebook&limit=30${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+          let contacts = [];
+          if ((data.data || []).some(item => !item.participantPicture)) {
+            try { contacts = (await zernioRequest(`/contacts?accountId=${encodeURIComponent(facebook.accountId)}&platform=facebook&limit=200`)).contacts || []; }
+            catch { /* Contact avatars are an optional fallback and must not block the inbox. */ }
+          }
+          const contactByParticipant = new Map(contacts.map(item => [String(item.platformIdentifier || ""), item]));
           const items = (Array.isArray(data.data) ? data.data : []).filter(item => item.platform === "facebook" && item.accountId === facebook.accountId).map(item => ({
             id: `facebook-${digest(`${facebook.accountId}:${item.id}`)}`, provider: "facebook", remoteId: String(item.id), sourceType: "user", sourceId: String(item.participantId || ""),
-            displayName: String(item.participantName || "Facebook 使用者").slice(0, 100), pictureUrl: typeof item.participantPicture === "string" ? item.participantPicture.slice(0, 2048) : "",
+            displayName: String(item.participantName || "Facebook 使用者").slice(0, 100), pictureUrl: String(item.participantPicture || contactByParticipant.get(String(item.participantId || ""))?.avatarUrl || (/^\d{5,30}$/.test(String(item.participantId || "")) ? `https://graph.facebook.com/${item.participantId}/picture?type=large` : "")).slice(0, 2048),
             lastText: String(item.lastMessage || "").slice(0, 10000), updatedAt: Number.isFinite(Date.parse(item.updatedTime)) ? Date.parse(item.updatedTime) : now(), unreadCount: Number(item.unreadCount || 0),
           }));
           return res.json({ items, next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
