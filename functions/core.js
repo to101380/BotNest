@@ -71,7 +71,7 @@ function cleanCustomer(input) {
   return result;
 }
 
-export function createHandler({ store, verifyToken, getKey, openAiConfigured = () => false, media, fetchLine = fetch, now = Date.now }) {
+export function createHandler({ store, verifyToken, getKey, openAiConfigured = () => false, getZernioKey = () => "", media, fetchLine = fetch, fetchZernio = fetch, now = Date.now }) {
   async function lineRequest(path, options) {
     const response = await fetchLine(`https://api.line.me${path}`, { ...options, signal: AbortSignal.timeout(12000) });
     if (!response.ok) throw new HttpError(response.status >= 500 || response.status === 429 ? 503 : 400, "LINE 憑證驗證失敗，請確認 Channel ID 與長期 Access Token。");
@@ -86,6 +86,22 @@ export function createHandler({ store, verifyToken, getKey, openAiConfigured = (
     if (user.firebase.sign_in_provider === "password" && user.email_verified !== true) throw new HttpError(403, "請先完成 Email 驗證，再重新登入。");
     return user;
   }
+  async function zernioRequest(path, options = {}) {
+    if (!getZernioKey()) throw new HttpError(503, "Zernio API 尚未設定。");
+    let response;
+    try {
+      response = await fetchZernio(`https://zernio.com/api/v1${path}`, {
+        ...options, signal: AbortSignal.timeout(15000),
+        headers: { Authorization: `Bearer ${getZernioKey()}`, "Content-Type": "application/json", ...(options.headers || {}) },
+      });
+    } catch { throw new HttpError(503, "暫時無法連線 Zernio，請稍後再試。"); }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = response.status === 402 ? "Zernio 方案已達可連接帳號上限。" : response.status === 401 || response.status === 403 ? "Zernio API Key 權限不足或已失效。" : response.status === 429 ? "Zernio 請求過於頻繁，請稍後再試。" : "Zernio 暫時無法完成連接。";
+      throw new HttpError(response.status >= 500 ? 503 : response.status, message);
+    }
+    return data;
+  }
   const publicChannel = channel => channel ? ({ channelId: channel.channelId, displayName: channel.displayName, basicId: channel.basicId,
     webhookUrl: `https://planning-with-ai-52d58.web.app/line-webhook/${channel.channelId}`,
     verifiedAt: channel.verifiedAt || null, lastReceivedAt: channel.lastReceivedAt || null, canReply: !!channel.accessToken }) : null;
@@ -95,6 +111,26 @@ export function createHandler({ store, verifyToken, getKey, openAiConfigured = (
     res.set("X-Content-Type-Options", "nosniff");
     try {
       const path = new URL(req.originalUrl || req.url, "https://botnest.invalid").pathname;
+      if (path === "/zernio-callback" && req.method === "GET") {
+        const callback = new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
+        const redirect = new URL("https://planning-with-ai-52d58.web.app/");
+        redirect.hash = "channels";
+        if (callback.get("error")) {
+          redirect.searchParams.set("zernio", "error");
+          redirect.searchParams.set("reason", String(callback.get("error")).slice(0, 80));
+          return res.redirect(302, redirect.toString());
+        }
+        const profileId = callback.get("profileId"), accountId = callback.get("accountId");
+        if (callback.get("connected") !== "facebook" || !/^[a-f0-9]{24}$/i.test(profileId || "") || !/^[a-f0-9]{24}$/i.test(accountId || "")) throw new HttpError(400, "Facebook 授權回傳資料不完整。");
+        const owner = await store.zernioOwner(profileId);
+        if (!owner) throw new HttpError(404, "找不到這次 Facebook 連接紀錄。");
+        const listed = await zernioRequest(`/accounts?profileId=${encodeURIComponent(profileId)}&platform=facebook`);
+        const match = (listed.accounts || []).find(item => item._id === accountId && item.platform === "facebook");
+        if (!match) throw new HttpError(403, "無法驗證已授權的 Facebook 粉絲專頁。");
+        await store.bindZernioFacebook(owner.uid, profileId, { accountId, username: String(match.username || "").slice(0, 120), displayName: String(match.displayName || match.username || "Facebook Page").slice(0, 120), platform: "facebook" }, now());
+        redirect.searchParams.set("zernio", "connected");
+        return res.redirect(302, redirect.toString());
+      }
       const mediaRoute = /^\/api\/line\/media\/(\d{5,20})\/([a-f0-9-]{36})$/.exec(path);
       if (mediaRoute && ["GET", "HEAD"].includes(req.method)) {
         const params = new URL(req.originalUrl || req.url, MEDIA_ORIGIN).searchParams;
@@ -126,6 +162,29 @@ export function createHandler({ store, verifyToken, getKey, openAiConfigured = (
         return res.status(200).json({ ok: true });
       }
       if (path === "/api/line/health" && req.method === "GET") return res.json({ ok: true });
+      if (path.startsWith("/api/zernio/")) {
+        const user = await authenticated(req);
+        if (path === "/api/zernio/account" && req.method === "GET") {
+          const value = await store.zernioAccount(user.uid);
+          return res.json({ configured: !!getZernioKey(), profileId: value?.profileId || null, facebook: value?.facebook || null });
+        }
+        if (path === "/api/zernio/connect/facebook" && req.method === "POST") {
+          const origin = req.get("origin");
+          if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站連接 Facebook。");
+          let value = await store.zernioAccount(user.uid), profileId = value?.profileId;
+          if (!profileId) {
+            const created = await zernioRequest("/profiles", { method: "POST", body: JSON.stringify({ name: String(user.name || user.email || "BotNest customer").slice(0, 80) }) });
+            profileId = created.profile?._id;
+            if (!/^[a-f0-9]{24}$/i.test(profileId || "")) throw new HttpError(503, "Zernio Profile 建立失敗。");
+            await store.saveZernioProfile(user.uid, profileId, now());
+          }
+          const redirectUrl = "https://planning-with-ai-52d58.web.app/zernio-callback";
+          const connected = await zernioRequest(`/connect/facebook?profileId=${encodeURIComponent(profileId)}&redirect_url=${encodeURIComponent(redirectUrl)}`);
+          if (typeof connected.authUrl !== "string" || !/^https:\/\//i.test(connected.authUrl)) throw new HttpError(503, "Zernio 未回傳 Facebook 授權網址。");
+          return res.json({ authUrl: connected.authUrl });
+        }
+        throw new HttpError(404, "找不到 Zernio API。");
+      }
       if (!path.startsWith("/api/line/")) throw new HttpError(404, "找不到頁面。");
       const user = await authenticated(req);
       if (path === "/api/line/account" && req.method === "GET") return res.json({ channel: publicChannel(await store.account(user.uid)) });

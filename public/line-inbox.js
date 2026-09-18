@@ -26,7 +26,7 @@ export function createLineInbox() {
   const conversations = new Map(), messages = new Map();
   const drafts = new Map(), localReplies = new Map();
   const attachments = new Map();
-  let sending = false, uploading = false, customerSaving = false, aiSaving = false;
+  let sending = false, uploading = false, customerSaving = false, aiSaving = false, zernioBusy = false;
   let customerTags = [];
   let customerSaveTimer = null, pendingCustomerSave = null, customerSaveRevision = 0;
   let customerSaveChain = Promise.resolve();
@@ -139,6 +139,38 @@ export function createLineInbox() {
     if (currentEpoch !== epoch) throw new DOMException("Session changed", "AbortError");
     if (!response.ok || data.error) { const error = new Error(data.error || "LINE 服務暫時無法使用。"); error.status = response.status; throw error; }
     return data;
+  }
+  async function zernioApi(path, options = {}) {
+    const currentEpoch = epoch, currentUser = user, signal = controller.signal;
+    if (!active || !currentUser) throw new DOMException("Inactive", "AbortError");
+    const token = await currentUser.getIdToken();
+    if (currentEpoch !== epoch) throw new DOMException("Session changed", "AbortError");
+    const response = await fetch(`/api/zernio/${path}`, { ...options, signal, cache: "no-store", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } });
+    const data = await response.json().catch(() => ({ error: "Zernio 服務暫時無法使用。" }));
+    if (currentEpoch !== epoch) throw new DOMException("Session changed", "AbortError");
+    if (!response.ok || data.error) throw new Error(data.error || "Zernio 服務暫時無法使用。");
+    return data;
+  }
+  function showZernioAccount(data) {
+    const connected = !!data.facebook;
+    $("facebook-card-state").textContent = connected ? "已連接" : data.configured ? "未連接" : "尚未設定";
+    $("facebook-card-state").classList.toggle("connected", connected);
+    $("facebook-page-name").textContent = connected ? data.facebook.displayName : "尚未連接 Facebook 粉絲專頁";
+    $("facebook-page-detail").textContent = connected ? `@${data.facebook.username || "Facebook"} · 由 Zernio 管理連線` : data.configured ? "授權時可選擇你管理的粉絲專頁" : "請先設定 Zernio API Key";
+    $("facebook-connect").textContent = connected ? "重新授權" : "使用 Facebook 授權";
+    $("facebook-connect").disabled = !data.configured || zernioBusy;
+  }
+  async function loadZernioAccount() {
+    try {
+      const data = await zernioApi("account"); showZernioAccount(data);
+      const callback = new URLSearchParams(location.search).get("zernio");
+      if (callback === "connected") status("Facebook Messenger 粉絲專頁已成功連接。");
+      else if (callback === "error") status("Facebook 授權未完成，請重新操作。", true);
+      if (callback) history.replaceState(null, "", `${location.pathname}${location.hash}`);
+    } catch (error) {
+      $("facebook-card-state").textContent = "讀取失敗"; $("facebook-card-state").classList.remove("connected");
+      $("facebook-connect").disabled = true; report(error);
+    }
   }
   function report(error) { if (error.name !== "AbortError") status(error.message, true); }
   function showAccount() {
@@ -354,6 +386,7 @@ export function createLineInbox() {
           status(channel.verifiedAt ? "LINE 官方帳號已連接，Webhook 運作正常。" : "LINE 官方帳號已連接，等待 Webhook 驗證。");
         }
       } else status("尚未連接 LINE 官方帳號。請填寫下方資訊完成連接。");
+      if (pageMode === "settings") await loadZernioAccount();
       if (currentEpoch === epoch && pageMode === "inbox") timer = setInterval(() => { if (!document.hidden && !browsingHistory) void refresh(); }, 10000);
     } catch (error) { report(error); }
   }
@@ -561,6 +594,14 @@ export function createLineInbox() {
     try { await navigator.clipboard.writeText($("line-webhook-url").value); status("已複製 Webhook URL。"); }
     catch { $("line-webhook-url").select(); status("請手動複製已選取的網址。"); }
   });
+  $("facebook-connect").addEventListener("click", async () => {
+    if (zernioBusy || !active) return;
+    zernioBusy = true; $("facebook-connect").disabled = true; $("facebook-connect").textContent = "正在開啟授權…";
+    try {
+      const data = await zernioApi("connect/facebook", { method: "POST", body: "{}" });
+      location.assign(data.authUrl);
+    } catch (error) { report(error); zernioBusy = false; await loadZernioAccount(); }
+  });
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushCustomerSave(); });
   window.addEventListener("pagehide", () => { clearSecrets(); controller?.abort(); clearInterval(timer); messageResize.disconnect(); });
   return {
@@ -570,7 +611,7 @@ export function createLineInbox() {
       epoch++; controller?.abort(); clearInterval(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
       messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; pageMode = nextMode; channel = null; selected = null; refreshing = false; saving = false;
-      sending = false; uploading = false; customerSaving = false; aiSaving = false; customerTags = []; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
+      sending = false; uploading = false; customerSaving = false; aiSaving = false; zernioBusy = false; customerTags = []; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
       $("line-emoji-panel").hidden = true; $("line-pick-emoji").setAttribute("aria-expanded", "false");
       conversationNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
       historyMode(false);
@@ -580,6 +621,7 @@ export function createLineInbox() {
       $("line-channel-id").readOnly = false; $("line-connect-fields").disabled = false; $("line-refresh").disabled = false;
       $("line-account").hidden = $("line-inbox").hidden = $("line-connect-form").hidden = $("line-not-connected").hidden = true;
       $("line-card-state").textContent = "讀取中"; $("line-card-state").classList.remove("connected");
+      $("facebook-card-state").textContent = "讀取中"; $("facebook-card-state").classList.remove("connected"); $("facebook-connect").disabled = true;
       $("ai-enabled").checked = false; $("ai-instructions").value = ""; $("ai-card-state").textContent = "讀取中"; $("ai-card-state").classList.remove("connected"); aiStatus("");
       $("ai-reply-indicator").hidden = true;
       showConversations(); showMessages(); status("");

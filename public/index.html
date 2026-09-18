@@ -200,9 +200,9 @@
           <div class="channels-heading"><h1 id="channels-title" tabindex="-1">渠道設定</h1><p>管理品牌與顧客聯絡的訊息渠道</p></div>
           <p id="channel-status" class="channel-status" role="status" aria-live="polite"></p>
           <div class="channel-grid">
-            <article class="channel-card channel-card-muted">
-              <header><span class="channel-logo facebook-channel" aria-hidden="true">f</span><div><h2>Facebook Messenger</h2><p>粉絲專頁訊息與顧客對話</p></div><span class="channel-badge pending">準備中</span></header>
-              <div class="channel-row"><span>粉絲專頁連接設定</span><span>Meta API 完成後開放</span></div>
+            <article class="channel-card facebook-channel-card">
+              <header><span class="channel-logo facebook-channel" aria-hidden="true">f</span><div><h2>Facebook Messenger</h2><p>透過 Zernio 連接粉絲專頁訊息</p></div><span id="facebook-card-state" class="channel-badge">讀取中</span></header>
+              <div class="facebook-channel-content"><div><strong id="facebook-page-name">尚未連接 Facebook 粉絲專頁</strong><span id="facebook-page-detail">授權時可選擇你管理的粉絲專頁</span></div><button id="facebook-connect" type="button">使用 Facebook 授權</button></div>
             </article>
             <article class="channel-card channel-card-muted">
               <header><span class="channel-logo instagram-channel" aria-hidden="true">◎</span><div><h2>Instagram</h2><p>專業帳號私訊</p></div><span class="channel-badge pending">準備中</span></header>

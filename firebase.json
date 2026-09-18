@@ -4,6 +4,8 @@
   "hosting": {
     "public": "public",
     "rewrites": [
+      { "source": "/api/zernio/**", "function": { "functionId": "botnestApi", "region": "us-central1" } },
+      { "source": "/zernio-callback", "function": { "functionId": "botnestApi", "region": "us-central1" } },
       { "source": "/api/line/**", "function": { "functionId": "botnestApi", "region": "us-central1" } },
       { "source": "/line-webhook/**", "function": { "functionId": "botnestApi", "region": "us-central1" } }
     ],

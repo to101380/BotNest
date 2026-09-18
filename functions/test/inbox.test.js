@@ -18,7 +18,7 @@ async function fixture(overrides = {}) {
     verifyToken: async token => { if (!["alice", "bob"].includes(token)) throw new Error("invalid"); return { uid: token, auth_time: 1000, firebase: { sign_in_provider: "google.com" } }; }, ...overrides });
   async function request(url, { token = "alice", method = "GET", body, raw, headers = {} } = {}) {
     const allHeaders = { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers };
-    const res = { code: 200, headers: {}, set(k, v) { this.headers[k] = v; return this; }, status(code) { this.code = code; return this; }, json(value) { this.body = value; return this; }, send(value) { this.body = value; return this; } };
+    const res = { code: 200, headers: {}, set(k, v) { this.headers[k] = v; return this; }, status(code) { this.code = code; return this; }, json(value) { this.body = value; return this; }, send(value) { this.body = value; return this; }, redirect(code, value) { this.code = code; this.headers.location = value; return this; } };
     await handler({ originalUrl: url, method, body, rawBody: raw, get: name => allHeaders[name.toLowerCase()] }, res);
     return res;
   }
@@ -80,6 +80,33 @@ test("private endpoints require valid authentication", async () => {
   const f = await fixture();
   assert.equal((await f.request("/api/line/account", { token: null })).code, 401);
   assert.equal((await f.request("/api/line/conversations", { token: "expired" })).code, 401);
+});
+test("Zernio Facebook OAuth creates a tenant profile and binds only a verified account", async () => {
+  const profileId = "a".repeat(24), accountId = "b".repeat(24), calls = [];
+  const fetchZernio = async (url, options = {}) => {
+    calls.push({ url, options });
+    const body = url.endsWith("/profiles") ? { profile: { _id: profileId } }
+      : url.includes("/connect/facebook") ? { authUrl: "https://zernio.com/connect/test" }
+      : { accounts: [{ _id: accountId, platform: "facebook", username: "botnest", displayName: "BotNest Page" }] };
+    return new Response(JSON.stringify(body), { status: url.endsWith("/profiles") ? 201 : 200, headers: { "Content-Type": "application/json" } });
+  };
+  const f = await fixture({ getZernioKey: () => "server-only-key", fetchZernio });
+  const connect = await f.request("/api/zernio/connect/facebook", { method: "POST", body: {} });
+  assert.equal(connect.code, 200);
+  assert.equal(connect.body.authUrl, "https://zernio.com/connect/test");
+  assert.ok(calls.every(call => call.options.headers.Authorization === "Bearer server-only-key"));
+  const callback = await f.request(`/zernio-callback?connected=facebook&profileId=${profileId}&accountId=${accountId}`, { token: null });
+  assert.equal(callback.code, 302);
+  assert.match(callback.headers.location, /zernio=connected/);
+  const account = await f.request("/api/zernio/account");
+  assert.deepEqual(account.body.facebook, { accountId, username: "botnest", displayName: "BotNest Page", platform: "facebook", connectedAt: 1000000 });
+  assert.ok(!JSON.stringify(account.body).includes("server-only-key"));
+});
+test("Zernio callback refuses an account not present in the tenant profile", async () => {
+  const profileId = "c".repeat(24), accountId = "d".repeat(24);
+  const f = await fixture({ getZernioKey: () => "key", fetchZernio: async url => new Response(JSON.stringify(url.endsWith("/profiles") ? { profile: { _id: profileId } } : url.includes("/connect/facebook") ? { authUrl: "https://zernio.com/connect/test" } : { accounts: [] }), { status: url.endsWith("/profiles") ? 201 : 200, headers: { "Content-Type": "application/json" } }) });
+  await f.request("/api/zernio/connect/facebook", { method: "POST", body: {} });
+  assert.equal((await f.request(`/zernio-callback?connected=facebook&profileId=${profileId}&accountId=${accountId}`, { token: null })).code, 403);
 });
 test("anonymous and unverified password accounts cannot access private endpoints", async () => {
   for (const provider of ["anonymous", "password"]) {

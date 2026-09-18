@@ -17,6 +17,33 @@ export function createStore(db) {
     return { items: result.slice(0, limit), next: result.length > limit ? result[limit - 1].id : null };
   }
   return {
+    async zernioAccount(uid) {
+      const value = (await accounts.doc(uid).get()).data();
+      return value?.zernio || null;
+    },
+    async saveZernioProfile(uid, profileId, at) {
+      const ref = accounts.doc(uid);
+      await db.runTransaction(async tx => {
+        const old = (await tx.get(ref)).data() || {};
+        const prior = old.zernio || {};
+        if (prior.profileId && prior.profileId !== profileId) throw new HttpError(409, "此帳號已建立其他 Zernio Profile。");
+        tx.set(ref, { zernio: { ...prior, profileId, updatedAt: at } }, { merge: true });
+      });
+    },
+    async zernioOwner(profileId) {
+      const snapshot = await accounts.where("zernio.profileId", "==", profileId).limit(1).get();
+      if (snapshot.empty) return null;
+      return { uid: snapshot.docs[0].id, zernio: snapshot.docs[0].data().zernio };
+    },
+    async bindZernioFacebook(uid, profileId, account, at) {
+      const ref = accounts.doc(uid);
+      await db.runTransaction(async tx => {
+        const old = (await tx.get(ref)).data() || {}, prior = old.zernio || {};
+        if (prior.profileId !== profileId) throw new HttpError(409, "Zernio Profile 與網站帳號不符。");
+        if (prior.facebook?.accountId && prior.facebook.accountId !== account.accountId) throw new HttpError(409, "此網站帳號已連接其他 Facebook 粉絲專頁。");
+        tx.set(ref, { zernio: { ...prior, facebook: { ...account, connectedAt: at }, updatedAt: at } }, { merge: true });
+      });
+    },
     async claimIncomingImage(id, conversationId, messageId, at) {
       const ref = channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId);
       return db.runTransaction(async tx => {

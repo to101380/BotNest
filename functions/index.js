@@ -12,14 +12,15 @@ import { createAiResponder } from "./ai.js";
 initializeApp();
 const encryptionKey = defineSecret("BOTNEST_ENCRYPTION_KEY");
 const openAiKey = defineSecret("OPENAI_API_KEY");
+const zernioApiKey = defineSecret("ZERNIO_API_KEY");
 let handler;
 export const botnestApi = onRequest({
   region: "us-central1", maxInstances: 3, minInstances: 0, concurrency: 20,
   timeoutSeconds: 60, memory: "256MiB", cors: false, invoker: "public",
-  secrets: [encryptionKey, openAiKey],
+  secrets: [encryptionKey, openAiKey, zernioApiKey],
 }, (req, res) => {
   handler ||= createHandler({ store: createStore(getFirestore()), verifyToken: token => getAuth().verifyIdToken(token, true), getKey: () => encryptionKey.value(),
-    openAiConfigured: () => !!openAiKey.value(),
+    openAiConfigured: () => !!openAiKey.value(), getZernioKey: () => zernioApiKey.value(),
     media: {
       save: (path, bytes, contentType) => getStorage().bucket("planning-with-ai-52d58-botnest-media").file(path).save(bytes, { resumable: false, metadata: { contentType, cacheControl: "private, no-store" } }),
       read: async path => (await getStorage().bucket("planning-with-ai-52d58-botnest-media").file(path).download())[0],
