@@ -1,0 +1,71 @@
+/* Shared material and motion: floating selection, short slides, translucent layers. */
+:root{--motion-fast:160ms;--motion-normal:300ms;--motion-slow:380ms;--motion-ease:cubic-bezier(.22,1,.36,1);--glass:rgb(255 255 255 / 76%);--glass-border:rgb(255 255 255 / 82%);--glass-line:rgb(29 29 31 / 7%)}
+body{background:radial-gradient(ellipse at 12% 0%,#edf1f9 0,transparent 55%),#f5f5f7}
+body.inbox-open{background:linear-gradient(135deg,#eef1f7,#f7f7f9 55%,#f0f2f6)}
+body>header,body.inbox-open>header{position:relative;z-index:10;background:rgb(255 255 255 / 70%);border-bottom-color:var(--glass-line);-webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%)}
+body:not(.authenticated) .login-card{background:var(--glass);border:1px solid var(--glass-border);box-shadow:0 12px 40px #20253806;-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px)}
+body.inbox-open .login-card{background:transparent}
+body.inbox-open .app-nav{background:rgb(240 241 246 / 76%);border-color:var(--glass-line);-webkit-backdrop-filter:blur(24px) saturate(145%);backdrop-filter:blur(24px) saturate(145%)}
+body.inbox-open .app-nav a{transition:color var(--motion-fast),background-color var(--motion-fast)}
+.workspace-toolbar,.conversation-toolbar,body.inbox-open .chat-heading,body.inbox-open .reply-form,.customer-panel-heading,.assistant-test-top{background:rgb(255 255 255 / 78%);border-color:var(--glass-line);-webkit-backdrop-filter:blur(20px) saturate(140%);backdrop-filter:blur(20px) saturate(140%)}
+body.inbox-open .conversation-panel{background:rgb(255 255 255 / 72%)}
+body.inbox-open .message-panel{background:rgb(249 250 252 / 72%)}
+.conversation-ai-controls{background:transparent}
+body.assistant-open #assistant-page,body.channels-open #channels-page{background:transparent}
+body.customers-open #customers-page{background:rgb(255 255 255 / 72%)}
+body.account-open .login-card{background:transparent}
+body.account-open #account-page{background:rgb(255 255 255 / 76%);min-height:100%}
+.assistant-card,.channel-card,.knowledge-card,.knowledge-import,.assistant-test-chat{background:rgb(255 255 255 / 82%);border:1px solid var(--glass-border);box-shadow:0 4px 18px #20253803}
+.channel-card>header{background:transparent}
+.customers-table th{background:rgb(247 248 250 / 86%);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+
+/* One real white pill moves underneath the labels; selected controls never flash. */
+.motion-track,body.inbox-open .app-nav.motion-track{position:relative;isolation:isolate}
+body.inbox-open .app-nav.motion-track{top:0}
+.assistant-tabs,.email-tabs{background:rgb(222 224 231 / 64%);border:1px solid rgb(255 255 255 / 52%);-webkit-backdrop-filter:blur(18px) saturate(135%);backdrop-filter:blur(18px) saturate(135%)}
+.motion-track>.motion-indicator{position:absolute;left:0;top:0;z-index:0;display:block;margin:0;padding:0;border:1px solid rgb(255 255 255 / 94%);border-radius:9px;background:rgb(255 255 255 / 90%);box-shadow:0 2px 7px #161d3512,0 0 1px #161d3514;pointer-events:none;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.motion-track>button,.motion-track>a{position:relative;z-index:1;transition:color var(--motion-fast)}
+.assistant-tabs.motion-ready button[aria-selected=true],.email-tabs.motion-ready button[aria-pressed=true],body.inbox-open .app-nav.motion-ready a[aria-current=page]{background:transparent;box-shadow:none}
+body.inbox-open .app-nav.motion-ready a:hover{background:rgb(255 255 255 / 28%)}
+#line-inbox .conversation-ai-controls.motion-ready button[data-ai-mode][aria-pressed=true]{background:transparent;box-shadow:none}
+.email-tabs .motion-indicator{border-radius:8px}
+.app-nav .motion-indicator{border-radius:10px}
+.conversation-ai-controls .motion-indicator{border-radius:8px}
+
+/* Secondary surfaces slide over the current context, including their exit. */
+body.inbox-open .customer-panel{display:block;transform:translateX(105%);opacity:0;visibility:hidden;pointer-events:none;background:rgb(250 251 254 / 82%);border-left:1px solid var(--glass-border);box-shadow:-16px 0 48px #18233c14;-webkit-backdrop-filter:blur(28px) saturate(155%);backdrop-filter:blur(28px) saturate(155%);transition:transform var(--motion-slow) var(--motion-ease),opacity 220ms ease,visibility 0s linear var(--motion-slow)}
+body.inbox-open .customer-panel:not(.open){display:block}
+body.inbox-open .customer-panel.open{transform:translateX(0);opacity:1;visibility:visible;pointer-events:auto;transition-delay:0s}
+.customer-panel-heading{background:rgb(255 255 255 / 55%)}
+.customer-panel input,.customer-panel textarea,.customer-panel select{background:rgb(255 255 255 / 75%);border-color:rgb(29 29 31 / 12%);border-radius:9px}
+.inbox-open .emoji-panel,.workspace-settings-content{background:rgb(255 255 255 / 86%);border-color:var(--glass-border);box-shadow:0 12px 38px #18233c18;-webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%)}
+.emoji-panel:not([hidden]){animation:surface-in 220ms var(--motion-ease)}
+.knowledge-dialog,.knowledge-loading{background:rgb(255 255 255 / 88%);border:1px solid var(--glass-border);-webkit-backdrop-filter:blur(28px) saturate(150%);backdrop-filter:blur(28px) saturate(150%)}
+dialog.knowledge-dialog,dialog.knowledge-loading{opacity:0;transform:translateY(18px) scale(.985);transition:opacity 200ms ease,transform var(--motion-normal) var(--motion-ease),display var(--motion-normal) allow-discrete,overlay var(--motion-normal) allow-discrete}
+dialog.knowledge-dialog[open],dialog.knowledge-loading[open]{opacity:1;transform:translateY(0) scale(1)}
+dialog::backdrop{background:rgb(30 35 48 / 18%);-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);opacity:0;transition:opacity var(--motion-normal),display var(--motion-normal) allow-discrete,overlay var(--motion-normal) allow-discrete}
+dialog[open]::backdrop{opacity:1}
+@starting-style{dialog.knowledge-dialog[open],dialog.knowledge-loading[open]{opacity:0;transform:translateY(18px) scale(.985)}dialog[open]::backdrop{opacity:0}}
+@keyframes surface-in{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+
+/* Consistent press feedback and sliding switch thumbs. */
+button,.provider,.ai-settings-link{transition:background-color var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast),color var(--motion-fast),scale var(--motion-fast) var(--motion-ease)}
+button:active:not(:disabled),.ai-settings-link:active{scale:.975}
+.motion-track>button:active:not(:disabled){scale:1}
+input,textarea,select{transition:background-color var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast)}
+.assistant-toggle-row input[type=checkbox]{appearance:none;-webkit-appearance:none;position:relative;display:inline-block;flex:0 0 40px;width:40px;height:24px;padding:0;border:0;border-radius:999px;background:#c7c9d0;cursor:pointer;transition:background-color var(--motion-normal)}
+.assistant-toggle-row input[type=checkbox]::before{content:"";position:absolute;width:20px;height:20px;left:2px;top:2px;border-radius:50%;background:#fff;box-shadow:0 1px 4px #00000026;transform:translateX(0);transition:transform var(--motion-normal) var(--motion-ease)}
+.assistant-toggle-row input[type=checkbox]:checked{background:var(--blue)}
+.assistant-toggle-row input[type=checkbox]:checked::before{transform:translateX(16px)}
+.assistant-toggle-row input[type=checkbox]:disabled{opacity:.45;cursor:default}
+.ai-channel-toggle-track,.ai-channel-toggle-track::after{transition-duration:var(--motion-normal);transition-timing-function:var(--motion-ease)}
+.assistant-days span{transition:background-color var(--motion-fast),color var(--motion-fast),border-color var(--motion-fast)}
+.quiet-details>summary::after{content:"+";transition:transform var(--motion-normal) var(--motion-ease)}
+.quiet-details[open]>summary::after{content:"+";transform:rotate(45deg)}
+@supports (interpolate-size:allow-keywords) and selector(details::details-content){
+  :is(.quiet-details,.assistant-tip,.inbox-help,.connection-details,.customer-section,.assistant-source,.reply-help)::details-content{interpolate-size:allow-keywords;height:0;opacity:0;overflow:clip;transition:height var(--motion-normal) var(--motion-ease),opacity 200ms,content-visibility var(--motion-normal) allow-discrete}
+  :is(.quiet-details,.assistant-tip,.inbox-help,.connection-details,.customer-section,.assistant-source,.reply-help)[open]::details-content{height:auto;opacity:1}
+}
+@media(prefers-reduced-transparency:reduce){:root{--glass:#fff;--glass-border:#e5e5e7}body>header,body.inbox-open>header,body.inbox-open .app-nav,.workspace-toolbar,.conversation-toolbar,body.inbox-open .chat-heading,body.inbox-open .reply-form,body.inbox-open .customer-panel,.customer-panel-heading,.knowledge-dialog,.knowledge-loading,.inbox-open .emoji-panel,.assistant-tabs,.email-tabs{background:#f8f8fa;-webkit-backdrop-filter:none;backdrop-filter:none}.motion-track>.motion-indicator{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after,*::details-content{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+@media(forced-colors:active){.motion-track>.motion-indicator{display:none}.assistant-tabs.motion-ready button[aria-selected=true],.email-tabs.motion-ready button[aria-pressed=true],body.inbox-open .app-nav.motion-ready a[aria-current=page],#line-inbox .conversation-ai-controls.motion-ready button[data-ai-mode][aria-pressed=true]{background:Highlight;color:HighlightText}.assistant-toggle-row input[type=checkbox]{appearance:auto}.assistant-toggle-row input[type=checkbox]::before{display:none}}

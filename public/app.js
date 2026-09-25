@@ -1,9 +1,11 @@
 import { hasFirebaseConfig, providerName, authErrorMessage, linkProviderAccount, reauthenticateForLink, validateEmailRegistration, reauthenticatePasswordForLink, linkEmailPassword } from "./auth-helpers.js";
 import { createLineInbox } from "./line-inbox.js";
 import { createCustomerManager } from "./customer-manager.js";
+import { createAiSettings } from "./ai-settings.js";
 const $ = id => document.getElementById(id);
 const lineInbox = createLineInbox();
 const customerManager = createCustomerManager();
+const aiSettings = createAiSettings();
 let auth;
 let sdk;
 let busy = false;
@@ -20,43 +22,47 @@ function renderPage(moveFocus = false) {
   const aiPage = signedIn && location.hash === "#ai-robot";
   const customersPage = signedIn && location.hash === "#customers";
   const channelsPage = signedIn && location.hash === "#channels";
+  const assistantPage = signedIn && location.hash === "#assistant";
   $("app-nav").hidden = !signedIn;
   document.body.classList.toggle("authenticated", signedIn);
-  $("account-page").hidden = aiPage || customersPage || channelsPage;
+  $("account-page").hidden = aiPage || customersPage || channelsPage || assistantPage;
   $("ai-page").hidden = !aiPage;
   $("customers-page").hidden = !customersPage;
   $("channels-page").hidden = !channelsPage;
-  const pageTitle = aiPage ? "ai-title" : customersPage ? "customers-title" : channelsPage ? "channels-title" : "welcome";
+  $("assistant-page").hidden = !assistantPage;
+  const pageTitle = assistantPage ? "assistant-title" : aiPage ? "ai-title" : customersPage ? "customers-title" : channelsPage ? "channels-title" : "welcome";
   $("signed-in").setAttribute("aria-labelledby", pageTitle);
   document.querySelector(".login-card").setAttribute("aria-labelledby", signedIn ? pageTitle : "title");
-  document.body.classList.toggle("inbox-open", aiPage || customersPage || channelsPage);
+  document.body.classList.toggle("inbox-open", signedIn);
+  document.body.classList.toggle("account-open", signedIn && !aiPage && !customersPage && !channelsPage && !assistantPage);
+  document.body.classList.toggle("assistant-open", assistantPage);
   document.body.classList.toggle("customers-open", customersPage);
   document.body.classList.toggle("channels-open", channelsPage);
   lineInbox.setSession(auth?.currentUser || null, aiPage ? "inbox" : channelsPage ? "settings" : null);
   customerManager.setSession(auth?.currentUser || null, customersPage);
-  for (const [id, active] of [["nav-account", !aiPage && !customersPage && !channelsPage], ["nav-ai", aiPage], ["nav-customers", customersPage], ["nav-channels", channelsPage]]) {
+  aiSettings.setSession(auth?.currentUser || null, assistantPage);
+  for (const [id, active] of [["nav-account", !aiPage && !customersPage && !channelsPage && !assistantPage], ["nav-ai", aiPage], ["nav-customers", customersPage], ["nav-channels", channelsPage], ["nav-assistant", assistantPage]]) {
     if (signedIn && active) $(id).setAttribute("aria-current", "page");
     else $(id).removeAttribute("aria-current");
   }
-  document.title = signedIn ? `${aiPage ? "AI機器人" : customersPage ? "顧客管理" : channelsPage ? "渠道設定" : "帳號資訊"}｜Identity` : "登入｜Identity";
-  if (moveFocus && (aiPage || customersPage || channelsPage)) $(pageTitle).focus();
+  document.title = signedIn ? `${assistantPage ? "AI 助理" : aiPage ? "訊息" : customersPage ? "顧客" : channelsPage ? "連線" : "帳號"}｜BotNest` : "登入｜BotNest";
+  if (moveFocus && (aiPage || customersPage || channelsPage || assistantPage)) $(pageTitle).focus();
 }
 window.addEventListener("hashchange", () => renderPage(true));
 function clearLinkProof() {
   linkProof = null;
   clearTimeout(proofTimeout);
   $("link-google").textContent = "連結 Google 帳號";
-  $("link-facebook").textContent = "連結 Facebook 帳號";
 }
-const setStatus = (text, error = false) => { $("status").textContent = text; $("status").classList.toggle("error", error); };
+const setStatus = (text, error = false) => { $("status").textContent = text; $("status").classList.toggle("error", error); const local = $("link-status"); if (local) { local.textContent = text; local.classList.toggle("error", error); } };
 function controls() {
-  $("google").disabled = $("facebook").disabled = !auth || busy;
+  $("google").disabled = !auth || busy;
   $("logout").disabled = busy;
   $("add-password-fields").disabled = busy || !auth?.currentUser?.emailVerified;
   $("email-fields").disabled = !auth || busy;
   $("mode-login").disabled = $("mode-register").disabled = busy;
   $("send-verification").disabled = $("refresh-verification").disabled = !auth?.currentUser || busy;
-  $("link-google").disabled = $("link-facebook").disabled = !auth?.currentUser || busy;
+  $("link-google").disabled = !auth?.currentUser || busy;
 }
 function renderAvatar(user) {
   const avatar = $("avatar");
@@ -100,11 +106,10 @@ function render(user) {
   $("add-password-panel").hidden = !user?.email || linked.has("password");
   $("password-email").value = user?.email || "";
   $("email-verification").hidden = !user?.email || user.emailVerified;
-  $("password-reauth-group").hidden = !user || !linked.has("password") || linked.has("google.com") || linked.has("facebook.com");
+  $("password-reauth-group").hidden = !user || !linked.has("password");
   $("link-google").hidden = !user || linked.has("google.com");
-  $("link-facebook").hidden = !user || linked.has("facebook.com");
-  $("link-panel").hidden = !user || (linked.has("google.com") && linked.has("facebook.com"));
-  for (const provider of user?.providerData || []) {
+  $("link-panel").hidden = !user || linked.has("google.com");
+  for (const provider of (user?.providerData || []).filter(p => ["google.com", "password"].includes(p.providerId))) {
     const item = document.createElement("li");
     const id = document.createElement("code");
     item.append(document.createTextNode(providerName(provider.providerId)));
@@ -141,7 +146,7 @@ async function initialize() {
     sdk = authSdk;
     const candidate = sdk.getAuth(appSdk.getApps()[0] || appSdk.initializeApp(config));
     candidate.languageCode = "zh-TW";
-    await sdk.setPersistence(candidate, sdk.browserSessionPersistence);
+    await sdk.setPersistence(candidate, sdk.browserLocalPersistence);
     auth = candidate;
     $("setup").hidden = true;
     sdk.onAuthStateChanged(auth, render, () => {
@@ -159,9 +164,9 @@ async function initialize() {
   } finally { busy = false; controls(); }
 }
 function makeProvider(kind) {
-  const provider = kind === "google" ? new sdk.GoogleAuthProvider() : new sdk.FacebookAuthProvider();
+  const provider = new sdk.GoogleAuthProvider();
   if (kind === "google") provider.setCustomParameters({ prompt: "select_account" });
-  else provider.addScope("email");
+
   return provider;
 }
 async function linkAccount(kind) {
@@ -172,17 +177,18 @@ async function linkAccount(kind) {
     const target = makeProvider(kind);
     if (!linkProof || linkProof.uid !== auth.currentUser.uid || linkProof.target !== target.providerId || Date.now() - linkProof.at > 60000) {
       clearLinkProof();
-      const existing = auth.currentUser.providerData.find(p => ["google.com", "facebook.com"].includes(p.providerId));
+      const hasPassword = auth.currentUser.providerData.some(p => p.providerId === "password");
+      const existing = hasPassword ? null : auth.currentUser.providerData.find(p => p.providerId === "google.com");
       if (!existing) {
+        if (!$("reauth-password").value) { setStatus("請先在上方輸入目前帳號密碼，再點連結 Google；驗證後才會開啟要新增的登入方式。", true); $("reauth-password").focus(); return; }
         try { linkProof = await reauthenticatePasswordForLink(auth, sdk, $("reauth-password").value, target.providerId); }
         finally { $("reauth-password").value = ""; }
       } else {
       setStatus(`請先透過已連結的 ${providerName(existing.providerId)} 重新驗證身分。`);
-      const original = makeProvider(existing.providerId === "google.com" ? "google" : "facebook");
-      if (existing.providerId === "facebook.com") original.setCustomParameters({ auth_type: "reauthenticate" });
+      const original = makeProvider("google");
       linkProof = await reauthenticateForLink(auth, sdk, original, target.providerId);
       }
-      $(kind === "google" ? "link-google" : "link-facebook").textContent = `確認連結 ${kind === "google" ? "Google" : "Facebook"}`;
+      $("link-google").textContent = "確認連結 Google";
       setStatus("身分已重新驗證。請在 60 秒內點「確認連結」，再授權要新增的帳號。");
       proofTimeout = setTimeout(() => { clearLinkProof(); if (!busy) setStatus("連結驗證已逾時，請重新開始。"); }, 60000);
       return;
@@ -201,15 +207,13 @@ async function signIn(kind) {
   busy = true;
   controls();
   const provider = makeProvider(kind);
-  setStatus(`正在開啟 ${kind === "google" ? "Google" : "Facebook"} 登入視窗…`);
+  setStatus(`正在開啟 Google 登入視窗…`);
   try { await sdk.signInWithPopup(auth, provider); }
   catch (error) { setStatus(authErrorMessage(error), true); }
   finally { busy = false; controls(); }
 }
 $("google").addEventListener("click", () => signIn("google"));
-$("facebook").addEventListener("click", () => signIn("facebook"));
 $("link-google").addEventListener("click", () => linkAccount("google"));
-$("link-facebook").addEventListener("click", () => linkAccount("facebook"));
 $("logout").addEventListener("click", async () => {
   if (!auth || busy) return;
   busy = true;
@@ -282,7 +286,7 @@ $("email-form").addEventListener("submit", async event => {
     if (mode === "reset" && ["auth/user-not-found", "auth/invalid-email"].includes(error.code)) {
       setStatus("若此 Email 可重設密碼，你將收到操作指引。請檢查收件匣與垃圾郵件。");
     } else if (mode === "register" && error.code === "auth/email-already-in-use") {
-      setStatus("無法用此 Email 建立新帳號。若曾用 Google／Facebook 登入，請先用原方式登入，再到帳號頁「設定 Email 登入密碼」；已有密碼可使用忘記密碼。", true);
+      setStatus("無法用此 Email 建立新帳號。若曾用 Google 登入，請先用原方式登入，再到帳號頁「設定 Email 登入密碼」；已有密碼可使用忘記密碼。", true);
     } else setStatus(authErrorMessage(error), true);
   } finally {
     $("account-password").value = $("confirm-password").value = "";
@@ -322,14 +326,13 @@ $("add-password-form").addEventListener("submit", async event => {
   const validation = validateEmailRegistration(email || "", password, confirmation);
   if (validation) return setStatus(validation, true);
   if (!user.emailVerified) return setStatus(authErrorMessage({code:"auth/email-not-verified"}), true);
-  const existing = user.providerData.find(p => ["google.com", "facebook.com"].includes(p.providerId));
-  if (!existing) return setStatus("請先使用原本的 Google／Facebook 帳號登入。", true);
+  const existing = user.providerData.find(p => p.providerId === "google.com");
+  if (!existing) return setStatus("請先使用原本的 Google 帳號登入。", true);
   busy = true;
   clearLinkProof();
   controls();
   try {
-    const provider = makeProvider(existing.providerId === "google.com" ? "google" : "facebook");
-    if (existing.providerId === "facebook.com") provider.setCustomParameters({auth_type:"reauthenticate"});
+    const provider = makeProvider("google");
     setStatus(`請透過 ${providerName(existing.providerId)} 重新驗證目前帳號，完成後會設定密碼。`);
     const proof = await reauthenticateForLink(auth, sdk, provider, "password");
     proof.email = email;

@@ -2,7 +2,7 @@ export function hasFirebaseConfig(config) {
   return ["apiKey", "authDomain", "projectId", "appId"].every(key => typeof config?.[key] === "string" && config[key].trim().length > 0);
 }
 export function providerName(id) {
-  return { "google.com": "Google", "facebook.com": "Facebook（Meta）", "password": "Email／密碼" }[id] || id;
+  return { "google.com": "Google", "password": "Email／密碼" }[id] || id;
 }
 export function authErrorMessage(error) {
   return {
@@ -18,7 +18,7 @@ export function authErrorMessage(error) {
     "auth/popup-blocked": "瀏覽器阻擋了登入視窗，請允許彈出視窗後重試。",
     "auth/unauthorized-domain": "此網站尚未加入 Firebase 的授權網域，請管理員完成設定。",
     "auth/operation-not-allowed": "這個登入方式尚未啟用，請管理員檢查 Firebase 設定。",
-    "auth/account-exists-with-different-credential": "這個電子郵件已使用另一種方式註冊。請先用原本的方式（例如 Google）登入，再點「連結 Facebook 帳號」。",
+    "auth/account-exists-with-different-credential": "這個電子郵件已使用另一種方式註冊。請先用原本的方式（例如 Google）登入，再點「連結 Google 帳號」。",
     "auth/credential-already-in-use": "這個第三方帳號已連結另一個使用者，無法直接合併。請使用該帳號原本的登入方式。",
     "auth/email-already-in-use": "此憑證已屬於另一個使用者，未合併帳號。請使用原本的登入方式。",
     "auth/provider-already-linked": "此登入方式已連結，請重新整理查看最新狀態。",

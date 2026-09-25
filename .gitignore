@@ -4,3 +4,4 @@ node_modules/
 .sites-runtime/
 .env*
 *.local
+.deploy*/

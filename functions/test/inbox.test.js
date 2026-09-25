@@ -10,11 +10,96 @@ import { createAiResponder, createZernioAiResponder } from "../ai.js";
 const key = randomBytes(32).toString("base64"), secret = "a".repeat(32), botId = `U${"b".repeat(32)}`;
 const event = (id = "1", timestamp = 1000) => ({ type: "message", webhookEventId: `event-${id}`, timestamp, source: { type: "user", userId: `U${"c".repeat(32)}` }, message: { id, type: "text", text: `message ${id}` } });
 const channel = (id = "1234567890", uid = "alice") => ({ channelId: id, ownerUid: uid, botUserId: botId, displayName: "Test OA", basicId: "@test", secret: seal(secret, key, id), accessToken: seal("test-access-token", key, `${id}:access-token`) });
+
+test("webhook reply credentials are encrypted, channel/message-bound, private and not renewed by redelivery", async () => {
+  let clock = 1000000;
+  const f = await fixture({ now: () => clock }), original = { ...event("reply-private", clock), replyToken: "short-lived-test-token" };
+  await f.webhook([original]);
+  const cid = normalizeEvent(original).conversationId;
+  const stored = await f.store.getMessage("1234567890", cid, original.message.id);
+  assert.equal(unseal(stored.replyToken, key, `1234567890:${original.message.id}:reply-token`), original.replyToken);
+  assert.throws(() => unseal(stored.replyToken, key, `9876543210:${original.message.id}:reply-token`));
+  assert.throws(() => unseal(stored.replyToken, key, "1234567890:other-message:reply-token"));
+  assert.ok(!JSON.stringify([...f.db.data]).includes(original.replyToken));
+  const result = await f.request(`/api/line/conversations/${cid}/messages`);
+  assert.equal(result.code, 200);
+  assert.ok(!JSON.stringify(result.body).includes("replyToken"));
+  assert.ok(!JSON.stringify(result.body).includes("replyExpiresAt"));
+  clock += 60000;
+  await f.webhook([{ ...original, deliveryContext: { isRedelivery: true } }]);
+  assert.equal((await f.store.getMessage("1234567890", cid, original.message.id)).replyExpiresAt, stored.replyExpiresAt);
+});
+
+async function replyCostFixture({ age = 0, redelivery = false, withToken = true, send = async () => new Response("{}") } = {}) {
+  let clock = 1000000, models = 0;
+  const f = await fixture({ now: () => clock });
+  const incoming = { ...event("cost-test", clock), ...(withToken ? { replyToken: "cost-reply-token" } : {}), deliveryContext: { isRedelivery: redelivery } };
+  await f.webhook([incoming]);
+  const args = { channelId: "1234567890", conversationId: normalizeEvent(incoming).conversationId, messageId: incoming.message.id };
+  await f.store.saveAiSettings(args.channelId, { enabled: true }, clock);
+  const calls = [];
+  const responder = createAiResponder({ store: f.store, getKey: () => key, getOpenAiKey: () => "test-key", now: () => clock,
+    fetchOpenAi: async () => {
+      models++; clock += age;
+      return new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ action: "reply", text: "您好", reason: "招呼", grounded: true, kind: "greeting", sourceIds: [] }) }] }] }));
+    },
+    fetchLine: async (url, options) => {
+      if (url.endsWith("/loading/start")) return new Response("{}");
+      calls.push({ url, headers: options.headers, body: JSON.parse(options.body) });
+      return send();
+    },
+  });
+  return { ...f, args, calls, responder, models: () => models };
+}
+
+test("fresh LINE AI replies use Reply once, retain the outgoing message, and skip duplicate inference", async () => {
+  const f = await replyCostFixture();
+  const results = await Promise.all([f.responder(f.args), f.responder(f.args)]);
+  assert.ok(results.some(result => result.sent));
+  assert.equal(f.calls.length, 1); assert.equal(f.models(), 1);
+  assert.ok(f.calls[0].url.endsWith("/message/reply"));
+  assert.equal(f.calls[0].body.replyToken, "cost-reply-token");
+  assert.equal(f.calls[0].headers["X-Line-Retry-Key"], undefined);
+  assert.equal(f.calls[0].body.to, undefined);
+  const messages = await f.store.messages(f.args.channelId, f.args.conversationId);
+  assert.equal(messages.items.filter(item => item.direction === "outgoing" && item.status === "sent").length, 1);
+  assert.deepEqual(await f.responder(f.args), { skipped: true });
+});
+
+test("tokens expired during inference, missing tokens and redelivered events use idempotent Push", async () => {
+  for (const options of [{ age: 45000 }, { withToken: false }, { redelivery: true }]) {
+    const f = await replyCostFixture(options);
+    assert.deepEqual(await f.responder(f.args), { sent: true });
+    assert.equal(f.calls.length, 1); assert.ok(f.calls[0].url.endsWith("/message/push"));
+    assert.ok(f.calls[0].headers["X-Line-Retry-Key"]);
+    assert.equal(f.calls[0].body.replyToken, undefined);
+  }
+});
+
+test("Reply timeouts and rejections never fall back to Push or duplicate the message on retry", async () => {
+  for (const send of [async () => { throw new Error("timeout"); }, async () => new Response("{}", { status: 400 }), async () => new Response("{}", { status: 500 })]) {
+    const f = await replyCostFixture({ send });
+    await assert.rejects(f.responder(f.args));
+    assert.deepEqual(await f.responder(f.args), { skipped: true });
+    assert.equal(f.calls.length, 1); assert.ok(f.calls[0].url.endsWith("/message/reply"));
+    const messages = await f.store.messages(f.args.channelId, f.args.conversationId);
+    assert.equal(messages.items.find(item => item.direction === "outgoing").status, "failed");
+  }
+});
+
+test("a reserved Reply attempt cannot be reclaimed as Push after a worker crash", async () => {
+  const f = await replyCostFixture(), id = randomUUID(), { channelId, conversationId, messageId } = f.args;
+  const first = await f.store.prepareReply(channelId, conversationId, id, "hello", 1000000, null, null, messageId);
+  assert.equal(first.claimed, true); assert.equal(first.deliveryMode, "reply");
+  const retry = await f.store.prepareReply(channelId, conversationId, id, "hello", 1100000, null, null, messageId);
+  assert.equal(retry.claimed, false); assert.equal(retry.deliveryMode, "reply");
+});
+
 async function fixture(overrides = {}) {
   const db = memoryDb(), store = createStore(db);
   await store.bind("alice", channel());
   await store.bind("bob", channel("9876543210", "bob"));
-  const handler = createHandler({ store, getKey: () => key, now: () => 1000000, fetchLine: async () => { throw new Error("Test must explicitly mock LINE"); },
+  const handler = createHandler({ store, authorizeSession: async () => {}, getKey: () => key, now: () => 1000000, fetchLine: async () => { throw new Error("Test must explicitly mock LINE"); },
     verifyToken: async token => { if (!["alice", "bob"].includes(token)) throw new Error("invalid"); return { uid: token, auth_time: 1000, firebase: { sign_in_provider: "google.com" } }; }, ...overrides });
   async function request(url, { token = "alice", method = "GET", body, raw, headers = {} } = {}) {
     const allHeaders = { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers };
@@ -102,6 +187,30 @@ test("Zernio Facebook OAuth creates a tenant profile and binds only a verified a
   assert.deepEqual(account.body.facebook, { accountId, username: "botnest", displayName: "BotNest Page", platform: "facebook", connectedAt: 1000000 });
   assert.ok(!JSON.stringify(account.body).includes("server-only-key"));
 });
+test("Instagram binding reuses the tenant profile and preserves Messenger", async () => {
+  const profileId = "a".repeat(24), accountId = "b".repeat(24), calls = [];
+  const f = await fixture({ getZernioKey: () => "server-secret", fetchZernio: async url => {
+    calls.push(url);
+    return new Response(JSON.stringify(url.includes("/connect/instagram") ? { authUrl: "https://www.instagram.com/oauth/authorize" } : { accounts: [{ _id: accountId, platform: "instagram", username: "myshop", displayName: "My Shop" }] }), { status: 200 });
+  }});
+  await f.store.saveZernioProfile("alice", profileId, 1);
+  await f.store.bindZernioFacebook("alice", profileId, {accountId: "c".repeat(24), platform: "facebook"}, 1);
+  assert.equal((await f.request("/api/zernio/connect/instagram", {method: "POST", body: {}, token: null})).code, 401);
+  assert.equal((await f.request("/api/zernio/connect/instagram", {method: "POST", body: {}, headers: {origin: "https://evil.example"}})).code, 403);
+  assert.equal((await f.request("/api/zernio/connect/instagram", {method: "POST", body: {profileId: "attacker"}})).code, 200);
+  assert.ok(calls[0].includes(`profileId=${profileId}`));
+  assert.ok(calls[0].includes("loginMethod=instagram_login"));
+  const callback = `/zernio-callback?connected=instagram&profileId=${profileId}&accountId=${accountId}`;
+  assert.equal((await f.request(callback, {token: null})).code, 302);
+  const account = (await f.request("/api/zernio/account")).body;
+  assert.equal(account.instagram.username, "myshop");
+  assert.equal(account.facebook.accountId, "c".repeat(24));
+  assert.equal((await f.request("/api/zernio/account", {token: "bob"})).body.instagram, null);
+  assert.equal((await f.request(callback.replace(accountId, "d".repeat(24)), {token: null})).code, 403);
+  assert.equal((await f.request(callback.replace("connected=instagram", "connected=facebook"), {token: null})).code, 403);
+  assert.ok(!JSON.stringify(account).includes("server-secret"));
+});
+
 test("Zernio callback refuses an account not present in the tenant profile", async () => {
   const profileId = "c".repeat(24), accountId = "d".repeat(24);
   const f = await fixture({ getZernioKey: () => "key", fetchZernio: async url => new Response(JSON.stringify(url.endsWith("/profiles") ? { profile: { _id: profileId } } : url.includes("/connect/facebook") ? { authUrl: "https://zernio.com/connect/test" } : { accounts: [] }), { status: url.endsWith("/profiles") ? 201 : 200, headers: { "Content-Type": "application/json" } }) });
@@ -142,17 +251,53 @@ test("Zernio inbox is tenant scoped and supports listing, reading and replying",
   await f.store.saveZernioProfile("bob", bobProfile, 900000); await f.store.bindZernioFacebook("bob", bobProfile, { accountId: bobAccount, platform: "facebook" }, 900000);
   assert.deepEqual((await f.request(`/api/zernio/customer?conversationId=${conversationId}`, { token: "bob" })).body.customer, {});
 });
+test("Instagram inbox is tenant scoped and supports listing, reading and replying", async () => {
+  const profileId = "e".repeat(24), accountId = "f".repeat(24), conversationId = "conversation-123", calls = [];
+  const fetchZernio = async (url, options = {}) => {
+    calls.push({ url, options });
+    let body;
+    if (url.includes(`/inbox/conversations/${conversationId}/messages`) && options.method === "POST") body = { success: true, data: { messageId: "sent-1" } };
+    else if (url.includes(`/inbox/conversations/${conversationId}/messages`)) body = { messages: [{ id: "message-1", conversationId, accountId, platform: "instagram", message: "您好", direction: "incoming", createdAt: "2026-09-18T01:00:00Z", attachments: [] }], pagination: { hasMore: false } };
+    else if (url.includes("/contacts?")) body = { contacts: [{ platformIdentifier: "1234567890", avatarUrl: "https://scontent.cdninstagram.com/avatar.jpg" }] };
+    else body = { data: [{ id: conversationId, platform: "instagram", accountId, participantId: "1234567890", participantName: "王小姐", lastMessage: "您好", updatedTime: "2026-09-18T01:00:00Z", unreadCount: 1 }], pagination: { hasMore: false } };
+    return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+  };
+  const f = await fixture({ getZernioKey: () => "server-only-key", fetchZernio });
+  await f.store.saveZernioProfile("alice", profileId, 900000);
+  await f.store.bindZernioPlatform("alice", profileId, "instagram", { accountId, username: "botnest", displayName: "BotNest", platform: "instagram" }, 900000);
+  assert.equal((await f.request("/api/zernio/conversations?platform=instagram", {token:"bob"})).code,409);
+  assert.equal((await f.request("/api/zernio/conversations?platform=invalid")).code,400);
+  const conversations = await f.request("/api/zernio/conversations?platform=instagram&accountId=attacker-account");
+  assert.equal(conversations.code, 200); assert.equal(conversations.body.items[0].provider, "instagram"); assert.equal(conversations.body.items[0].displayName, "王小姐"); assert.match(conversations.body.items[0].pictureUrl, /cdninstagram\.com/);
+  const listed = calls.at(-1); assert.match(listed.url, new RegExp(`accountId=${accountId}`)); assert.doesNotMatch(listed.url, /attacker-account/);
+  const messages = await f.request(`/api/zernio/messages?platform=instagram&conversationId=${conversationId}`);
+  assert.equal(messages.body.items[0].text, "您好"); assert.equal(messages.body.items[0].direction, "incoming");
+  const operationId = randomUUID();
+  const sent = await f.request("/api/zernio/messages?platform=instagram", { method: "POST", body: { conversationId, text: "很高興為您服務", operationId, accountId: "attacker-account" } });
+  assert.equal(sent.code, 200); assert.equal(sent.body.message.status, "sent");
+  const sendCall = calls.at(-1), sentBody = JSON.parse(sendCall.options.body);
+  assert.deepEqual(sentBody, { accountId, message: "很高興為您服務" }); assert.equal(sendCall.options.headers["Idempotency-Key"], operationId);
+  const customer = await f.request(`/api/zernio/customer?platform=instagram&conversationId=${conversationId}`, { method: "PUT", body: { name: "王小姐", phone: "0912345678", tags: ["Facebook 客戶"] } });
+  assert.equal(customer.code, 200); assert.equal(customer.body.customer.name, "王小姐");
+  const noted = await f.request(`/api/zernio/customer/notes?platform=instagram&conversationId=${conversationId}`, { method: "POST", body: { text: "明天回覆" } });
+  assert.equal(noted.body.customer.notes[0].text, "明天回覆");
+  assert.equal((await f.request(`/api/zernio/customer?platform=instagram&conversationId=${conversationId}`)).body.customer.phone, "0912345678");
+  assert.equal((await f.request("/api/zernio/conversations?platform=instagram")).body.items[0].customer.phone, "0912345678");
+  const bobProfile = "1".repeat(24), bobAccount = "2".repeat(24);
+  await f.store.saveZernioProfile("bob", bobProfile, 900000); await f.store.bindZernioPlatform("bob", bobProfile, "instagram", { accountId: bobAccount, platform: "instagram" }, 900000);
+  assert.deepEqual((await f.request(`/api/zernio/customer?platform=instagram&conversationId=${conversationId}`, { token: "bob" })).body.customer, {});
+});
 test("Zernio webhook securely ingests Messenger messages once and AI replies through the bound page", async () => {
   const profileId = "3".repeat(24), accountId = "4".repeat(24), remoteConversationId = "messenger-thread-1", sends = [];
   const fetchZernio = async (url, options = {}) => {
-    if (options.method === "POST") { sends.push({ url, options }); return new Response(JSON.stringify({ success: true, messageId: "reply-1" }), { headers: { "Content-Type": "application/json" } }); }
+    if (options.method === "POST" && !url.endsWith("/typing")) { sends.push({ url, options }); return new Response(JSON.stringify({ success: true, messageId: "reply-1" }), { headers: { "Content-Type": "application/json" } }); }
     return new Response(JSON.stringify({ messages: [{ id: "incoming-1", accountId, conversationId: remoteConversationId, platform: "facebook", direction: "incoming", message: "請問今天有營業嗎？", createdAt: "2026-09-18T03:00:00Z" }] }), { headers: { "Content-Type": "application/json" } });
   };
   const f = await fixture({ openAiConfigured: () => true, getZernioKey: () => "zernio-key", fetchZernio });
   await f.store.saveZernioProfile("alice", profileId, 1); await f.store.bindZernioFacebook("alice", profileId, { accountId, platform: "facebook" }, 2);
   await f.store.saveAccountAiSettings("alice", { enabled: true, instructions: "每天十點營業", model: "gpt-5.4-mini" }, 3);
-  const raw = Buffer.from(JSON.stringify({ id: "event-1", event: "message.received", data: { platform: "facebook", account: { id: accountId, platform: "facebook" },
-    conversation: { id: remoteConversationId, participantName: "陳小姐" }, message: { id: "incoming-1", direction: "incoming", text: "請問今天有營業嗎？", createdAt: "2026-09-18T03:00:00Z" } } }));
+  const raw = Buffer.from(JSON.stringify({ id: "event-1", event: "message.received", data: { platform: "facebook", conversationId: remoteConversationId, account: { id: accountId, platform: "facebook" },
+    conversation: { id: "internal-conversation-record", platformConversationId: remoteConversationId, participantName: "陳小姐" }, message: { id: "incoming-1", conversationId: "internal-conversation-record", direction: "incoming", text: "請問今天有營業嗎？", createdAt: "2026-09-18T03:00:00Z" } } }));
   const webhookToken = createHmac("sha256", Buffer.from(key, "base64")).update("botnest-zernio-webhook-v1").digest("hex");
   const first = await f.request("/zernio-webhook", { token: null, method: "POST", raw, headers: { "x-botnest-webhook": webhookToken } });
   const duplicate = await f.request("/zernio-webhook", { token: null, method: "POST", raw, headers: { "x-botnest-webhook": webhookToken } });
@@ -161,12 +306,119 @@ test("Zernio webhook securely ingests Messenger messages once and AI replies thr
   const conversationId = createHash("sha256").update(`${accountId}:${remoteConversationId}`).digest("hex");
   const messageId = createHash("sha256").update(`${accountId}:incoming-1`).digest("hex");
   const responder = createZernioAiResponder({ store: f.store, getOpenAiKey: () => "openai-key", getZernioKey: () => "zernio-key", fetchZernio,
-    fetchOpenAi: async (_url, options) => { const body = JSON.parse(options.body); assert.match(body.instructions, /每天十點營業/); assert.equal(body.store, false); return new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: "有的，今天十點開始營業。" }] }] }), { headers: { "Content-Type": "application/json" } }); }, now: () => 2000000 });
+    fetchOpenAi: async (_url, options) => { const body = JSON.parse(options.body); assert.match(body.instructions, /每天十點營業/); assert.equal(body.store, false); return new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ action: "reply", text: "有的，今天十點開始營業。", reason: "營業資料", grounded: true, kind: "answer", sourceIds: ["business:1"] }) }] }] }), { headers: { "Content-Type": "application/json" } }); }, now: () => 2000000 });
   assert.deepEqual(await responder({ uid: "alice", conversationId, messageId }), { sent: true });
   assert.deepEqual(await responder({ uid: "alice", conversationId, messageId }), { skipped: true });
   assert.equal(sends.length, 1); assert.match(sends[0].url, /messenger-thread-1\/messages$/);
   assert.deepEqual(JSON.parse(sends[0].options.body), { accountId, message: "有的，今天十點開始營業。" });
 });
+test("Messenger real webhook IDs share handoff and hand-back state with the inbox API", async () => {
+  const accountId = "4".repeat(24), profileId = "3".repeat(24), platformId = "27880000000000000", internalId = "6aacee788d284ffb21140000";
+  const localId = createHash("sha256").update(`${accountId}:${platformId}`).digest("hex");
+  const sends = [];
+  const fetchZernio = async (url, options = {}) => {
+    if (url.includes("/messages")) assert.ok(url.includes(`/${platformId}/messages`), "All message APIs must use the platform id");
+    if (options.method === "POST" && !url.endsWith("/typing")) sends.push(JSON.parse(options.body).message);
+    return new Response(JSON.stringify(url.includes("/messages") ? { messages: [] } : { data: [{ id: platformId, accountId, platform: "facebook", participantId: platformId, updatedTime: "2026-09-18T03:00:00Z" }] }));
+  };
+  const f = await fixture({ getOpenAiKey: () => "test", getZernioKey: () => "test", fetchZernio });
+  await f.store.saveZernioProfile("alice", profileId, 1);
+  await f.store.bindZernioFacebook("alice", profileId, { accountId, platform: "facebook" }, 2);
+  await f.store.saveAccountAiSettings("alice", { enabled: true }, 3);
+  const responder = createZernioAiResponder({ store: f.store, getOpenAiKey: () => "test", getZernioKey: () => "test", fetchZernio, now: () => 1000000,
+    fetchOpenAi: async () => new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ action: "reply", text: "您好！", grounded: true, kind: "greeting", reason: "一般招呼", sourceIds: [] }) }] }] })) });
+  const ingest = async (id, text) => {
+    const raw = Buffer.from(JSON.stringify({ id: `event-${id}`, event: "message.received", timestamp: "2026-09-18T03:00:00Z",
+      account: { id: accountId, accountId, platform: "facebook" }, conversation: { id: internalId, platformConversationId: platformId },
+      message: { id, platformMessageId: id, conversationId: internalId, platform: "facebook", direction: "incoming", text } }));
+    const headers = { "x-botnest-webhook": createHmac("sha256", Buffer.from(key, "base64")).update("botnest-zernio-webhook-v1").digest("hex") };
+    assert.equal((await f.request("/zernio-webhook", { method: "POST", token: null, raw, headers })).code, 200);
+    const messageId = createHash("sha256").update(`${accountId}:${id}`).digest("hex");
+    assert.ok(await f.store.getZernioMessage("alice", localId, messageId));
+    return { uid: "alice", conversationId: localId, messageId };
+  };
+  const listed = (await f.request("/api/zernio/conversations")).body.items[0];
+  assert.equal(listed.remoteId, platformId);
+  assert.deepEqual(await responder(await ingest("refund", "我要退款")), { handoff: true });
+  const stateUrl = `/api/ai/conversation?provider=facebook&conversationId=${listed.remoteId}`;
+  const human = (await f.request(stateUrl)).body;
+  assert.equal(human.control.mode, "human"); assert.equal(human.state.allowed, false);
+  assert.deepEqual(await responder(await ingest("paused", "你好")), { skipped: true });
+  const resumed = await f.request("/api/ai/conversation", { method: "PUT", body: { provider: "facebook", conversationId: listed.remoteId, mode: "auto", revision: human.control.revision } });
+  assert.equal(resumed.code, 200); assert.equal(resumed.body.state.allowed, true);
+  const next = await ingest("resumed", "你好");
+  assert.deepEqual(await responder(next), { sent: true });
+  assert.deepEqual(await responder(next), { skipped: true });
+  assert.equal(sends.length, 2);
+  assert.equal((await f.request(stateUrl)).body.control.mode, "auto");
+});
+
+test("Zernio webhook securely ingests Instagram messages once and AI replies through the bound page", async () => {
+  const profileId = "3".repeat(24), accountId = "4".repeat(24), remoteConversationId = "instagram-thread-1", sends = [];
+  const fetchZernio = async (url, options = {}) => {
+    if (options.method === "POST" && !url.endsWith("/typing")) { sends.push({ url, options }); return new Response(JSON.stringify({ success: true, messageId: "reply-1" }), { headers: { "Content-Type": "application/json" } }); }
+    return new Response(JSON.stringify({ messages: [{ id: "incoming-1", accountId, conversationId: remoteConversationId, platform: "instagram", direction: "incoming", message: "請問今天有營業嗎？", createdAt: "2026-09-18T03:00:00Z" }] }), { headers: { "Content-Type": "application/json" } });
+  };
+  const f = await fixture({ openAiConfigured: () => true, getZernioKey: () => "zernio-key", fetchZernio });
+  await f.store.saveZernioProfile("alice", profileId, 1); await f.store.bindZernioPlatform("alice", profileId, "instagram", { accountId, platform: "instagram" }, 2);
+  await f.store.saveAccountAiSettings("alice", { enabled: true, instructions: "每天十點營業", model: "gpt-5.4-mini" }, 3);
+  const raw = Buffer.from(JSON.stringify({ id: "event-1", event: "message.received", data: { platform: "instagram", conversationId: remoteConversationId, account: { id: accountId, platform: "instagram" },
+    conversation: { id: "internal-conversation-record", platformConversationId: remoteConversationId, participantName: "陳小姐" }, message: { id: "incoming-1", conversationId: "internal-conversation-record", direction: "incoming", text: "請問今天有營業嗎？", createdAt: "2026-09-18T03:00:00Z" } } }));
+  const webhookToken = createHmac("sha256", Buffer.from(key, "base64")).update("botnest-zernio-webhook-v1").digest("hex");
+  const first = await f.request("/zernio-webhook", { token: null, method: "POST", raw, headers: { "x-botnest-webhook": webhookToken } });
+  const duplicate = await f.request("/zernio-webhook", { token: null, method: "POST", raw, headers: { "x-botnest-webhook": webhookToken } });
+  assert.equal(first.code, 200); assert.equal(first.body.created, true); assert.equal(duplicate.body.created, false);
+  assert.equal((await f.request("/zernio-webhook", { token: null, method: "POST", raw })).code, 401);
+  const conversationId = createHash("sha256").update(`${accountId}:${remoteConversationId}`).digest("hex");
+  const messageId = createHash("sha256").update(`${accountId}:incoming-1`).digest("hex");
+  const responder = createZernioAiResponder({ store: f.store, getOpenAiKey: () => "openai-key", getZernioKey: () => "zernio-key", fetchZernio,
+    fetchOpenAi: async (_url, options) => { const body = JSON.parse(options.body); assert.match(body.instructions, /每天十點營業/); assert.equal(body.store, false); return new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ action: "reply", text: "有的，今天十點開始營業。", reason: "營業資料", grounded: true, kind: "answer", sourceIds: ["business:1"] }) }] }] }), { headers: { "Content-Type": "application/json" } }); }, now: () => 2000000 });
+  assert.deepEqual(await responder({ uid: "alice", conversationId, messageId }), { sent: true });
+  assert.deepEqual(await responder({ uid: "alice", conversationId, messageId }), { skipped: true });
+  assert.equal(sends.length, 1); assert.match(sends[0].url, /instagram-thread-1\/messages$/);
+  assert.deepEqual(JSON.parse(sends[0].options.body), { accountId, message: "有的，今天十點開始營業。" });
+});
+test("Instagram real webhook IDs share handoff and hand-back state with the inbox API", async () => {
+  const accountId = "4".repeat(24), profileId = "3".repeat(24), platformId = "27880000000000000", internalId = "6aacee788d284ffb21140000";
+  const localId = createHash("sha256").update(`${accountId}:${platformId}`).digest("hex");
+  const sends = [];
+  const fetchZernio = async (url, options = {}) => {
+    if (url.includes("/messages")) assert.ok(url.includes(`/${platformId}/messages`), "All message APIs must use the platform id");
+    if (options.method === "POST" && !url.endsWith("/typing")) sends.push(JSON.parse(options.body).message);
+    return new Response(JSON.stringify(url.includes("/messages") ? { messages: [] } : { data: [{ id: platformId, accountId, platform: "instagram", participantId: platformId, updatedTime: "2026-09-18T03:00:00Z" }] }));
+  };
+  const f = await fixture({ getOpenAiKey: () => "test", getZernioKey: () => "test", fetchZernio });
+  await f.store.saveZernioProfile("alice", profileId, 1);
+  await f.store.bindZernioPlatform("alice", profileId, "instagram", { accountId, platform: "instagram" }, 2);
+  await f.store.saveAccountAiSettings("alice", { enabled: true }, 3);
+  const responder = createZernioAiResponder({ store: f.store, getOpenAiKey: () => "test", getZernioKey: () => "test", fetchZernio, now: () => 1000000,
+    fetchOpenAi: async () => new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ action: "reply", text: "您好！", grounded: true, kind: "greeting", reason: "一般招呼", sourceIds: [] }) }] }] })) });
+  const ingest = async (id, text) => {
+    const raw = Buffer.from(JSON.stringify({ id: `event-${id}`, event: "message.received", timestamp: "2026-09-18T03:00:00Z",
+      account: { id: accountId, accountId, platform: "instagram" }, conversation: { id: internalId, platformConversationId: platformId },
+      message: { id, platformMessageId: id, conversationId: internalId, platform: "instagram", direction: "incoming", text } }));
+    const headers = { "x-botnest-webhook": createHmac("sha256", Buffer.from(key, "base64")).update("botnest-zernio-webhook-v1").digest("hex") };
+    assert.equal((await f.request("/zernio-webhook", { method: "POST", token: null, raw, headers })).code, 200);
+    const messageId = createHash("sha256").update(`${accountId}:${id}`).digest("hex");
+    assert.ok(await f.store.getZernioMessage("alice", localId, messageId));
+    return { uid: "alice", conversationId: localId, messageId };
+  };
+  const listed = (await f.request("/api/zernio/conversations?platform=instagram")).body.items[0];
+  assert.equal(listed.remoteId, platformId);
+  assert.deepEqual(await responder(await ingest("refund", "我要退款")), { handoff: true });
+  const stateUrl = `/api/ai/conversation?provider=instagram&conversationId=${listed.remoteId}`;
+  const human = (await f.request(stateUrl)).body;
+  assert.equal(human.control.mode, "human"); assert.equal(human.state.allowed, false);
+  assert.deepEqual(await responder(await ingest("paused", "你好")), { skipped: true });
+  const resumed = await f.request("/api/ai/conversation", { method: "PUT", body: { provider: "instagram", conversationId: listed.remoteId, mode: "auto", revision: human.control.revision } });
+  assert.equal(resumed.code, 200); assert.equal(resumed.body.state.allowed, true);
+  const next = await ingest("resumed", "你好");
+  assert.deepEqual(await responder(next), { sent: true });
+  assert.deepEqual(await responder(next), { skipped: true });
+  assert.equal(sends.length, 2);
+  assert.equal((await f.request(stateUrl)).body.control.mode, "auto");
+});
+
 test("anonymous and unverified password accounts cannot access private endpoints", async () => {
   for (const provider of ["anonymous", "password"]) {
     const f = await fixture({ verifyToken: async () => ({ uid: "alice", firebase: { sign_in_provider: provider }, email_verified: false }) });
@@ -505,9 +757,10 @@ test('AI responder sends one idempotent LINE reply with recent conversation cont
     fetchOpenAi: async (url, options) => {
       openAiCalls++; assert.equal(url, 'https://api.openai.com/v1/responses');
       const body = JSON.parse(options.body); assert.equal(body.store, false); assert.equal(body.input.at(-1).content, 'message ai-message');
-      return new Response(JSON.stringify({ output: [{ content: [{ type: 'output_text', text: '您好，這是 AI 回覆。' }] }] }), { headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ output: [{ content: [{ type: 'output_text', text: JSON.stringify({ action: 'reply', text: '您好，這是 AI 回覆。', reason: '打招呼', grounded: true, kind: 'greeting', sourceIds: [] }) }] }] }), { headers: { 'content-type': 'application/json' } });
     },
     fetchLine: async (url, options) => {
+      if (url.endsWith('/loading/start')) return new Response('{}');
       lineCalls++; assert.equal(url, 'https://api.line.me/v2/bot/message/push');
       assert.equal(JSON.parse(options.body).messages[0].text, '您好，這是 AI 回覆。');
       return new Response('{}', { headers: { 'content-type': 'application/json' } });

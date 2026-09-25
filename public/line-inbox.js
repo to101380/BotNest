@@ -1,4 +1,8 @@
+import { watchHistoryScroll } from "./history-scroll.js";
+import { pollDelay, conversationVersion, needsMessageRefresh } from "./inbox-polling.js";
 const $ = id => document.getElementById(id);
+const isSocial = item => ["facebook", "instagram"].includes(item?.provider);
+const channelName = item => item?.provider === "instagram" ? "Instagram" : item?.provider === "facebook" ? "Facebook Messenger" : "LINE";
 const formatClock = value => new Date(value).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false });
 const dayKey = value => {
   const date = new Date(value);
@@ -22,34 +26,97 @@ const formatDay = value => {
 };
 export function createLineInbox() {
   let user = null, active = false, pageMode = null, epoch = 0, controller, timer, channel = null;
-  let selected = null, conversationNext = null, zernioConversationNext = null, messageNext = null, refreshing = false, saving = false, browsingHistory = false;
+  let selected = null, conversationNext = null, zernioConversationNext = null, instagramNext = null, messageNext = null, refreshing = false, saving = false, browsingHistory = false;
+  let messageLoading = false, messageRequest = 0;
+  let unchangedRounds = 0, lastListVersion = "", messageSnapshot = null, lastResume = 0;
+  function scheduleRefresh() {
+    clearTimeout(timer);
+    if (!active || pageMode !== "inbox" || document.hidden) return;
+    const scheduledEpoch = epoch;
+    timer = setTimeout(async () => {
+      if (scheduledEpoch !== epoch) return;
+      if (!browsingHistory) await refresh(false, false);
+      if (scheduledEpoch === epoch) scheduleRefresh();
+    }, pollDelay(unchangedRounds, !!selected));
+  }
+  function resumeRefresh() {
+    if (!active || pageMode !== "inbox" || document.hidden || browsingHistory || Date.now() - lastResume < 1000) return;
+    lastResume = Date.now(); unchangedRounds = 0;
+    clearTimeout(timer);
+    const resumedEpoch = epoch;
+    void refresh(false, true).finally(() => { if (resumedEpoch === epoch) scheduleRefresh(); });
+  }
   const conversations = new Map(), messages = new Map();
   const drafts = new Map(), localReplies = new Map();
   const attachments = new Map();
-  let sending = false, uploading = false, customerSaving = false, aiSaving = false, zernioBusy = false, facebookAccount = null;
+  let sending = false, uploading = false, customerSaving = false, zernioBusy = false, facebookAccount = null, instagramAccount = null;
   let customerTags = [];
   let customerSaveTimer = null, pendingCustomerSave = null, customerSaveRevision = 0;
   let customerSaveChain = Promise.resolve();
   let followLatest = true;
+  let selectedAi = null, changingAi = false, aiRequest = 0, aiEnabled = false;
+  let channelAiSettings = null, channelAiSaving = false;
+  const aiBar = document.createElement("div"); aiBar.className = "conversation-ai-controls"; aiBar.hidden = true;
+  aiBar.innerHTML = '<span id="conversation-ai-state" class="assistant-badge"></span><button type="button" data-ai-mode="auto">交回 AI</button><button type="button" data-ai-mode="human">真人接手</button><button type="button" data-ai-mode="off">關閉 AI</button>';
+  $("customer-toggle").before(aiBar);
+  function renderAiControl() {
+    aiBar.hidden = !selected;
+    const current = selectedAi?.id === selected ? selectedAi : null;
+    const globallyOff = current && ["AI 自動回覆已關閉", "此渠道未啟用 AI"].includes(current.state.reason);
+    const humanMode = !globallyOff && current?.control.mode === "human";
+    const displayMode = globallyOff ? "off" : current?.control.mode;
+    $("conversation-ai-state").textContent = globallyOff ? "AI 已關閉" : humanMode ? "已轉真人，AI 暫停" : current ? current.state.reason : "讀取 AI 狀態…";
+    $("conversation-ai-state").title = globallyOff ? "請到渠道設定或 AI 客服設定開啟自動回覆。" : humanMode ? `${current.control.reason || "真人客服處理中"}；按「交回 AI」可恢復自動回覆。` : current?.control.pausedUntil > Date.now() ? `暫停至 ${new Date(current.control.pausedUntil).toLocaleString("zh-TW")}` : current?.state.reason || "";
+    $("conversation-ai-state").classList.toggle("active", !!current?.state.allowed);
+    const labels = { auto: ["交回 AI", "AI 回覆中"], human: ["真人接手", "真人接手中"], off: ["關閉 AI", "AI 已關閉"] };
+    for (const button of aiBar.querySelectorAll("button")) {
+      const pressed = displayMode === button.dataset.aiMode && (displayMode !== "auto" || current?.state.allowed);
+      button.disabled = !current || changingAi || !!globallyOff;
+      button.setAttribute("aria-pressed", String(pressed));
+      button.textContent = labels[button.dataset.aiMode][pressed ? 1 : 0];
+    }
+    $("ai-reply-indicator").hidden = selected ? !current?.state.allowed : !aiEnabled;
+  }
+  async function loadAiControl() {
+    const id = selected, item = conversations.get(id), requestId = ++aiRequest;
+    if (!item) { selectedAi = null; renderAiControl(); return; }
+    const provider = isSocial(item) ? item.provider : "line", conversationId = isSocial(item) ? item.remoteId : id;
+    const data = await aiApi(`conversation?provider=${provider}&conversationId=${encodeURIComponent(conversationId)}`);
+    if (id !== selected || requestId !== aiRequest) return;
+    selectedAi = { ...data, id }; renderAiControl();
+  }
+  aiBar.addEventListener("click", async event => {
+    const mode = event.target.closest("button")?.dataset.aiMode, item = conversations.get(selected), id = selected;
+    if (!mode || !item || changingAi || selectedAi?.id !== selected) return;
+    changingAi = true; aiRequest++; renderAiControl();
+    try {
+      const data = await aiApi("conversation", { method: "PUT", body: JSON.stringify({ provider: isSocial(item) ? item.provider : "line", conversationId: isSocial(item) ? item.remoteId : id, mode, revision: selectedAi.control.revision || 0 }) });
+      if (id === selected) selectedAi = { ...data, id }; status(data.state.reason);
+    } catch (error) { report(error); } finally { changingAi = false; if (id === selected) { renderAiControl(); void loadAiControl().catch(report); } }
+  });
   const messageArea = $("line-messages");
   messageArea.addEventListener("scroll", () => {
     followLatest = messageArea.scrollHeight - messageArea.clientHeight - messageArea.scrollTop < 40;
   }, { passive: true });
+  const historyScroll = watchHistoryScroll(messageArea, {
+    canLoad: () => active && pageMode === "inbox" && !document.hidden && !!selected && !!messageNext && !messageLoading && !refreshing && !saving,
+    load: () => loadMessages(true), onError: error => report(error),
+  });
   const messageResize = new ResizeObserver(() => {
     if (active && followLatest) messageArea.scrollTop = messageArea.scrollHeight;
   });
   function replyControls() {
-    const current = conversations.get(selected), facebook = current?.provider === "facebook";
-    const canReply = facebook ? !!facebookAccount : !!channel?.canReply;
+    const current = conversations.get(selected), facebook = isSocial(current);
+    const canReply = facebook ? !!(current?.provider === "instagram" ? instagramAccount : facebookAccount) : !!channel?.canReply;
     const enabled = active && !!selected && canReply && !saving && !sending && !uploading;
     $("line-reply-text").disabled = $("line-send").disabled = !enabled;
     for (const id of ["line-pick-image", "line-pick-file", "line-remove-attachment"]) $(id).disabled = !enabled || facebook;
     $("line-pick-emoji").disabled = !enabled;
     $("line-attachment-preview").hidden = !attachments.has(selected) && !uploading;
     $("line-attachment-name").textContent = uploading ? "正在準備附件…" : attachments.has(selected) ? `${attachments.get(selected).kind === "image" ? "圖片" : "文件"}：${attachments.get(selected).name}（待傳送）` : "";
-    $("line-send").textContent = sending ? "傳送中…" : "傳送回覆";
-    $("line-reply-hint").textContent = !selected ? "先選擇一段對話。" : !canReply ? "請先到渠道設定完成連線。" : facebook ? "Facebook 文字回覆 · 最多 5000 字" : "最多 5000 字";
-    $("reply-channel-note").textContent = facebook ? "Enter 傳送，Shift＋Enter 換行。回覆會透過 Facebook Messenger 傳送。" : "Enter 傳送，Shift＋Enter 換行。回覆會使用 OA 的 LINE 訊息額度。";
+    $("line-send").textContent = sending ? "傳送中…" : "傳送";
+    $("line-reply-hint").textContent = !selected ? "先選擇一段對話。" : !canReply ? "請先到渠道設定完成連線。" : facebook ? `${channelName(current)} 文字回覆 · 最多 5000 字` : "最多 5000 字";
+    $("reply-channel-note").textContent = facebook ? `Enter 傳送，Shift＋Enter 換行。回覆會透過 ${channelName(current)} 傳送。` : "Enter 傳送，Shift＋Enter 換行。回覆會使用 OA 的 LINE 訊息額度。";
     $("reply-attachment-note").hidden = !!facebook;
   }
   const status = (text, error = false) => {
@@ -58,7 +125,7 @@ export function createLineInbox() {
   const clearSecrets = () => { $("line-channel-secret").value = $("line-access-token").value = ""; };
   function historyMode(value) {
     browsingHistory = value;
-    $("line-polling-note").textContent = value ? "正在瀏覽較早紀錄，自動更新已暫停；按「重新整理」回到最新訊息。" : "每 10 秒更新。";
+    $("line-polling-note").textContent = value ? "正在瀏覽較早紀錄，自動更新已暫停；按「重新整理」回到最新訊息。" : "自動更新：有變化時每 10 秒；無變化時，對話最長 60 秒、列表最長 2 分鐘。回到頁面立即更新，AI 回覆不受影響。";
   }
   const label = item => item?.customer?.name || item?.displayName || `${({ user: "使用者", group: "群組", room: "聊天室" })[item?.sourceType] || "對話"} · ${(item?.sourceId || "").slice(-8)}`;
   function avatar(item) {
@@ -66,13 +133,13 @@ export function createLineInbox() {
     frame.textContent = item.displayName ? [...item.displayName][0] : "人";
     frame.setAttribute("aria-hidden", "true");
     let trustedPicture = false;
-    try { const url = new URL(item.pictureUrl); trustedPicture = url.protocol === "https:" && (item.provider === "facebook" ? /(^|\.)(fbcdn\.net|facebook\.com|fbsbx\.com)$/i.test(url.hostname) : /(^|\.)line-scdn\.net$/i.test(url.hostname)); } catch { /* Invalid profile image. */ }
+    try { const url = new URL(item.pictureUrl); trustedPicture = url.protocol === "https:" && (isSocial(item) ? /(^|\.)(fbcdn\.net|facebook\.com|fbsbx\.com|cdninstagram\.com|instagram\.com)$/i.test(url.hostname) : /(^|\.)line-scdn\.net$/i.test(url.hostname)); } catch { /* Invalid profile image. */ }
     if (item.pictureUrl && trustedPicture) {
       const image = document.createElement("img"); image.alt = ""; image.src = item.pictureUrl;
       image.loading = "lazy"; image.referrerPolicy = "no-referrer";
       image.addEventListener("error", () => image.remove(), { once: true }); frame.append(image);
     }
-    const badge = document.createElement("span"); badge.className = item.provider === "facebook" ? "facebook-avatar-badge" : "line-avatar-badge"; badge.title = item.provider === "facebook" ? "Facebook Messenger" : "LINE"; frame.append(badge);
+    const badge = document.createElement("span"); badge.className = item.provider === "instagram" ? "instagram-avatar-badge" : isSocial(item) ? "facebook-avatar-badge" : "line-avatar-badge"; badge.title = channelName(item); frame.append(badge);
     return frame;
   }
   function showConversationHeader() {
@@ -81,7 +148,8 @@ export function createLineInbox() {
     $("line-chat-empty").parentElement.classList.toggle("has-conversation", !!item);
     $("line-conversation-title").textContent = item ? label(item) : "選擇一段對話";
     $("line-chat-avatar").replaceChildren(...(item ? [avatar(item)] : []));
-    $("line-chat-source").textContent = item ? `來自 ${item.provider === "facebook" ? "Facebook Messenger" : "LINE"}` : "在左側選擇聊天者，開始回覆";
+    $("line-chat-source").textContent = item ? `來自 ${channelName(item)}` : "在左側選擇聊天者，開始回覆";
+    renderAiControl();
   }
   const customerFields = ["name", "phone", "email", "birthday", "gender", "language", "country", "city", "address", "about", "custom1", "custom2", "custom3"];
   function renderCustomerTags() {
@@ -126,7 +194,7 @@ export function createLineInbox() {
       return;
     }
     $("customer-avatar").replaceChildren(avatar(item)); $("customer-title").textContent = label(item);
-    $("customer-source").textContent = `來自 ${item.provider === "facebook" ? "Facebook Messenger" : "LINE"}`;
+    $("customer-source").textContent = `來自 ${channelName(item)}`;
     const customer = item.customer || {};
     for (const field of customerFields) $(`customer-${field}`).value = customer[field] || "";
     customerTags = Array.isArray(customer.tags) ? [...customer.tags] : [];
@@ -171,12 +239,13 @@ export function createLineInbox() {
     if (currentEpoch !== epoch) throw new DOMException("Session changed", "AbortError");
     const response = await fetch(`/api/ai/${path}`, { ...options, signal, cache: "no-store", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } });
     const data = await response.json().catch(() => ({ error: "AI 設定服務暫時無法使用。" }));
+    if (currentEpoch !== epoch) throw new DOMException("Session changed", "AbortError");
     if (!response.ok || data.error) throw new Error(data.error || "AI 設定服務暫時無法使用。");
     return data;
   }
   function customerRequest(conversationId, suffix = "", options = {}) {
     const item = conversations.get(conversationId);
-    if (item?.provider === "facebook") return zernioApi(`customer${suffix}?conversationId=${encodeURIComponent(item.remoteId)}`, options);
+    if (isSocial(item)) return zernioApi(`customer${suffix}?platform=${item.provider}&conversationId=${encodeURIComponent(item.remoteId)}`, options);
     return api(`conversations/${conversationId}/customer${suffix}`, options);
   }
   function showZernioAccount(data) {
@@ -188,35 +257,36 @@ export function createLineInbox() {
     $("facebook-page-detail").textContent = connected ? `@${data.facebook.username || "Facebook"} · 由 Zernio 管理連線` : data.configured ? "授權時可選擇你管理的粉絲專頁" : "請先設定 Zernio API Key";
     $("facebook-connect").textContent = connected ? "重新授權" : "使用 Facebook 授權";
     $("facebook-connect").disabled = !data.configured || zernioBusy;
+    const ig = data.instagram; instagramAccount = ig || null;
+    $("instagram-card-state").textContent = ig ? "已綁定" : data.configured ? "未綁定" : "尚未設定";
+    $("instagram-card-state").classList.toggle("connected", !!ig);
+    $("instagram-account-name").textContent = ig?.displayName || "尚未綁定 Instagram 帳號";
+    $("instagram-account-detail").textContent = ig ? `@${ig.username || "Instagram"} · 帳號已授權` : "請使用 Instagram 商業或創作者帳號授權";
+    $("instagram-connect").textContent = ig ? "重新授權" : "綁定 Instagram";
+    $("instagram-connect").disabled = !data.configured || zernioBusy;
     showAccount(); replyControls();
   }
   async function loadZernioAccount() {
     try {
       const data = await zernioApi("account"); showZernioAccount(data);
       const callback = new URLSearchParams(location.search).get("zernio");
-      if (callback === "connected") status("Facebook Messenger 粉絲專頁已成功連接。");
-      else if (callback === "error") status("Facebook 授權未完成，請重新操作。", true);
+      if (callback === "connected") status(new URLSearchParams(location.search).get("platform") === "instagram" ? "Instagram 帳號已成功綁定。" : "Facebook Messenger 粉絲專頁已成功連接。");
+      else if (callback === "error") status("社群帳號授權未完成，請重新操作。", true);
       if (callback) history.replaceState(null, "", `${location.pathname}${location.hash}`);
     } catch (error) {
       $("facebook-card-state").textContent = "讀取失敗"; $("facebook-card-state").classList.remove("connected");
-      $("facebook-connect").disabled = true; report(error);
+      $("facebook-connect").disabled = true; $("instagram-connect").disabled = true; $("instagram-card-state").textContent = "讀取失敗"; report(error);
     }
   }
   function report(error) { if (error.name !== "AbortError") status(error.message, true); }
   function showAccount() {
     $("line-account").hidden = !channel;
-    $("line-inbox").hidden = !channel && !facebookAccount;
+    $("line-inbox").hidden = !channel && !facebookAccount && !instagramAccount;
     $("line-connect-form").hidden = !!channel;
-    $("line-not-connected").hidden = !!channel || !!facebookAccount;
+    $("line-not-connected").hidden = !!channel || !!facebookAccount || !!instagramAccount;
     $("line-settings-toggle").setAttribute("aria-expanded", "false");
     $("line-card-state").textContent = channel ? "已連接" : "未連接";
     $("line-card-state").classList.toggle("connected", !!channel);
-    for (const control of $("ai-settings-form").querySelectorAll("input,textarea,button")) control.disabled = (!channel && !facebookAccount) || aiSaving;
-    if (!channel && !facebookAccount) {
-      $("ai-card-state").textContent = "需先連接訊息渠道";
-      $("ai-card-state").classList.remove("connected");
-      $("ai-key-state").textContent = "連接 LINE 或 Facebook Messenger 後即可設定。";
-    }
     replyControls();
     if (!channel) return;
     $("line-oa-name").textContent = `${channel.displayName} ${channel.basicId}`;
@@ -227,17 +297,40 @@ export function createLineInbox() {
     $("line-channel-id").readOnly = true;
   }
   function showAiSettings(settings) {
-    $("ai-enabled").checked = !!settings.enabled;
-    $("ai-instructions").value = settings.instructions || "";
+    channelAiSettings = settings;
+    aiEnabled = !!settings.configured && !!settings.enabled;
     $("ai-key-state").textContent = settings.configured ? "OpenAI API 已安全設定於 Firebase 後端。" : "尚未設定 OpenAI API Key。";
     $("ai-card-state").textContent = !settings.configured ? "待設定 API Key" : settings.enabled ? "自動回覆中" : "已關閉";
     $("ai-card-state").classList.toggle("connected", !!settings.configured && !!settings.enabled);
-    $("ai-reply-indicator").hidden = !(settings.configured && settings.enabled);
+    renderChannelAiToggle();
+    renderAiControl();
   }
-  function aiStatus(text, error = false) {
-    $("ai-settings-status").textContent = text;
-    $("ai-settings-status").classList.toggle("error", error);
+  function renderChannelAiToggle() {
+    const toggle = $("ai-channel-toggle");
+    toggle.setAttribute("aria-checked", String(!!channelAiSettings?.enabled));
+    toggle.setAttribute("aria-busy", String(channelAiSaving));
+    toggle.disabled = !active || pageMode !== "settings" || !channelAiSettings || channelAiSaving || (!channelAiSettings.configured && !channelAiSettings.enabled);
   }
+  function channelAiFeedback(message, error = false) {
+    const feedback = $("ai-channel-feedback");
+    feedback.hidden = !message; feedback.textContent = message; feedback.classList.toggle("error", error);
+  }
+  $("ai-channel-toggle").addEventListener("click", async () => {
+    if (!channelAiSettings || channelAiSaving || $("ai-channel-toggle").disabled) return;
+    const currentEpoch = epoch, enabled = !channelAiSettings.enabled;
+    channelAiSaving = true; renderChannelAiToggle(); channelAiFeedback(enabled ? "正在開啟 AI 自動回覆…" : "正在關閉 AI 自動回覆…");
+    try {
+      const data = await aiApi("settings", { method: "PUT", body: JSON.stringify({ enabled }) });
+      if (currentEpoch !== epoch) return;
+      showAiSettings(data.settings); channelAiFeedback(data.settings.enabled ? "已開啟 AI 自動回覆，依已設定的渠道與規則生效。" : "已關閉 AI 自動回覆。");
+    } catch (error) {
+      if (currentEpoch !== epoch || error.name === "AbortError") return;
+      // Re-read after an uncertain request so the switch reflects the saved server state.
+      try { showAiSettings((await aiApi("settings")).settings); }
+      catch { if (currentEpoch !== epoch) return; channelAiSettings = null; $("ai-card-state").textContent = "狀態待確認"; $("ai-card-state").classList.remove("connected"); }
+      if (currentEpoch === epoch) channelAiFeedback(`切換未確認：${error.message} 請重新整理確認狀態。`, true);
+    } finally { if (currentEpoch === epoch) { channelAiSaving = false; renderChannelAiToggle(); } }
+  });
   function showConversations() {
     $("line-conversations").replaceChildren();
     $("line-empty").hidden = conversations.size > 0;
@@ -255,14 +348,14 @@ export function createLineInbox() {
       button.addEventListener("click", () => selectConversation(item.id));
       $("line-conversations").append(button);
     }
-    $("line-more-conversations").hidden = !conversationNext && !zernioConversationNext;
+    $("line-more-conversations").hidden = !conversationNext && !zernioConversationNext && !instagramNext;
     showConversationHeader();
   }
   const trustedMediaUrl = attachment => {
     try {
       const url = new URL(attachment.url, location.origin);
       if (url.origin === "https://planning-with-ai-52d58.web.app" && url.pathname.startsWith("/api/line/media/")) return url;
-      if (attachment.external && url.protocol === "https:" && /(^|\.)fbcdn\.net$/i.test(url.hostname)) return url;
+      if (attachment.external && url.protocol === "https:" && /(^|\.)(fbcdn\.net|cdninstagram\.com|fbsbx\.com)$/i.test(url.hostname)) return url;
       return null;
     } catch { return null; }
   };
@@ -341,28 +434,35 @@ export function createLineInbox() {
         if (item.status === "uncertain") {
           const retry = document.createElement("button"); retry.type = "button"; retry.className = "retry";
           const selectedProvider = conversations.get(selected)?.provider;
-          retry.textContent = "重試確認"; retry.disabled = sending || (selectedProvider === "facebook" ? !facebookAccount : !channel?.canReply) || Date.now() - item.sentAt >= 23 * 60 * 60 * 1000;
+          retry.textContent = "重試確認"; retry.disabled = sending || (["facebook", "instagram"].includes(selectedProvider) ? !(selectedProvider === "instagram" ? instagramAccount : facebookAccount) : !channel?.canReply) || Date.now() - item.sentAt >= 23 * 60 * 60 * 1000;
           retry.addEventListener("click", () => void sendReply(selected, item.text, item.operationId, item.attachment)); bubble.append(retry);
         }
         if (item.status !== "sent" && item.note) { const note = document.createElement("p"); note.className = "note"; note.textContent = item.note; bubble.append(note); }
       }
       $("line-messages").append(bubble);
     }
-    $("line-more-messages").hidden = !messageNext;
     followLatest = scrollToLatest;
     messageArea.scrollTop = scrollToLatest ? messageArea.scrollHeight : scrollMode === "older" ? previousTop + messageArea.scrollHeight - previousHeight : previousTop;
+    historyScroll.sync();
     messageResize.observe(messageArea);
     for (const bubble of messageArea.children) messageResize.observe(bubble);
   }
   async function loadMessages(older = false, scrollMode = "auto") {
-    const id = selected;
-    if (!id) return;
-    const current = conversations.get(id);
-    const data = current?.provider === "facebook"
-      ? await zernioApi(`messages?conversationId=${encodeURIComponent(current.remoteId)}${older && messageNext ? `&cursor=${encodeURIComponent(messageNext)}` : ""}`)
-      : await api(`conversations/${id}/messages${older && messageNext ? `?before=${encodeURIComponent(messageNext)}` : ""}`);
-    if (selected !== id) return;
+    const id = selected, messageEpoch = epoch;
+    if (!id || messageLoading || (older && !messageNext)) return;
+    const request = ++messageRequest, cursor = messageNext;
+    messageLoading = true;
+    messageArea.setAttribute("aria-busy", "true");
+    const wasBrowsing = browsingHistory;
     if (older) historyMode(true);
+    try {
+    const current = conversations.get(id);
+    const requestedVersion = conversationVersion(current);
+    const data = isSocial(current)
+      ? await zernioApi(`messages?platform=${current.provider}&conversationId=${encodeURIComponent(current.remoteId)}${older && cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)
+      : await api(`conversations/${id}/messages${older && cursor ? `?before=${encodeURIComponent(cursor)}` : ""}`);
+    if (selected !== id || messageEpoch !== epoch || request !== messageRequest) return;
+    if (!older) messageSnapshot = { id, version: requestedVersion, at: Date.now() };
     // Refresh replaces the window, including any retracted messages.
     if (!older) messages.clear();
     for (const item of data.items) messages.set(item.id, item);
@@ -371,45 +471,65 @@ export function createLineInbox() {
       if (!messages.has(local.message.id)) messages.set(local.message.id, local.message);
       else if (["sent", "failed"].includes(messages.get(local.message.id).status)) localReplies.delete(operationId);
     }
-    messageNext = data.next; showMessages(older ? "older" : scrollMode);
+    messageNext = older && data.next === cursor ? null : data.next; showMessages(older ? "older" : scrollMode);
+    } catch (error) {
+      if (selected !== id || messageEpoch !== epoch || request !== messageRequest) return;
+      if (older) historyMode(wasBrowsing);
+      throw error;
+    } finally {
+      if (request === messageRequest) { messageLoading = false; messageArea.removeAttribute("aria-busy"); }
+    }
   }
   async function selectConversation(id) {
     flushCustomerSave();
-    selected = id; messages.clear(); messageNext = null;
+    messageRequest++; messageLoading = false; messageArea.removeAttribute("aria-busy");
+    selected = id; messages.clear(); messageNext = null; messageSnapshot = null; unchangedRounds = 0; scheduleRefresh();
     historyMode(false);
     $("line-reply-text").value = drafts.get(id) || ""; replyControls();
     $("line-conversation-title").textContent = label(conversations.get(id));
     showConversations(); showMessages(); showCustomerPanel();
-    const tasks = [loadMessages(false, "bottom")];
-    if (conversations.get(id)?.provider === "facebook") tasks.push(customerRequest(id).then(data => {
+    const tasks = [loadMessages(false, "bottom"), loadAiControl()];
+    if (isSocial(conversations.get(id))) tasks.push(customerRequest(id).then(data => {
       if (selected !== id) return;
       const item = conversations.get(id); conversations.set(id, { ...item, customer: data.customer || {} }); showCustomerPanel(); showConversations();
     }));
     const results = await Promise.allSettled(tasks);
     const failed = results.find(result => result.status === "rejected"); if (failed) report(failed.reason);
   }
-  async function refresh(more = false) {
-    if (refreshing || (!channel && !facebookAccount) || !active || saving) return;
+  async function refresh(more = false, force = true) {
+    if (refreshing || (!channel && !facebookAccount && !instagramAccount) || !active || saving) return;
     const currentEpoch = epoch;
     refreshing = true; $("line-refresh").disabled = true;
     try {
-      const linePromise = channel ? Promise.all([api("account"), api(`conversations${more && conversationNext ? `?before=${encodeURIComponent(conversationNext)}` : ""}`)]) : null;
-      const facebookPromise = facebookAccount ? zernioApi(`conversations${more && zernioConversationNext ? `?cursor=${encodeURIComponent(zernioConversationNext)}` : ""}`) : null;
-      const [lineState, facebookState] = await Promise.allSettled([linePromise, facebookPromise]);
+      const linePromise = channel && (!more || conversationNext) ? api(`conversations${more && conversationNext ? `?before=${encodeURIComponent(conversationNext)}` : ""}`) : null;
+      const facebookPromise = facebookAccount && (!more || zernioConversationNext) ? zernioApi(`conversations${more && zernioConversationNext ? `?cursor=${encodeURIComponent(zernioConversationNext)}` : ""}`) : null;
+      const instagramPromise = instagramAccount && (!more || instagramNext) ? zernioApi(`conversations?platform=instagram${more && instagramNext ? `&cursor=${encodeURIComponent(instagramNext)}` : ""}`) : null;
+      const [lineState, facebookState, instagramState] = await Promise.allSettled([linePromise, facebookPromise, instagramPromise]);
+      if (currentEpoch !== epoch) return;
+      const instagramResult = instagramState.status === "fulfilled" ? instagramState.value : null;
       const lineResult = lineState.status === "fulfilled" ? lineState.value : null;
       const facebookResult = facebookState.status === "fulfilled" ? facebookState.value : null;
-      const refreshError = lineState.status === "rejected" ? lineState.reason : facebookState.status === "rejected" ? facebookState.reason : null;
-      const account = lineResult?.[0], data = lineResult?.[1];
-      if (account) channel = account.channel;
+      const refreshError = lineState.status === "rejected" ? lineState.reason : facebookState.status === "rejected" ? facebookState.reason : instagramState.status === "rejected" ? instagramState.reason : null;
+      const data = lineResult;
       replyControls();
       if (channel) {
         $("line-oa-state").textContent = channel.verifiedAt ? "Webhook 已接通" : "等待 Webhook 驗證";
         $("line-oa-state").classList.toggle("active", !!channel.verifiedAt);
       }
-      if (!more) conversations.clear();
+      // Keep a provider's existing list on transient failure.
+      if (!more) for (const [id, item] of conversations) {
+        const result = item.provider === "instagram" ? instagramResult : item.provider === "facebook" ? facebookResult : data;
+        if (result) conversations.delete(id);
+      }
       for (const item of data?.items || []) conversations.set(item.id, item);
       for (const item of facebookResult?.items || []) conversations.set(item.id, item);
-      conversationNext = data?.next || null; zernioConversationNext = facebookResult?.next || null; showConversations();
+      for (const item of instagramResult?.items || []) conversations.set(item.id, item);
+      if (instagramResult) instagramNext = instagramResult.next || null;
+      if (data) conversationNext = data.next || null;
+      if (facebookResult) zernioConversationNext = facebookResult.next || null;
+      const listVersion = JSON.stringify([...conversations.values()].map(conversationVersion).sort());
+      if (!more) { unchangedRounds = listVersion === lastListVersion ? unchangedRounds + 1 : 0; lastListVersion = listVersion; }
+      showConversations();
       let pendingConversation = null;
       try { pendingConversation = sessionStorage.getItem("botnest-open-conversation"); } catch { /* Storage may be unavailable. */ }
       if (pendingConversation && conversations.has(pendingConversation)) {
@@ -417,7 +537,9 @@ export function createLineInbox() {
         await selectConversation(pendingConversation); status(""); return;
       }
       if (more) historyMode(true);
-      await loadMessages();
+      if (!more && needsMessageRefresh(messageSnapshot, conversations.get(selected), Date.now(), force)) await loadMessages();
+      if (currentEpoch !== epoch) return;
+      if (!changingAi) await loadAiControl();
       if (refreshError) report(refreshError); else status("");
     } catch (error) { report(error); }
     finally { if (currentEpoch === epoch) { refreshing = false; $("line-refresh").disabled = false; } }
@@ -427,24 +549,25 @@ export function createLineInbox() {
     status("正在讀取 OA 連線狀態…");
     try {
       const [lineResult, zernioResult] = await Promise.allSettled([api("account"), zernioApi("account")]);
+      if (currentEpoch !== epoch) return;
       if (lineResult.status === "fulfilled") channel = lineResult.value.channel;
       if (zernioResult.status === "fulfilled") showZernioAccount(zernioResult.value);
       showAccount();
-      if (channel || facebookAccount) {
-        const ai = await aiApi("settings");
-        showAiSettings(ai.settings);
+      try { showAiSettings((await aiApi("settings")).settings); }
+      catch (error) { if (error.name === "AbortError") throw error; $("ai-card-state").textContent = "讀取失敗"; $("ai-key-state").textContent = "暫時無法讀取 AI 設定，請稍後再試。"; }
+      if (channel || facebookAccount || instagramAccount) {
         if (channel && pageMode !== "inbox") {
           status(channel.verifiedAt ? "LINE 官方帳號已連接，Webhook 運作正常。" : "LINE 官方帳號已連接，等待 Webhook 驗證。");
         }
-      } else if (!facebookAccount) status("尚未連接任何訊息渠道。請先前往渠道設定。");
-      if (pageMode === "inbox" && (channel || facebookAccount)) await refresh();
+      } else if (!facebookAccount && !instagramAccount) status("尚未連接任何訊息渠道。請先前往渠道設定。");
+      if (pageMode === "inbox" && (channel || facebookAccount || instagramAccount)) await refresh();
       if (pageMode === "settings" && zernioResult.status === "rejected") await loadZernioAccount();
-      if (currentEpoch === epoch && pageMode === "inbox") timer = setInterval(() => { if (!document.hidden && !browsingHistory) void refresh(); }, 10000);
+      if (currentEpoch === epoch && pageMode === "inbox") scheduleRefresh();
     } catch (error) { report(error); }
   }
   async function sendReply(conversationId, text, operationId, attachment) {
-    const currentConversation = conversations.get(conversationId), facebook = currentConversation?.provider === "facebook";
-    const canReply = facebook ? !!facebookAccount : !!channel?.canReply;
+    const currentConversation = conversations.get(conversationId), facebook = isSocial(currentConversation);
+    const canReply = facebook ? !!(currentConversation?.provider === "instagram" ? instagramAccount : facebookAccount) : !!channel?.canReply;
     if (sending || !active || !canReply || !conversationId || (!text.trim() && !attachment) || (facebook && attachment)) return;
     const isRetry = !!operationId;
     operationId ||= crypto.randomUUID();
@@ -455,9 +578,10 @@ export function createLineInbox() {
     if (selected === conversationId) { historyMode(false); messages.set(initial.id, initial); showMessages("bottom"); }
     try {
       const data = facebook
-        ? await zernioApi("messages", { method: "POST", body: JSON.stringify({ conversationId: currentConversation.remoteId, text, operationId }) })
+        ? await zernioApi(`messages?platform=${currentConversation.provider}`, { method: "POST", body: JSON.stringify({ conversationId: currentConversation.remoteId, text, operationId }) })
         : await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId, attachmentId: attachment?.id || null }) });
       localReplies.set(operationId, { conversationId, message: data.message });
+      if (selected === conversationId) void loadAiControl().catch(report);
       if (selected === conversationId) { messages.set(data.message.id, data.message); showMessages(); }
       status(data.message.status === "sent" ? "" : data.message.note || "傳送狀態待確認。", data.message.status !== "sent");
     } catch (error) {
@@ -475,7 +599,7 @@ export function createLineInbox() {
     } finally { if (currentEpoch === epoch) { sending = false; replyControls(); showMessages(); } }
   }
   async function uploadFile(file, kind) {
-    if (!file || uploading || sending || !selected || !active || !channel?.canReply || conversations.get(selected)?.provider === "facebook") return;
+    if (!file || uploading || sending || !selected || !active || !channel?.canReply || isSocial(conversations.get(selected))) return;
     const conversationId = selected, currentEpoch = epoch;
     uploading = true; replyControls();
     try {
@@ -604,7 +728,7 @@ export function createLineInbox() {
     event.preventDefault();
     const text = $("line-reply-text").value;
     const attachment = attachments.get(selected);
-    const current = conversations.get(selected), canReply = current?.provider === "facebook" ? !!facebookAccount : !!channel?.canReply;
+    const current = conversations.get(selected), canReply = isSocial(current) ? !!(current.provider === "instagram" ? instagramAccount : facebookAccount) : !!channel?.canReply;
     if (sending || uploading || !selected || !canReply || (!text.trim() && !attachment) || text.length > 5000) return;
     drafts.delete(selected); $("line-reply-text").value = "";
     attachments.delete(selected);
@@ -625,23 +749,12 @@ export function createLineInbox() {
     } catch (error) { report(error); }
     finally { if (currentEpoch === epoch) { saving = false; $("line-connect-fields").disabled = false; replyControls(); } }
   });
-  $("ai-settings-form").addEventListener("submit", async event => {
-    event.preventDefault();
-    if ((!channel && !facebookAccount) || aiSaving) return;
-    aiSaving = true; showAccount(); aiStatus("正在儲存…");
-    try {
-      const data = await aiApi("settings", { method: "PUT", body: JSON.stringify({ enabled: $("ai-enabled").checked, instructions: $("ai-instructions").value }) });
-      showAiSettings(data.settings); aiStatus("AI 自動回覆設定已儲存。");
-    } catch (error) { aiStatus(error.message, true); }
-    finally { aiSaving = false; showAccount(); }
-  });
   $("line-settings-toggle").addEventListener("click", () => {
     $("line-connect-form").hidden = !$("line-connect-form").hidden;
     $("line-settings-toggle").setAttribute("aria-expanded", String(!$("line-connect-form").hidden)); clearSecrets();
   });
   $("line-refresh").addEventListener("click", () => { historyMode(false); void refresh(); });
   $("line-more-conversations").addEventListener("click", () => void refresh(true));
-  $("line-more-messages").addEventListener("click", async () => { try { await loadMessages(true); } catch (error) { report(error); } });
   $("line-image-close").addEventListener("click", () => $("line-image-viewer").close());
   $("line-image-prev").addEventListener("click", () => moveImageViewer(-1));
   $("line-image-next").addEventListener("click", () => moveImageViewer(1));
@@ -651,26 +764,34 @@ export function createLineInbox() {
     try { await navigator.clipboard.writeText($("line-webhook-url").value); status("已複製 Webhook URL。"); }
     catch { $("line-webhook-url").select(); status("請手動複製已選取的網址。"); }
   });
-  $("facebook-connect").addEventListener("click", async () => {
+  for (const platform of ["facebook", "instagram"]) $(`${platform}-connect`).addEventListener("click", async () => {
     if (zernioBusy || !active) return;
-    zernioBusy = true; $("facebook-connect").disabled = true; $("facebook-connect").textContent = "正在開啟授權…";
+    zernioBusy = true; $("facebook-connect").disabled = $("instagram-connect").disabled = true; $(`${platform}-connect`).disabled = true; $(`${platform}-connect`).textContent = "正在開啟授權…";
     try {
-      const data = await zernioApi("connect/facebook", { method: "POST", body: "{}" });
+      const data = await zernioApi(`connect/${platform}`, { method: "POST", body: "{}" });
       location.assign(data.authUrl);
     } catch (error) { report(error); zernioBusy = false; await loadZernioAccount(); }
   });
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushCustomerSave(); });
-  window.addEventListener("pagehide", () => { clearSecrets(); controller?.abort(); clearInterval(timer); messageResize.disconnect(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") { flushCustomerSave(); clearTimeout(timer); }
+    else resumeRefresh();
+  });
+  window.addEventListener("focus", resumeRefresh);
+  window.addEventListener("pagehide", () => { clearSecrets(); controller?.abort(); clearTimeout(timer); messageResize.disconnect(); });
   return {
     setSession(nextUser, nextMode) {
       const nextActive = !!nextUser && !!nextMode;
       if (user?.uid === nextUser?.uid && active === nextActive && pageMode === nextMode) { user = nextUser; return; }
-      epoch++; controller?.abort(); clearInterval(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
+      epoch++; controller?.abort(); clearTimeout(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
+      messageRequest++; messageLoading = false; messageArea.removeAttribute("aria-busy");
       messageResize.disconnect(); followLatest = true;
-      user = nextUser; active = nextActive; pageMode = nextMode; channel = null; facebookAccount = null; selected = null; refreshing = false; saving = false;
-      sending = false; uploading = false; customerSaving = false; aiSaving = false; zernioBusy = false; customerTags = []; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
+      user = nextUser; active = nextActive; pageMode = nextMode; channel = null; facebookAccount = null, instagramAccount = null; selected = null; refreshing = false; saving = false;
+      unchangedRounds = 0; lastListVersion = ""; messageSnapshot = null; lastResume = 0;
+      selectedAi = null; changingAi = false; aiEnabled = false; aiRequest++;
+      channelAiSettings = null; channelAiSaving = false; renderChannelAiToggle(); channelAiFeedback("");
+      sending = false; uploading = false; customerSaving = false; zernioBusy = false; customerTags = []; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
       $("line-emoji-panel").hidden = true; $("line-pick-emoji").setAttribute("aria-expanded", "false");
-      conversationNext = zernioConversationNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
+      conversationNext = zernioConversationNext = instagramNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
       historyMode(false);
       $("line-oa-name").textContent = $("line-webhook-url").value = $("line-channel-id").value = "";
       $("line-conversation-title").textContent = "選擇一段對話";
@@ -678,8 +799,9 @@ export function createLineInbox() {
       $("line-channel-id").readOnly = false; $("line-connect-fields").disabled = false; $("line-refresh").disabled = false;
       $("line-account").hidden = $("line-inbox").hidden = $("line-connect-form").hidden = $("line-not-connected").hidden = true;
       $("line-card-state").textContent = "讀取中"; $("line-card-state").classList.remove("connected");
+      $("instagram-card-state").textContent = "讀取中"; $("instagram-card-state").classList.remove("connected"); $("instagram-connect").disabled = true; $("instagram-account-name").textContent = "尚未綁定 Instagram 帳號"; $("instagram-account-detail").textContent = "請使用 Instagram 商業或創作者帳號授權";
       $("facebook-card-state").textContent = "讀取中"; $("facebook-card-state").classList.remove("connected"); $("facebook-connect").disabled = true;
-      $("ai-enabled").checked = false; $("ai-instructions").value = ""; $("ai-card-state").textContent = "讀取中"; $("ai-card-state").classList.remove("connected"); aiStatus("");
+      $("ai-card-state").textContent = "讀取中"; $("ai-card-state").classList.remove("connected"); $("ai-key-state").textContent = "正在確認 API 連線…";
       $("ai-reply-indicator").hidden = true;
       showConversations(); showMessages(); status("");
       if (active) void start();

@@ -1,146 +1,144 @@
-<!doctype html>
-<html lang="zh-Hant">
-<head>
+<!DOCTYPE html><html lang="zh-Hant"><head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>登入｜Identity</title>
-  <meta name="description" content="使用 Google 或 Facebook 登入，查看你的帳號身分。">
-  <link rel="stylesheet" href="/style.css">
-  <link rel="stylesheet" href="/line-inbox.css">
-  <link rel="stylesheet" href="/customer-manager.css">
-  <link rel="stylesheet" href="/channel-settings.css">
+  <title>登入｜BotNest</title>
+  <meta name="description" content="在 BotNest 管理訊息、顧客與 AI 助理。">
+  <link rel="stylesheet" href="/style.css?v=20260918-1">
+  <link rel="stylesheet" href="/line-inbox.css?v=20260918-1">
+  <link rel="stylesheet" href="/customer-manager.css?v=20260918-1">
+  <link rel="stylesheet" href="/channel-settings.css?v=20260918-1">
+  <link rel="stylesheet" href="/ai-settings.css?v=20260918-2">
   <script type="module" src="/app.js"></script>
-</head>
+<link rel="stylesheet" href="/minimal-ui.css?v=20260926-1"><link rel="stylesheet" href="/ui-motion.css?v=20260926-1"><script type="module" src="/ui-motion.js"></script></head>
 <body class="auth-pending">
   <div id="auth-loading" class="auth-loading" role="status" aria-live="polite" aria-label="正在確認登入狀態">
-    <span class="auth-loading-mark" aria-hidden="true">i</span>
+    <span class="auth-loading-mark" aria-hidden="true">B</span>
     <span class="auth-loading-spinner" aria-hidden="true"></span>
     <strong>正在載入工作空間</strong>
     <span>正在確認登入狀態…</span>
   </div>
-  <header><a href="/" class="brand"><span class="brand-mark" aria-hidden="true">i</span>identity<span class="brand-dot">.</span></a><span class="header-caption">你的帳號，從這裡開始</span></header>
+  <header><a href="/" class="brand"><span class="brand-mark" aria-hidden="true">B</span>BotNest</a><span class="header-caption"></span></header>
   <main>
-    <nav id="app-nav" class="app-nav" aria-label="主要導覽" hidden>
+    <nav id="app-nav" class="app-nav" aria-label="主要導覽" hidden="">
       <p class="nav-caption">工作空間</p>
-      <a id="nav-account" href="#account">帳號資訊</a>
-      <a id="nav-ai" href="#ai-robot">AI機器人</a>
-      <a id="nav-customers" href="#customers">顧客管理</a>
-      <a id="nav-channels" href="#channels">渠道設定</a>
-    </nav>
+      
+      <a id="nav-ai" href="#ai-robot">訊息</a>
+      <a id="nav-assistant" href="#assistant">AI 助理</a>
+      <a id="nav-customers" href="#customers">顧客</a>
+      <a id="nav-channels" href="#channels">連線</a>
+    <a id="nav-account" href="#account">帳號</a></nav>
     <section class="login-card" aria-labelledby="title">
       <div class="card-top"><span class="eyebrow">ACCOUNT ACCESS</span><span id="state" class="state">準備中</span></div>
-      <section id="signed-out" hidden>
-        <h1 id="title">歡迎回來<span class="dot">.</span></h1>
-        <p class="intro">使用 Email 或你習慣的第三方帳號登入。</p>
+      <section id="signed-out" hidden="">
+        <h1 id="title">歡迎回來</h1>
+        <p class="intro">登入你的工作空間。</p>
         <div class="providers">
-          <button id="google" class="provider google" disabled><svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.07H12v3.92h5.38a4.6 4.6 0 0 1-2 3.02v2.54h3.24c1.9-1.75 2.98-4.33 2.98-7.4Z"/><path fill="#34A853" d="M12 22c2.7 0 4.97-.9 6.63-2.36l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.04v2.62A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.39 13.93a6.02 6.02 0 0 1 0-3.86V7.45H3.04a10 10 0 0 0 0 9.1l3.35-2.62Z"/><path fill="#EA4335" d="M12 5.94c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.64 9.64 0 0 0 12 2a10 10 0 0 0-8.96 5.45l3.35 2.62C7.18 7.7 9.39 5.94 12 5.94Z"/></svg><span>使用 Google 登入</span><span class="arrow" aria-hidden="true">↗</span></button>
-          <button id="facebook" class="provider facebook" disabled><span class="facebook-icon" aria-hidden="true">f</span><span>使用 Facebook 登入</span><span class="arrow" aria-hidden="true">↗</span></button>
+          <button id="google" class="provider google" disabled=""><svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.07H12v3.92h5.38a4.6 4.6 0 0 1-2 3.02v2.54h3.24c1.9-1.75 2.98-4.33 2.98-7.4Z"></path><path fill="#34A853" d="M12 22c2.7 0 4.97-.9 6.63-2.36l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.04v2.62A10 10 0 0 0 12 22Z"></path><path fill="#FBBC05" d="M6.39 13.93a6.02 6.02 0 0 1 0-3.86V7.45H3.04a10 10 0 0 0 0 9.1l3.35-2.62Z"></path><path fill="#EA4335" d="M12 5.94c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.64 9.64 0 0 0 12 2a10 10 0 0 0-8.96 5.45l3.35 2.62C7.18 7.7 9.39 5.94 12 5.94Z"></path></svg><span>使用 Google 登入</span><span class="arrow" aria-hidden="true">↗</span></button>
         </div>
-        <div class="divider">或使用 Email 登入／註冊</div>
+        <div class="divider">或使用 Email</div>
         <div class="email-tabs" role="group" aria-label="Email 帳號操作">
-          <button id="mode-login" type="button" aria-pressed="true">Email 登入</button>
-          <button id="mode-register" type="button" aria-pressed="false">註冊帳號</button>
+          <button id="mode-login" type="button" aria-pressed="true">登入</button>
+          <button id="mode-register" type="button" aria-pressed="false">註冊</button>
         </div>
         <form id="email-form">
-          <fieldset id="email-fields" disabled>
+          <fieldset id="email-fields" disabled="">
             <label for="account-email">電子郵件</label>
-            <input id="account-email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" maxlength="254" required placeholder="you@example.com">
+            <input id="account-email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" maxlength="254" required="" placeholder="you@example.com">
             <div id="password-group">
               <label for="account-password">密碼</label>
-              <input id="account-password" type="password" autocomplete="current-password" maxlength="128" required>
+              <input id="account-password" type="password" autocomplete="current-password" maxlength="128" required="">
             </div>
-            <div id="confirm-group" hidden>
+            <div id="confirm-group" hidden="">
               <label for="confirm-password">再次輸入密碼</label>
               <input id="confirm-password" type="password" autocomplete="new-password" maxlength="128">
               <p class="note">至少 12 個字元，可使用長句作為密碼。</p>
             </div>
-            <button id="email-submit" type="submit" class="email-primary">使用 Email 登入</button>
+            <button id="email-submit" type="submit" class="email-primary">登入</button>
             <button id="forgot-password" type="button" class="retry">忘記密碼？</button>
           </fieldset>
         </form>
-        <p class="note">Email 密碼由 Firebase Authentication 處理。<br>Google／Facebook 密碼僅在各自的登入視窗輸入。</p>
+        <details class="quiet-details"><summary>登入與隱私</summary><p class="note">Email 密碼由 Firebase Authentication 處理。<br>Google 密碼僅在各自的登入視窗輸入。</p></details>
       </section>
-      <section id="signed-in" hidden aria-labelledby="welcome">
+      <section id="signed-in" hidden="" aria-labelledby="welcome">
         <div id="account-page">
         <div class="avatar" id="avatar"></div>
         <h1 id="welcome">登入成功</h1><p id="email" class="intro"></p>
-        <section id="email-verification" hidden>
+        <section id="email-verification" hidden="">
           <p class="note">此 Email 尚未驗證。請開啟驗證信完成驗證，再回來更新狀態。</p>
           <button id="send-verification" type="button" class="retry">重新寄送驗證信</button>
           <button id="refresh-verification" type="button" class="retry">我已驗證，更新狀態</button>
         </section>
-        <div class="identity-field"><label for="uid">Firebase UID</label><div class="uid-row"><input id="uid" readonly><button id="copy" aria-label="複製 Firebase UID">複製</button></div><p>這是你在本專案中的使用者識別碼。</p></div>
+        <details class="quiet-details"><summary>帳號識別資訊</summary><div class="identity-field"><label for="uid">Firebase UID</label><div class="uid-row"><input id="uid" readonly=""><button id="copy" aria-label="複製 Firebase UID">複製</button></div><p>這是你在本專案中的使用者識別碼。</p></div></details>
         <h2>登入來源</h2><ul id="provider-list"></ul>
         <section id="link-panel" aria-labelledby="link-title">
           <h2 id="link-title">連結其他登入方式</h2>
-          <p class="note">先驗證原本的登入身分，再確認連結新帳號。完成後兩種方式共用同一個 Firebase UID。</p>
-          <div id="password-reauth-group" hidden>
+          <p class="note">驗證目前身分後，即可連結另一種登入方式。</p>
+          <div id="password-reauth-group" hidden="">
             <label for="reauth-password">目前帳號密碼</label>
             <input id="reauth-password" type="password" autocomplete="current-password" maxlength="128">
-            <p class="note">Email 帳號需先完成信箱驗證，再輸入目前密碼確認身分。</p>
+            <p class="note">請輸入本站帳號的密碼。驗證後再按「確認連結 Google」開啟授權。</p>
           </div>
           <div class="providers">
-            <button id="link-google" class="provider google" type="button" hidden>連結 Google 帳號</button>
-            <button id="link-facebook" class="provider facebook" type="button" hidden>連結 Facebook 帳號</button>
+            <button id="link-google" class="provider google" type="button" hidden="">連結 Google 帳號</button>
           </div>
+          <p id="link-status" class="note" role="status" aria-live="polite"></p>
         </section>
-        <section id="add-password-panel" hidden aria-labelledby="add-password-title">
+        <section id="add-password-panel" hidden="" aria-labelledby="add-password-title">
           <h2 id="add-password-title">設定 Email 登入密碼</h2>
-          <p class="note">使用目前帳號的 Email，與已連結的 Google／Facebook 共用帳號。送出後需再次驗證原本的登入身分。</p>
+          <p class="note">使用目前帳號的 Email，與已連結的 Google 共用帳號。送出後需再次驗證原本的登入身分。</p>
           <form id="add-password-form">
             <fieldset id="add-password-fields">
               <label for="password-email">帳號 Email</label>
-              <input id="password-email" type="email" autocomplete="username" readonly>
+              <input id="password-email" type="email" autocomplete="username" readonly="">
               <label for="new-password">新密碼</label>
-              <input id="new-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>
+              <input id="new-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required="">
               <label for="new-password-confirm">再次輸入新密碼</label>
-              <input id="new-password-confirm" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>
+              <input id="new-password-confirm" type="password" autocomplete="new-password" minlength="12" maxlength="128" required="">
               <p class="note">密碼需 12～128 個字元。若 Email 尚未驗證，請先完成上方信箱驗證。</p>
               <button class="email-primary" type="submit">驗證身分並設定密碼</button>
             </fieldset>
           </form>
         </section>
         </div>
-        <section id="ai-page" hidden aria-labelledby="ai-title">
+        <section id="ai-page" hidden="" aria-labelledby="ai-title">
           <div class="workspace-toolbar">
-          <h1 id="ai-title" tabindex="-1">訊息中心</h1>
-          <span id="ai-reply-indicator" class="ai-reply-indicator" hidden><span aria-hidden="true"></span>AI 自動回覆中</span>
+          <h1 id="ai-title" tabindex="-1">訊息</h1>
+          <span id="ai-reply-indicator" class="ai-reply-indicator" hidden=""><span aria-hidden="true"></span>AI 自動回覆中</span>
           <p id="line-status" class="line-status" role="status" aria-live="polite"></p>
           </div>
-          <div id="line-not-connected" class="line-not-connected" hidden><strong>尚未連接訊息渠道</strong><p>先完成渠道設定，即可在這裡接收與回覆訊息。</p><a href="#channels">前往渠道設定</a></div>
-          <section id="line-inbox" hidden aria-label="多渠道對話收件匣">
+          <div id="line-not-connected" class="line-not-connected" hidden=""><strong>尚未連接訊息渠道</strong><p>先完成渠道設定，即可在這裡接收與回覆訊息。</p><a href="#channels">前往渠道設定</a></div>
+          <section id="line-inbox" hidden="" aria-label="多渠道對話收件匣">
             <div class="inbox-grid">
               <section class="conversation-panel" aria-label="對話列表">
-                <div class="conversation-toolbar"><div class="line-toolbar"><h2>所有對話 <span class="line-source">LINE</span></h2><button id="line-refresh" type="button" aria-label="重新整理對話">↻</button></div>
-                <p id="line-polling-note" class="note">每 10 秒更新。</p>
-                <details class="inbox-help"><summary>收件匣說明</summary><p class="note">此版本顯示接通後收到的訊息；LINE 內建自動回應及舊紀錄不會同步。圖片會自動載入；其他尚未支援的附件顯示類型。</p></details></div>
+                <div class="conversation-toolbar"><div class="line-toolbar"><h2>對話 <span class="line-source">多渠道</span></h2><button id="line-refresh" type="button" aria-label="重新整理對話">↻</button></div>
+                
+                <details class="inbox-help"><summary>使用說明</summary><p class="note">此版本顯示接通後收到的訊息；LINE 內建自動回應及舊紀錄不會同步。圖片會自動載入；其他尚未支援的附件顯示類型。</p><p id="line-polling-note" class="note">自動更新：有變化時每 10 秒；無變化時，對話最長 60 秒、列表最長 2 分鐘。回到頁面立即更新，AI 回覆不受影響。</p></details></div>
                 <p id="line-empty" class="note">還沒有對話。完成 Webhook 驗證後，傳一則訊息給你的 OA。</p>
                 <div id="line-conversations"></div>
-                <button id="line-more-conversations" class="retry" type="button" hidden>載入更多對話</button>
+                <button id="line-more-conversations" class="retry" type="button" hidden="">載入更多對話</button>
               </section>
               <section class="message-panel" aria-labelledby="line-conversation-title">
-                <div id="line-chat-empty" class="chat-empty"><span aria-hidden="true">☏</span><strong>選擇對話開始聊天</strong><p>從左側列表選擇一位聊天者</p></div>
-                <div class="chat-heading"><div id="line-chat-avatar"></div><div><h3 id="line-conversation-title">選擇一段對話</h3><p id="line-chat-source">在左側選擇聊天者，開始回覆</p></div><button id="customer-toggle" class="customer-toggle" type="button" aria-expanded="false">客戶資料</button></div>
-                <button id="line-more-messages" class="retry" type="button" hidden>載入更早訊息</button>
+                <div id="line-chat-empty" class="chat-empty"><span aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l-3 3v-10A7.5 7.5 0 0 1 9.5 4h3a7.5 7.5 0 0 1 7.5 7.5Z"></path></svg></span><strong>開始一段對話</strong><p>從左側選擇顧客。</p></div>
+                <div class="chat-heading"><div id="line-chat-avatar"></div><div><h3 id="line-conversation-title">選擇一段對話</h3><p id="line-chat-source">在左側選擇聊天者，開始回覆</p></div><button id="customer-toggle" class="customer-toggle" type="button" aria-expanded="false">顧客資料</button></div>
                 <div id="line-messages" aria-label="訊息內容"></div>
                 <form id="line-reply-form" class="reply-form">
                   <label for="line-reply-text">回覆這段對話</label>
                   <div class="composer-tools" role="group" aria-label="附件與表情符號">
-                    <button id="line-pick-image" type="button" title="傳送圖片" aria-label="選取圖片" disabled>▧ <span>圖片</span></button>
-                    <button id="line-pick-file" type="button" title="傳送文件連結" aria-label="選取文件" disabled>📎 <span>文件</span></button>
-                    <button id="line-pick-emoji" type="button" aria-label="選取表情符號" aria-expanded="false" disabled>☺ <span>表情符號</span></button>
-                    <input id="line-image-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
-                    <input id="line-file-input" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip" hidden>
+                    <button id="line-pick-image" type="button" title="傳送圖片" aria-label="選取圖片" disabled="">▧ <span>圖片</span></button>
+                    <button id="line-pick-file" type="button" title="傳送文件連結" aria-label="選取文件" disabled="">📎 <span>文件</span></button>
+                    <button id="line-pick-emoji" type="button" aria-label="選取表情符號" aria-expanded="false" disabled="">☺ <span>表情符號</span></button>
+                    <input id="line-image-input" type="file" accept="image/jpeg,image/png,image/webp" hidden="">
+                    <input id="line-file-input" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip" hidden="">
                   </div>
-                  <div id="line-emoji-panel" class="emoji-panel" role="group" aria-label="表情符號" hidden></div>
-                  <div id="line-attachment-preview" class="attachment-preview" hidden><span id="line-attachment-name"></span><button id="line-remove-attachment" type="button" aria-label="移除待傳附件">移除</button></div>
-                  <textarea id="line-reply-text" rows="3" maxlength="5000" placeholder="輸入回覆內容…" disabled></textarea>
-                  <div class="reply-actions"><span id="line-reply-hint" class="note">先選擇一段對話。</span><button id="line-send" class="email-primary" type="submit" disabled>傳送回覆</button></div>
-                  <p id="reply-channel-note" class="note">Enter 傳送，Shift＋Enter 換行。</p>
-                  <p id="reply-attachment-note" class="note">圖片自動壓縮；文件上限 5 MB，以 30 天有效的下載連結傳送。</p>
-                </form>
+                  <div id="line-emoji-panel" class="emoji-panel" role="group" aria-label="表情符號" hidden=""></div>
+                  <div id="line-attachment-preview" class="attachment-preview" hidden=""><span id="line-attachment-name"></span><button id="line-remove-attachment" type="button" aria-label="移除待傳附件">移除</button></div>
+                  <textarea id="line-reply-text" rows="3" maxlength="5000" placeholder="輸入回覆內容…" disabled=""></textarea>
+                  <div class="reply-actions"><span id="line-reply-hint" class="note">先選擇一段對話。</span><button id="line-send" class="email-primary" type="submit" disabled="">傳送回覆</button></div>
+                  
+                  
+                <details class="reply-help"><summary>回覆說明</summary><p id="reply-channel-note" class="note">Enter 傳送，Shift＋Enter 換行。</p><p id="reply-attachment-note" class="note">圖片自動壓縮；文件上限 5 MB，以 30 天有效的下載連結傳送。</p></details></form>
               </section>
-              <aside id="customer-panel" class="customer-panel" aria-label="客戶資料" hidden>
+              <aside id="customer-panel" class="customer-panel" aria-label="客戶資料" hidden="">
                 <div class="customer-panel-heading">
                   <div id="customer-avatar"></div>
                   <div><strong id="customer-title">客戶資料</strong><span id="customer-source">來自 LINE</span></div>
@@ -151,7 +149,7 @@
                     <label for="customer-name">顯示名稱</label>
                     <input id="customer-name" name="name" maxlength="100" placeholder="輸入客戶名稱">
                   </section>
-                  <details class="customer-section" open>
+                  <details class="customer-section" open="">
                     <summary>記事本</summary>
                     <div class="customer-section-body">
                       <label for="customer-note">新增記事</label>
@@ -160,14 +158,14 @@
                       <div id="customer-notes" class="customer-notes"></div>
                     </div>
                   </details>
-                  <details class="customer-section" open>
+                  <details class="customer-section" open="">
                     <summary>標籤</summary>
                     <div class="customer-section-body">
                       <div id="customer-tags" class="customer-tags"></div>
                       <div class="customer-tag-entry"><input id="customer-tag" maxlength="40" placeholder="新增標籤"><button id="customer-add-tag" type="button">新增</button></div>
                     </div>
                   </details>
-                  <details class="customer-section" open>
+                  <details class="customer-section" open="">
                     <summary>基本資料</summary>
                     <div class="customer-fields">
                       <label for="customer-phone">行動電話</label><input id="customer-phone" name="phone" inputmode="tel" maxlength="30" placeholder="例如 +886 912 345 678">
@@ -196,40 +194,40 @@
             <button id="line-image-next" class="image-viewer-nav image-viewer-next" type="button" aria-label="下一張圖片">›</button>
           </dialog>
         </section>
-        <section id="channels-page" hidden aria-labelledby="channels-title">
-          <div class="channels-heading"><h1 id="channels-title" tabindex="-1">渠道設定</h1><p>管理品牌與顧客聯絡的訊息渠道</p></div>
+        <section id="channels-page" hidden="" aria-labelledby="channels-title">
+          <div class="channels-heading"><h1 id="channels-title" tabindex="-1">連線</h1><p>把顧客的訊息集中在一起。</p></div>
           <p id="channel-status" class="channel-status" role="status" aria-live="polite"></p>
           <div class="channel-grid">
             <article class="channel-card facebook-channel-card">
-              <header><span class="channel-logo facebook-channel" aria-hidden="true">f</span><div><h2>Facebook Messenger</h2><p>透過 Zernio 連接粉絲專頁訊息</p></div><span id="facebook-card-state" class="channel-badge">讀取中</span></header>
-              <div class="facebook-channel-content"><div><strong id="facebook-page-name">尚未連接 Facebook 粉絲專頁</strong><span id="facebook-page-detail">授權時可選擇你管理的粉絲專頁</span></div><button id="facebook-connect" type="button">使用 Facebook 授權</button></div>
+              <header><span class="channel-logo facebook-channel" aria-hidden="true">f</span><div><h2>Facebook Messenger</h2><p>連接粉絲專頁</p></div><span id="facebook-card-state" class="channel-badge">讀取中</span></header>
+              <div class="facebook-channel-content"><div><strong id="facebook-page-name">尚未連接 Facebook 粉絲專頁</strong><span id="facebook-page-detail">授權時可選擇你管理的粉絲專頁</span></div><button id="facebook-connect" type="button">使用 Facebook 授權</button></div><details class="quiet-details channel-capabilities"><summary>支援功能</summary><div class="channel-row"><span>已支援私訊收件匣、文字回覆與顧客資料；支援 AI 自動回覆。</span></div></details>
             </article>
-            <article class="channel-card channel-card-muted">
-              <header><span class="channel-logo instagram-channel" aria-hidden="true">◎</span><div><h2>Instagram</h2><p>專業帳號私訊</p></div><span class="channel-badge pending">準備中</span></header>
-              <div class="channel-row"><span>商業帳號連接設定</span><span>Meta API 完成後開放</span></div>
+            <article class="channel-card instagram-channel-card">
+              <header><span class="channel-logo instagram-channel" aria-hidden="true">◎</span><div><h2>Instagram</h2><p>連接商業或創作者帳號</p></div><span id="instagram-card-state" class="channel-badge">讀取中</span></header>
+              <div class="facebook-channel-content"><div><strong id="instagram-account-name">尚未綁定 Instagram 帳號</strong><span id="instagram-account-detail">請使用 Instagram 商業或創作者帳號授權</span></div><button id="instagram-connect" type="button" disabled="">綁定 Instagram</button></div><details class="quiet-details channel-capabilities"><summary>支援功能</summary><div class="channel-row"><span>已支援私訊收件匣、文字回覆與顧客資料；支援 AI 自動回覆。</span></div></details>
             </article>
             <article class="channel-card line-channel-card">
-              <header><span class="channel-logo line-channel" aria-hidden="true"></span><div><h2>LINE 官方帳號</h2><p>Messaging API 與 Webhook</p></div><span id="line-card-state" class="channel-badge">讀取中</span></header>
+              <header><span class="channel-logo line-channel" aria-hidden="true"></span><div><h2>LINE 官方帳號</h2><p>連接官方帳號</p></div><span id="line-card-state" class="channel-badge">讀取中</span></header>
               <div class="line-channel-content">
-                <div id="line-account" hidden>
+                <div id="line-account" hidden="">
                   <div class="line-account-heading"><h2 id="line-oa-name"></h2><span id="line-oa-state" class="state"></span></div>
-                  <details class="connection-details" open><summary>Webhook 與連線設定</summary>
+                  <details class="connection-details"><summary>LINE 連線設定</summary>
                     <label for="line-webhook-url">你的 Webhook URL</label>
-                    <div class="webhook-row"><input id="line-webhook-url" readonly><button id="line-copy" type="button">複製網址</button></div>
+                    <div class="webhook-row"><input id="line-webhook-url" readonly=""><button id="line-copy" type="button">複製網址</button></div>
                     <p class="note">先備份 LINE Developers 的原網址，再將此網址填入 Webhook URL，開啟 Use webhook 並按 Verify。然後傳一則新訊息給 OA。</p>
                     <button id="line-settings-toggle" class="retry" type="button" aria-expanded="false">更新連線憑證</button>
                   </details>
                 </div>
-                <form id="line-connect-form" hidden>
+                <form id="line-connect-form" hidden="">
                   <fieldset id="line-connect-fields">
                     <legend>連接你的 LINE 官方帳號</legend>
                     <p class="note">在 LINE Developers 的 Basic settings 取得 Channel ID、Channel Secret；Messaging API 分頁可取得 Channel access token（long-lived）。</p>
                     <label for="line-channel-id">Channel ID</label>
-                    <input id="line-channel-id" inputmode="numeric" pattern="[0-9]{5,20}" maxlength="20" required autocomplete="off">
+                    <input id="line-channel-id" inputmode="numeric" pattern="[0-9]{5,20}" maxlength="20" required="" autocomplete="off">
                     <label for="line-channel-secret">Channel Secret</label>
-                    <input id="line-channel-secret" type="password" pattern="[a-fA-F0-9]{32}" maxlength="32" required autocomplete="off" spellcheck="false">
+                    <input id="line-channel-secret" type="password" pattern="[a-fA-F0-9]{32}" maxlength="32" required="" autocomplete="off" spellcheck="false">
                     <label for="line-access-token">Channel access token（long-lived）</label>
-                    <input id="line-access-token" type="password" minlength="30" maxlength="4096" required autocomplete="off" spellcheck="false">
+                    <input id="line-access-token" type="password" minlength="30" maxlength="4096" required="" autocomplete="off" spellcheck="false">
                     <p class="note">Secret 與 Access Token 會加密保存於後端，用於驗證及傳送你的回覆。綁定前請於 10 分鐘內重新登入。</p>
                     <button class="email-primary" type="submit">驗證並連接 OA</button>
                   </fieldset>
@@ -237,23 +235,18 @@
               </div>
             </article>
             <article class="channel-card ai-channel-card">
-              <header><span class="channel-logo openai-channel" aria-hidden="true">AI</span><div><h2>OpenAI 自動回覆</h2><p>收到 LINE 或 Messenger 文字訊息後由 AI 產生客服回覆</p></div><span id="ai-card-state" class="channel-badge">讀取中</span></header>
-              <form id="ai-settings-form" class="ai-settings-form">
-                <div class="ai-switch-row">
-                  <div><strong>啟用 LINE 自動回覆</strong><span id="ai-key-state">正在確認 API 連線…</span></div>
-                  <label class="switch"><input id="ai-enabled" type="checkbox"><span aria-hidden="true"></span><span class="sr-only">啟用訊息渠道 AI 自動回覆</span></label>
-                </div>
-                <label for="ai-instructions">客服指示詞</label>
-                <textarea id="ai-instructions" maxlength="4000" rows="6" placeholder="例如：你是 BotNest 客服。營業時間為週一至週五 09:00–18:00；資料不足時請轉由真人客服。"></textarea>
-                <div class="ai-form-footer"><span>模型：GPT-5.4 mini · 最多讀取最近 16 則文字訊息</span><button id="ai-save" type="submit">儲存 AI 設定</button></div>
-                <p id="ai-settings-status" class="ai-settings-status" role="status" aria-live="polite"></p>
-              </form>
+              <header><span class="channel-logo openai-channel" aria-hidden="true">AI</span><div><h2>AI 助理</h2><p>讓 AI 協助回覆顧客</p></div><div class="ai-channel-actions"><span id="ai-card-state" class="channel-badge">讀取中</span><button id="ai-channel-toggle" class="ai-channel-toggle" type="button" role="switch" aria-checked="false" aria-describedby="ai-channel-toggle-help" disabled=""><span>AI 自動回覆</span><span class="ai-channel-toggle-track" aria-hidden="true"></span></button></div></header>
+              <div class="ai-settings-entry">
+                <div><strong>教 AI 認識你的品牌</strong><p id="ai-channel-toggle-help">在 AI 助理設定角色、知識與回覆規則。</p><span id="ai-key-state">正在確認 API 連線…</span><p id="ai-channel-feedback" class="ai-channel-feedback" role="status" aria-live="polite" hidden=""></p></div>
+                <a href="#assistant" class="ai-settings-link">設定 AI 助理 <span aria-hidden="true">→</span></a>
+              </div>
             </article>
           </div>
         </section>
-        <section id="customers-page" hidden aria-labelledby="customers-title">
+        <section id="assistant-page" hidden="" aria-labelledby="assistant-title"></section>
+        <section id="customers-page" hidden="" aria-labelledby="customers-title">
           <div class="customers-toolbar">
-            <div><h1 id="customers-title" tabindex="-1">顧客管理</h1><p>集中查看從 LINE 建立的顧客名單與聯絡資料</p></div>
+            <div><h1 id="customers-title" tabindex="-1">顧客</h1><p>所有聯絡資料，一目了然。</p></div>
             <span id="customers-count">0 位顧客</span>
           </div>
           <div class="customers-controls">
@@ -267,17 +260,18 @@
               <thead><tr><th scope="col">顧客姓名</th><th scope="col">加入時間</th><th scope="col">最近對話時間</th><th scope="col">行動電話</th><th scope="col">電子信箱</th><th scope="col">標籤</th></tr></thead>
               <tbody id="customers-list"></tbody>
             </table>
-            <div id="customers-empty" class="customers-empty" hidden><strong>目前沒有顧客</strong><span>LINE 使用者傳送訊息後，會自動出現在這裡。</span></div>
+            <div id="customers-empty" class="customers-empty" hidden=""><strong>目前沒有顧客</strong><span>LINE 使用者傳送訊息後，會自動出現在這裡。</span></div>
           </div>
-          <button id="customers-more" class="customers-more" type="button" hidden>載入更多顧客</button>
+          <button id="customers-more" class="customers-more" type="button" hidden="">載入更多顧客</button>
         </section>
         <button id="logout" class="logout">登出帳號</button>
       </section>
       <p id="status" role="status" aria-live="polite">正在讀取登入設定…</p>
-      <button id="retry" class="retry" hidden>重新讀取設定</button>
+      <button id="retry" class="retry" hidden="">重新讀取設定</button>
     </section>
-    <aside id="setup" hidden><span class="setup-label">開發設定</span><h2>先連接 Firebase 專案</h2><p>登入程式已準備好。填入 Firebase 網頁設定，並在控制台啟用 Google 與 Facebook 登入後，即可開始測試。</p><p>設定檔：<code>public/firebase-config.json</code><br>完整步驟請見專案的 <code>README.md</code>。</p></aside>
+    <aside id="setup" hidden=""><span class="setup-label">開發設定</span><h2>先連接 Firebase 專案</h2><p>登入程式已準備好。填入 Firebase 網頁設定，並在控制台啟用 Google 與 Email 登入後，即可開始測試。</p><p>設定檔：<code>public/firebase-config.json</code><br>完整步驟請見專案的 <code>README.md</code>。</p></aside>
   </main>
-  <footer>Google · Facebook <span aria-hidden="true">/</span> 一個簡單的登入起點</footer>
-</body>
-</html>
+  <footer>BotNest</footer>
+
+
+</body></html>

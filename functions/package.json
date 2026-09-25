@@ -3,7 +3,20 @@
   "private": true,
   "type": "module",
   "main": "index.js",
-  "engines": { "node": "22" },
-  "scripts": { "test": "node --test test/*.test.js", "check": "node --check index.js && node --check core.js && node --check store.js && node --check ai.js" },
-  "dependencies": { "firebase-admin": "13.10.0", "firebase-functions": "7.0.0" }
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check index.js && node --check core.js && node --check store.js && node --check ai.js && node --check ai-policy.js && node --check ai-engine.js && node --check ai-responder.js && node --check ai-api.js && node --check knowledge.js"
+  },
+  "dependencies": {
+    "cheerio": "1.2.0",
+    "firebase-admin": "13.10.0",
+    "firebase-functions": "7.0.0",
+    "ipaddr.js": "2.5.0",
+    "mammoth": "1.12.3",
+    "unpdf": "1.8.1",
+    "yauzl": "3.4.0"
+  }
 }

@@ -6,3 +6,5 @@
 @media(max-width:600px){.customers-toolbar{align-items:flex-start}.customers-controls{flex-wrap:wrap}.customers-search-wrap{width:100%}.customers-controls button{width:100%}}
 .customer-line-badge{display:block}
 .customer-messenger-badge{position:absolute;right:-2px;bottom:-2px;width:17px;height:17px;border:2px solid #fff;border-radius:50%;background:#fff url('/messenger-icon.svg') center/contain no-repeat}
+
+.customer-instagram-badge{position:absolute;z-index:2;right:-2px;bottom:-2px;width:19px;height:19px;border:2px solid white;border-radius:50%;background:white url("/instagram-icon.svg") center/contain no-repeat;box-sizing:border-box}
