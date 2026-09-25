@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/channel-settings.css?v=20260918-1">
   <link rel="stylesheet" href="/ai-settings.css?v=20260918-2">
   <script type="module" src="/app.js"></script>
-<link rel="stylesheet" href="/minimal-ui.css?v=20260926-1"><link rel="stylesheet" href="/ui-motion.css?v=20260926-1"><script type="module" src="/ui-motion.js"></script></head>
+<link rel="stylesheet" href="/minimal-ui.css?v=20260926-1"><link rel="stylesheet" href="/ui-motion.css?v=20260926-1"><script type="module" src="/ui-motion.js"></script><link rel="stylesheet" href="/brand-ui.css?v=20260926-1"></head>
 <body class="auth-pending">
   <div id="auth-loading" class="auth-loading" role="status" aria-live="polite" aria-label="正在確認登入狀態">
     <span class="auth-loading-mark" aria-hidden="true">B</span>
@@ -199,15 +199,15 @@
           <p id="channel-status" class="channel-status" role="status" aria-live="polite"></p>
           <div class="channel-grid">
             <article class="channel-card facebook-channel-card">
-              <header><span class="channel-logo facebook-channel" aria-hidden="true">f</span><div><h2>Facebook Messenger</h2><p>連接粉絲專頁</p></div><span id="facebook-card-state" class="channel-badge">讀取中</span></header>
+              <header><span class="channel-logo facebook-channel" aria-hidden="true"><img src="/messenger-icon.svg" alt="" width="40" height="40"></span><div><h2>Facebook Messenger</h2><p>連接粉絲專頁</p></div><span id="facebook-card-state" class="channel-badge">讀取中</span></header>
               <div class="facebook-channel-content"><div><strong id="facebook-page-name">尚未連接 Facebook 粉絲專頁</strong><span id="facebook-page-detail">授權時可選擇你管理的粉絲專頁</span></div><button id="facebook-connect" type="button">使用 Facebook 授權</button></div><details class="quiet-details channel-capabilities"><summary>支援功能</summary><div class="channel-row"><span>已支援私訊收件匣、文字回覆與顧客資料；支援 AI 自動回覆。</span></div></details>
             </article>
             <article class="channel-card instagram-channel-card">
-              <header><span class="channel-logo instagram-channel" aria-hidden="true">◎</span><div><h2>Instagram</h2><p>連接商業或創作者帳號</p></div><span id="instagram-card-state" class="channel-badge">讀取中</span></header>
+              <header><span class="channel-logo instagram-channel" aria-hidden="true"><img src="/instagram-icon.svg" alt="" width="40" height="40"></span><div><h2>Instagram</h2><p>連接商業或創作者帳號</p></div><span id="instagram-card-state" class="channel-badge">讀取中</span></header>
               <div class="facebook-channel-content"><div><strong id="instagram-account-name">尚未綁定 Instagram 帳號</strong><span id="instagram-account-detail">請使用 Instagram 商業或創作者帳號授權</span></div><button id="instagram-connect" type="button" disabled="">綁定 Instagram</button></div><details class="quiet-details channel-capabilities"><summary>支援功能</summary><div class="channel-row"><span>已支援私訊收件匣、文字回覆與顧客資料；支援 AI 自動回覆。</span></div></details>
             </article>
             <article class="channel-card line-channel-card">
-              <header><span class="channel-logo line-channel" aria-hidden="true"></span><div><h2>LINE 官方帳號</h2><p>連接官方帳號</p></div><span id="line-card-state" class="channel-badge">讀取中</span></header>
+              <header><span class="channel-logo line-channel" aria-hidden="true"><img src="/line-brand.png" alt="" width="40" height="40"></span><div><h2>LINE 官方帳號</h2><p>連接官方帳號</p></div><span id="line-card-state" class="channel-badge">讀取中</span></header>
               <div class="line-channel-content">
                 <div id="line-account" hidden="">
                   <div class="line-account-heading"><h2 id="line-oa-name"></h2><span id="line-oa-state" class="state"></span></div>
@@ -235,7 +235,7 @@
               </div>
             </article>
             <article class="channel-card ai-channel-card">
-              <header><span class="channel-logo openai-channel" aria-hidden="true">AI</span><div><h2>AI 助理</h2><p>讓 AI 協助回覆顧客</p></div><div class="ai-channel-actions"><span id="ai-card-state" class="channel-badge">讀取中</span><button id="ai-channel-toggle" class="ai-channel-toggle" type="button" role="switch" aria-checked="false" aria-describedby="ai-channel-toggle-help" disabled=""><span>AI 自動回覆</span><span class="ai-channel-toggle-track" aria-hidden="true"></span></button></div></header>
+              <header><span class="channel-logo openai-channel" aria-hidden="true"><img src="/openai-icon.png" alt="" width="40" height="40"></span><div><h2>AI 助理</h2><p id="ai-model-name" aria-live="polite">正在讀取模型…</p></div><div class="ai-channel-actions"><span id="ai-card-state" class="channel-badge">讀取中</span><button id="ai-channel-toggle" class="ai-channel-toggle" type="button" role="switch" aria-checked="false" aria-describedby="ai-channel-toggle-help" disabled=""><span>AI 自動回覆</span><span class="ai-channel-toggle-track" aria-hidden="true"></span></button></div></header>
               <div class="ai-settings-entry">
                 <div><strong>教 AI 認識你的品牌</strong><p id="ai-channel-toggle-help">在 AI 助理設定角色、知識與回覆規則。</p><span id="ai-key-state">正在確認 API 連線…</span><p id="ai-channel-feedback" class="ai-channel-feedback" role="status" aria-live="polite" hidden=""></p></div>
                 <a href="#assistant" class="ai-settings-link">設定 AI 助理 <span aria-hidden="true">→</span></a>

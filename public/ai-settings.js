@@ -1,3 +1,4 @@
+import { showAiModel } from "./ai-model.js";
 const $ = id => document.getElementById(id);
 const date = value => new Date(value).toLocaleString("zh-TW", { dateStyle: "short", timeStyle: "short" });
 const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; };
@@ -5,7 +6,7 @@ const text = (tag, value, className) => { const node = document.createElement(ta
 export function createAiSettings() {
   const root = $("assistant-page");
   root.innerHTML = `
-    <div class="assistant-header"><div><span class="assistant-eyebrow">BOTNEST AI</span><h1 id="assistant-title" tabindex="-1">AI 助理</h1><p>設定品牌知識，讓回覆更貼近你。</p></div><div class="assistant-header-actions"><span id="assistant-live" class="assistant-badge">讀取中</span><button id="assistant-save" class="assistant-primary" type="button">儲存設定</button></div></div>
+    <div class="assistant-header"><div><span class="assistant-eyebrow">BOTNEST AI</span><h1 id="assistant-title" tabindex="-1">AI 助理</h1><p>設定品牌知識，讓回覆更貼近你。</p><p class="assistant-model"><img src="/openai-icon.png" alt="" width="18" height="18"><span id="assistant-model-name" aria-live="polite">正在讀取模型…</span></p></div><div class="assistant-header-actions"><span id="assistant-live" class="assistant-badge">讀取中</span><button id="assistant-save" class="assistant-primary" type="button">儲存設定</button></div></div>
     <div class="assistant-overview"><div><span class="assistant-spark" aria-hidden="true">✦</span><div><strong>準備好，再開始回覆</strong><p>先設定角色與知識，透過測試確認，再開啟自動回覆。</p></div></div><div class="assistant-metrics"><span><strong id="assistant-knowledge-count">—</strong>啟用知識</span><span><strong id="assistant-channel-count">—</strong>回覆渠道</span></div></div>
     <div class="assistant-tabs" role="tablist" aria-label="AI 客服設定分頁">
       <button id="assistant-tab-persona" role="tab" aria-selected="true" aria-controls="assistant-persona" data-tab="persona">身分與語氣</button><button id="assistant-tab-knowledge" role="tab" aria-selected="false" aria-controls="assistant-knowledge" data-tab="knowledge" tabindex="-1">知識庫</button><button id="assistant-tab-rules" role="tab" aria-selected="false" aria-controls="assistant-rules" data-tab="rules" tabindex="-1">回覆規則</button><button id="assistant-tab-test" role="tab" aria-selected="false" aria-controls="assistant-test" data-tab="test" tabindex="-1">測試對話</button>
@@ -75,6 +76,7 @@ export function createAiSettings() {
   function markDirty() { dirty = true; controls(); status("設定已修改，請按右上角「儲存變更」。"); }
   for (const id of ["assistant-persona", "assistant-rules"]) $(id).addEventListener("input", markDirty);
   function fill(settings) {
+    showAiModel($("assistant-model-name"), settings.model);
     for (const field of fields) $("assistant-" + field).value = settings[field] ?? "";
     for (const field of ["enabled", "requireKnowledge"]) $("assistant-" + field).checked = !!settings[field];
     for (const provider of ["facebook", "instagram"]) $(`assistant-split-${provider}`).checked = settings.splitReplies?.[provider] ?? true;
@@ -171,7 +173,8 @@ export function createAiSettings() {
     const nextActive = !!nextUser && visible; if (user?.uid === nextUser?.uid && active === nextActive) return;
     $("knowledge-loading").close();
     epoch++; controller.abort(); controller = new AbortController(); user = nextUser; active = nextActive; ready = false; dirty = false; testing = false; saving = false; importing = false;
+    showAiModel($("assistant-model-name"), null, "正在讀取模型…");
     items = []; testHistory = []; $("knowledge-dialog").close(); $("assistant-test-messages").replaceChildren(); $("assistant-test-sources").replaceChildren(); renderKnowledge(); controls();
-    if (active) { status("正在讀取 AI 客服設定…"); void Promise.all([api("settings"), loadKnowledge()]).then(([data]) => { fill(data.settings); ready = true; $("assistant-connections").textContent = `已連接：${[data.connections.line ? "LINE" : "", data.connections.facebook ? "Messenger" : "", data.connections.instagram ? "Instagram" : ""].filter(Boolean).join("、") || "尚未連接渠道，可先設定與測試"}`; controls(); status(""); }).catch(report); }
+    if (active) { status("正在讀取 AI 客服設定…"); void Promise.all([api("settings"), loadKnowledge()]).then(([data]) => { fill(data.settings); ready = true; $("assistant-connections").textContent = `已連接：${[data.connections.line ? "LINE" : "", data.connections.facebook ? "Messenger" : "", data.connections.instagram ? "Instagram" : ""].filter(Boolean).join("、") || "尚未連接渠道，可先設定與測試"}`; controls(); status(""); }).catch(error => { if (error.name !== "AbortError") showAiModel($("assistant-model-name"), null, "暫時無法讀取模型"); report(error); }); }
   } };
 }

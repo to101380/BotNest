@@ -1,3 +1,4 @@
+import { showAiModel } from "./ai-model.js";
 import { watchHistoryScroll } from "./history-scroll.js";
 import { pollDelay, conversationVersion, needsMessageRefresh } from "./inbox-polling.js";
 const $ = id => document.getElementById(id);
@@ -298,6 +299,7 @@ export function createLineInbox() {
   }
   function showAiSettings(settings) {
     channelAiSettings = settings;
+    showAiModel($("ai-model-name"), settings.model);
     aiEnabled = !!settings.configured && !!settings.enabled;
     $("ai-key-state").textContent = settings.configured ? "OpenAI API 已安全設定於 Firebase 後端。" : "尚未設定 OpenAI API Key。";
     $("ai-card-state").textContent = !settings.configured ? "待設定 API Key" : settings.enabled ? "自動回覆中" : "已關閉";
@@ -327,7 +329,7 @@ export function createLineInbox() {
       if (currentEpoch !== epoch || error.name === "AbortError") return;
       // Re-read after an uncertain request so the switch reflects the saved server state.
       try { showAiSettings((await aiApi("settings")).settings); }
-      catch { if (currentEpoch !== epoch) return; channelAiSettings = null; $("ai-card-state").textContent = "狀態待確認"; $("ai-card-state").classList.remove("connected"); }
+      catch { if (currentEpoch !== epoch) return; channelAiSettings = null; showAiModel($("ai-model-name")); $("ai-card-state").textContent = "狀態待確認"; $("ai-card-state").classList.remove("connected"); }
       if (currentEpoch === epoch) channelAiFeedback(`切換未確認：${error.message} 請重新整理確認狀態。`, true);
     } finally { if (currentEpoch === epoch) { channelAiSaving = false; renderChannelAiToggle(); } }
   });
@@ -554,7 +556,7 @@ export function createLineInbox() {
       if (zernioResult.status === "fulfilled") showZernioAccount(zernioResult.value);
       showAccount();
       try { showAiSettings((await aiApi("settings")).settings); }
-      catch (error) { if (error.name === "AbortError") throw error; $("ai-card-state").textContent = "讀取失敗"; $("ai-key-state").textContent = "暫時無法讀取 AI 設定，請稍後再試。"; }
+      catch (error) { if (error.name === "AbortError") throw error; $("ai-card-state").textContent = "讀取失敗"; $("ai-key-state").textContent = "暫時無法讀取 AI 設定，請稍後再試。"; showAiModel($("ai-model-name"), null, "暫時無法讀取模型"); }
       if (channel || facebookAccount || instagramAccount) {
         if (channel && pageMode !== "inbox") {
           status(channel.verifiedAt ? "LINE 官方帳號已連接，Webhook 運作正常。" : "LINE 官方帳號已連接，等待 Webhook 驗證。");
@@ -801,7 +803,7 @@ export function createLineInbox() {
       $("line-card-state").textContent = "讀取中"; $("line-card-state").classList.remove("connected");
       $("instagram-card-state").textContent = "讀取中"; $("instagram-card-state").classList.remove("connected"); $("instagram-connect").disabled = true; $("instagram-account-name").textContent = "尚未綁定 Instagram 帳號"; $("instagram-account-detail").textContent = "請使用 Instagram 商業或創作者帳號授權";
       $("facebook-card-state").textContent = "讀取中"; $("facebook-card-state").classList.remove("connected"); $("facebook-connect").disabled = true;
-      $("ai-card-state").textContent = "讀取中"; $("ai-card-state").classList.remove("connected"); $("ai-key-state").textContent = "正在確認 API 連線…";
+      $("ai-card-state").textContent = "讀取中"; $("ai-card-state").classList.remove("connected"); $("ai-key-state").textContent = "正在確認 API 連線…"; showAiModel($("ai-model-name"), null, "正在讀取模型…");
       $("ai-reply-indicator").hidden = true;
       showConversations(); showMessages(); status("");
       if (active) void start();
