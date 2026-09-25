@@ -47,8 +47,12 @@ async function respond({ store, uid, provider, conversationId, messageId, messag
       await store.saveAiLog(uid, id, { status: "skipped", reason: allowed.allowed ? "設定或對話已更新，取消這次回覆" : allowed.reason });
       await finish("skipped"); return { skipped: true };
     }
-    if (result.action === "handoff") await store.setAiControl(uid, provider, conversationId, { mode: "human", pausedUntil: 0, reason: result.reason }, now(), control.revision || 0);
-    const parts = prior?.parts || (provider !== "line" && ai.splitReplies[provider] && result.action !== "handoff" ? splitReply(result.text) : [result.text]);
+    const deliveryControl = result.action === "handoff"
+      ? await store.setAiControl(uid, provider, conversationId, { mode: "human", pausedUntil: 0, reason: result.reason }, now(), control.revision || 0)
+      : control;
+    // LINE splits in its transport to send all bubbles in one Reply/Push request.
+    // Social channels always use segmented delivery, regardless of legacy settings.
+    const parts = prior?.parts || (provider !== "line" ? splitReply(result.text) : [result.text]);
     let sentParts = prior?.sentParts || 0;
     await store.saveAiLog(uid, id, { parts, sentParts });
     for (let index = sentParts; index < parts.length; index++) {
@@ -56,9 +60,12 @@ async function respond({ store, uid, provider, conversationId, messageId, messag
         await typing().catch(() => {});
         await wait(Math.min(2000, Math.max(1000, parts[index].length * 30)));
       }
-      if (provider !== "line" && result.action !== "handoff") {
+      if (provider !== "line") {
         const [settingsNow, controlNow, conversationNow] = await Promise.all([store.accountAiSettings(uid), store.aiControl(uid, provider, conversationId), store.getZernioConversation(uid, conversationId)]);
-        if (!aiEligibility(settingsNow, provider, controlNow, now()).allowed || (controlNow.revision || 0) !== (control.revision || 0) || JSON.stringify(normalizeAiSettings(settingsNow)) !== JSON.stringify(ai) || (conversationNow?.latestIncomingId && conversationNow.latestIncomingId !== messageId)) {
+        // Permit this handoff acknowledgement after our own mode change, but stop
+        // if a human or a newer message changes the conversation during delivery.
+        const eligibilityControl = result.action === "handoff" ? { ...controlNow, mode: control.mode } : controlNow;
+        if (!aiEligibility(settingsNow, provider, eligibilityControl, now()).allowed || (controlNow.revision || 0) !== (deliveryControl.revision || 0) || JSON.stringify(normalizeAiSettings(settingsNow)) !== JSON.stringify(ai) || (conversationNow?.latestIncomingId && conversationNow.latestIncomingId !== messageId)) {
           await store.saveAiLog(uid, id, { status: "skipped", reason: "對話或設定已更新，停止剩餘段落", sentParts });
           await finish("skipped"); return { skipped: true };
         }

@@ -34,7 +34,6 @@ export function createAiSettings() {
       <div class="assistant-two-col"><div class="assistant-card"><div class="assistant-card-title"><span class="assistant-step">01</span><div><h2>渠道與時段</h2><p>總開關及各渠道設定會立即影響儲存後的新訊息。</p></div></div>
         <label class="assistant-toggle-row"><span><strong>啟用 AI 自動回覆</strong><small>新收到的文字訊息交由 AI 處理</small></span><input id="assistant-enabled" type="checkbox"></label>
         <fieldset class="assistant-checks"><legend>回覆渠道</legend><label><input id="assistant-line" type="checkbox"> LINE</label><label><input id="assistant-facebook" type="checkbox"> Messenger</label><label><input id="assistant-instagram" type="checkbox"> Instagram</label></fieldset><p id="assistant-connections" class="assistant-muted"></p>
-        <fieldset class="assistant-checks"><legend>分段回覆</legend><label><input id="assistant-split-facebook" type="checkbox"> Messenger</label><label><input id="assistant-split-instagram" type="checkbox"> Instagram</label></fieldset><p class="assistant-muted">長回答最多分成 3 則，依段落長度間隔約 1～2 秒。LINE 長回覆以一次傳送呈現多個泡泡；真人接手或收到新訊息時停止剩餘段落。</p>
         <label for="assistant-hours-mode">回覆時段</label><select id="assistant-hours-mode"><option value="always">全天自動回覆</option><option value="inside">只在營業時間回覆</option><option value="outside">只在非營業時間回覆</option></select>
         <div class="assistant-fields"><div><label for="assistant-start">營業開始</label><input id="assistant-start" type="time"></div><div><label for="assistant-end">營業結束</label><input id="assistant-end" type="time"></div></div>
         <fieldset class="assistant-days"><legend>營業日</legend>${["日", "一", "二", "三", "四", "五", "六"].map((day, index) => `<label><input type="checkbox" value="${index}" name="assistant-day"><span>${day}</span></label>`).join("")}</fieldset>
@@ -79,7 +78,6 @@ export function createAiSettings() {
     showAiModel($("assistant-model-name"), settings.model);
     for (const field of fields) $("assistant-" + field).value = settings[field] ?? "";
     for (const field of ["enabled", "requireKnowledge"]) $("assistant-" + field).checked = !!settings[field];
-    for (const provider of ["facebook", "instagram"]) $(`assistant-split-${provider}`).checked = settings.splitReplies?.[provider] ?? true;
     $("assistant-line").checked = settings.channels.line; $("assistant-facebook").checked = settings.channels.facebook; $("assistant-instagram").checked = settings.channels.instagram;
     $("assistant-hours-mode").value = settings.schedule.mode; $("assistant-start").value = settings.schedule.start; $("assistant-end").value = settings.schedule.end;
     const zone = $("assistant-timezone"); if (![...zone.options].some(option => option.value === settings.schedule.timezone)) zone.append(new Option(settings.schedule.timezone, settings.schedule.timezone)); zone.value = settings.schedule.timezone;
@@ -93,7 +91,6 @@ export function createAiSettings() {
   function formSettings() {
     const data = Object.fromEntries(fields.map(field => [field, $("assistant-" + field).value]));
     return { ...data, humanPauseMinutes: Number(data.humanPauseMinutes), enabled: $("assistant-enabled").checked, requireKnowledge: $("assistant-requireKnowledge").checked,
-      splitReplies: { facebook: $("assistant-split-facebook").checked, instagram: $("assistant-split-instagram").checked },
       channels: { line: $("assistant-line").checked, facebook: $("assistant-facebook").checked, instagram: $("assistant-instagram").checked }, schedule: { mode: $("assistant-hours-mode").value, timezone: $("assistant-timezone").value, days: [...root.querySelectorAll('[name="assistant-day"]:checked')].map(day => Number(day.value)), start: $("assistant-start").value, end: $("assistant-end").value },
       handoffKeywords: $("assistant-keywords").value.split(/[,，、\n]+/).map(value => value.trim()).filter(Boolean) };
   }

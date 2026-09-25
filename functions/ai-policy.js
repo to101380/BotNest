@@ -3,16 +3,18 @@ export function aiError(status, message) { return new AiError(status, message); 
 export const AI_DEFAULTS = {
   enabled: false, model: "gpt-5.4-mini", instructions: "", role: "品牌客服助理", businessInfo: "",
   tone: "親切、簡潔、有禮貌", language: "繁體中文", forbidden: "不得捏造價格、庫存、政策或已完成的操作。",
-  splitReplies: { facebook: true, instagram: true },
   channels: { line: true, facebook: true, instagram: true }, schedule: { mode: "always", timezone: "Asia/Taipei", days: [1, 2, 3, 4, 5], start: "09:00", end: "18:00" },
   handoffKeywords: ["退款", "客訴", "投訴", "真人客服", "找真人"], requireKnowledge: true, humanPauseMinutes: 30,
   handoffMessage: "這個問題需要由真人客服協助，我先為您轉交，請稍候。", updatedAt: 0,
 };
 export function normalizeAiSettings(value = {}) {
-  return { ...AI_DEFAULTS, ...value, splitReplies: { ...AI_DEFAULTS.splitReplies, ...value.splitReplies }, channels: { ...AI_DEFAULTS.channels, ...value.channels }, schedule: { ...AI_DEFAULTS.schedule, ...value.schedule } };
+  // Segmentation is universal. Discard the old per-channel switches on every read.
+  const { splitReplies: _legacySplitReplies, ...settings } = value;
+  return { ...AI_DEFAULTS, ...settings, channels: { ...AI_DEFAULTS.channels, ...settings.channels }, schedule: { ...AI_DEFAULTS.schedule, ...settings.schedule } };
 }
 export function validateAiSettings(input, previous = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw aiError(400, "AI 設定格式錯誤。");
+  // Accept but ignore splitReplies so an already-open older client can still save.
   const editable = ["splitReplies", "enabled", "instructions", "role", "businessInfo", "tone", "language", "forbidden", "channels", "schedule", "handoffKeywords", "requireKnowledge", "humanPauseMinutes", "handoffMessage"];
   if (Object.keys(input).some(key => !editable.includes(key))) throw aiError(400, "包含不支援的 AI 設定欄位。");
   const result = normalizeAiSettings({ ...previous, ...input });
@@ -24,8 +26,6 @@ export function validateAiSettings(input, previous = {}) {
   if (typeof result.enabled !== "boolean" || typeof result.requireKnowledge !== "boolean" || !Number.isInteger(result.humanPauseMinutes) || result.humanPauseMinutes < 1 || result.humanPauseMinutes > 1440) throw aiError(400, "真人回覆後的暫停時間需為 1～1440 分鐘。");
   if (typeof result.channels?.line !== "boolean" || typeof result.channels?.facebook !== "boolean" || typeof result.channels?.instagram !== "boolean") throw aiError(400, "請選擇有效的渠道設定。");
   result.channels = { line: result.channels.line, facebook: result.channels.facebook, instagram: result.channels.instagram };
-  if (["facebook", "instagram"].some(key => typeof result.splitReplies[key] !== "boolean")) throw aiError(400, "分段回覆設定無效。");
-  result.splitReplies = { facebook: result.splitReplies.facebook, instagram: result.splitReplies.instagram };
   const schedule = result.schedule;
   if (!["always", "inside", "outside"].includes(schedule.mode) || !Array.isArray(schedule.days) || !schedule.days.length || schedule.days.some(day => !Number.isInteger(day) || day < 0 || day > 6) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(schedule.start) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(schedule.end) || schedule.start === schedule.end) throw aiError(400, "請設定有效的營業日與時間，開始及結束時間不可相同。");
   try { if (typeof schedule.timezone !== "string" || schedule.timezone.length > 80) throw new Error(); new Intl.DateTimeFormat("en", { timeZone: schedule.timezone }); } catch { throw aiError(400, "時區格式錯誤。"); }

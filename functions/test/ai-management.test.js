@@ -44,6 +44,19 @@ test("AI settings migrate old prompts, preserve extended rules and isolate tenan
   assert.equal((await f.request("settings", { method: "PUT", body: { model: "unapproved" } })).code, 400);
 });
 
+test("legacy split switches cannot disable segmentation or break settings saves", async () => {
+  const f = await fixture(), legacy = { line: false, facebook: false, instagram: false };
+  await f.store.saveAccountAiSettings("alice", { ...normalizeAiSettings({ enabled: true }), splitReplies: legacy }, now);
+  const loaded = await f.request("settings");
+  assert.equal(loaded.code, 200);
+  assert.equal(Object.hasOwn(loaded.body.settings, "splitReplies"), false);
+  const saved = await f.request("settings", { method: "PUT", body: { tone: "親切", splitReplies: legacy } });
+  assert.equal(saved.code, 200);
+  assert.equal(saved.body.settings.tone, "親切");
+  assert.equal(Object.hasOwn(saved.body.settings, "splitReplies"), false);
+  assert.deepEqual(normalizeAiSettings({ enabled: true, splitReplies: legacy }), normalizeAiSettings({ enabled: true }));
+});
+
 test("schedule handles Taiwan overnight hours, boundaries, pause, channels and human handoff", () => {
   const schedule = { mode: "inside", timezone: "Asia/Taipei", days: [1], start: "22:00", end: "02:00" };
   assert.equal(withinBusinessHours(schedule, Date.parse("2026-09-14T23:00:00+08:00")), true);
@@ -246,25 +259,28 @@ for (const provider of ["line", "facebook", "instagram"]) test(`${provider} show
   assert.equal(calls.length, 3);
 });
 
-for (const mode of ["complete", "human", "new-message", "off", "failure", "disabled"]) test(`social split replies: ${mode}`, async () => {
+for (const provider of ["facebook", "instagram"]) for (const mode of ["complete", "human", "new-message", "off", "failure", "legacy-disabled", "handoff", "handoff-human", "handoff-new-message"]) test(`${provider} split replies: ${mode}`, async () => {
  const f = await fixture(), accountId = "a".repeat(24), profileId = "b".repeat(24), sends = [], waits = [];
- await f.store.saveZernioProfile("alice", profileId, now);
- await f.store.bindZernioPlatform("alice", profileId, "instagram", { accountId, platform: "instagram" }, now);
- await f.store.saveAccountAiSettings("alice", normalizeAiSettings({ enabled: true, splitReplies: { instagram: mode !== "disabled" } }), now);
- const ingest = () => f.store.ingestZernio("alice", { provider: "instagram", eventId: randomUUID(), accountId, remoteConversationId: "thread", remoteMessageId: randomUUID(), text: "你好", sentAt: now, displayName: "Demo", pictureUrl: "" });
- const item = { uid: "alice", ...await ingest() };
  const long = "您好，歡迎您來到我們的線上客服，我很樂意陪您一起了解各項資訊並解答您的問題。\n\n您可以先告訴我希望了解的服務內容，以及您目前的需求，我會依照您的情況協助整理。\n\n如果您有其他需要也可以隨時告訴我，我會盡力提供清楚且容易理解的說明，讓您放心選擇。";
+ const handoff = mode.startsWith("handoff");
+ await f.store.saveZernioProfile("alice", profileId, now);
+ await f.store.bindZernioPlatform("alice", profileId, provider, { accountId, platform: provider }, now);
+ // Save the raw legacy value, as it would already exist in Firestore.
+ await f.store.saveAccountAiSettings("alice", { ...normalizeAiSettings({ enabled: true, handoffMessage: long }), splitReplies: { [provider]: mode !== "legacy-disabled" } }, now);
+ const ingest = () => f.store.ingestZernio("alice", { provider, eventId: randomUUID(), accountId, remoteConversationId: "thread", remoteMessageId: randomUUID(), text: handoff ? "我要退款" : "你好", sentAt: now, displayName: "Demo", pictureUrl: "" });
+ const item = { uid: "alice", ...await ingest() };
  const responder = createZernioAiResponder({ store: f.store, getOpenAiKey: () => "test", getZernioKey: () => "test", now: () => now,
-  fetchOpenAi: async () => response(answer({text: long})),
-  wait: async ms => { waits.push(ms); if (mode === "human") await f.store.setAiControl("alice", "instagram", item.conversationId, {mode:"human"}, now); if (mode === "new-message") await ingest(); if (mode === "off") await f.store.saveAccountAiSettings("alice", normalizeAiSettings({enabled:false}), now); },
+  fetchOpenAi: async () => { assert.equal(handoff, false); return response(answer({text: long})); },
+  wait: async ms => { waits.push(ms); if (["human", "handoff-human"].includes(mode)) await f.store.setAiControl("alice", provider, item.conversationId, {mode:"human"}, now); if (["new-message", "handoff-new-message"].includes(mode)) await ingest(); if (mode === "off") await f.store.saveAccountAiSettings("alice", normalizeAiSettings({enabled:false}), now); },
   fetchZernio: async (url, options = {}) => { if (options.method === "POST" && url.endsWith("/messages")) { if (mode === "failure" && sends.length === 1) throw Error("ambiguous timeout"); sends.push({text:JSON.parse(options.body).message, key:options.headers["Idempotency-Key"]}); } return response({messages:[]}); }
  });
  if (mode === "failure") await assert.rejects(responder(item)); else await responder(item);
- assert.equal(sends.length, mode === "complete" ? 3 : 1);
- if (mode === "complete") { assert.equal(new Set(sends.map(x=>x.key)).size,3); assert.equal(sends.map(x=>x.text).join("\n\n"),long); }
+ const completed = ["complete", "legacy-disabled", "handoff"].includes(mode);
+ assert.equal(sends.length, completed ? 3 : 1);
+ if (completed) { assert.equal(new Set(sends.map(x=>x.key)).size,3); assert.equal(sends.map(x=>x.text).join("\n\n"),long); }
  assert.ok(waits.every(ms=>ms>=1000 && ms<=2000));
  const log=(await f.store.aiLogs("alice")).items[0]; assert.equal(log.sentParts,sends.length);
- await responder(item); assert.equal(sends.length,mode === "complete" ? 3 : 1);
+ await responder(item); assert.equal(sends.length,completed ? 3 : 1);
 });
 
 const ocrResponse = value => new Response(JSON.stringify(value));
@@ -304,10 +320,10 @@ test("needs clarification can reply without citations while unsupported prices s
  assert.equal(unsupported.action,"handoff"); assert.match(unsupported.reason,/缺少有效/);
 });
 
-test("LINE long answers send multiple bubbles in exactly one push and do not resend", async () => {
+test("LINE long answers always send multiple bubbles in one push despite legacy switches and do not resend", async () => {
  const f=await fixture(), item=await f.message(), pushes=[];
  const long="您好，歡迎您來到我們的線上客服，我很樂意陪您一起了解各項資訊並解答您的問題。\n\n您可以先告訴我希望了解的服務內容，以及您目前的需求，我會依照您的情況協助整理。\n\n如果您有其他需要也可以隨時告訴我，我會盡力提供清楚且容易理解的說明，讓您放心選擇。";
- await f.store.saveAccountAiSettings("alice",normalizeAiSettings({enabled:true}),now);
+ await f.store.saveAccountAiSettings("alice",{...normalizeAiSettings({enabled:true}),splitReplies:{line:false,facebook:false,instagram:false}},now);
  const responder=createAiResponder({store:f.store,getKey:()=>key,getOpenAiKey:()=>"test",now:()=>now,
  fetchOpenAi:async()=>response(answer({text:long})),fetchLine:async(url,options)=>{if(url.endsWith("/push"))pushes.push(JSON.parse(options.body));return new Response("{}");}});
  assert.deepEqual(await responder(item),{sent:true}); assert.equal(pushes.length,1);
