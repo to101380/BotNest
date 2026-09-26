@@ -103,13 +103,27 @@ export function createStore(db) {
     bindZernioFacebook(uid, profileId, account, at) {
       return this.bindZernioPlatform(uid, profileId, "facebook", account, at);
     },
-    async bindZernioPlatform(uid, profileId, platform, account, at) {
+    async validateZernioState(uid, platform, profileId, stateHash, at) {
+      const pending = (await accounts.doc(uid).collection("security").doc("oauth-" + platform).get()).data();
+      if (!pending || pending.used || pending.expiresAt <= at || pending.profileId !== profileId || pending.stateHash !== stateHash) throw new HttpError(403, "社群授權已過期或已使用，請重新連接。");
+    },
+    async saveZernioState(uid, platform, profileId, stateHash, at) {
+      const ref = accounts.doc(uid).collection("security").doc("oauth-" + platform);
+      await ref.set({ profileId, stateHash, expiresAt: at + 10 * 60000, used: false });
+    },
+    async bindZernioPlatform(uid, profileId, platform, account, at, stateHash = null) {
       if (!["facebook", "instagram"].includes(platform)) throw new HttpError(400, "不支援的渠道。");
       const ref = accounts.doc(uid);
       await db.runTransaction(async tx => {
         const old = (await tx.get(ref)).data() || {}, prior = old.zernio || {};
+        const stateRef = ref.collection("security").doc("oauth-" + platform);
+        if (stateHash !== null) {
+          const pending = (await tx.get(stateRef)).data();
+          if (!pending || pending.used || pending.expiresAt <= at || pending.profileId !== profileId || pending.stateHash !== stateHash) throw new HttpError(403, "社群授權已過期或已使用，請重新連接。");
+        }
         if (prior.profileId !== profileId) throw new HttpError(409, "Zernio Profile 與網站帳號不符。");
         if (prior[platform]?.accountId && prior[platform].accountId !== account.accountId) throw new HttpError(409, "此網站帳號已連接此渠道的其他帳號。");
+        if (stateHash !== null) tx.set(stateRef, { used: true, expiresAt: at });
         tx.set(ref, { zernio: { ...prior, [platform]: { ...account, connectedAt: at }, updatedAt: at } }, { merge: true });
       });
     },

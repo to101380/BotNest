@@ -1,0 +1,7 @@
+{
+  "score": 5,
+  "summary": "Local rules deny all client access; ownership and validation are enforced separately in server APIs. The previous legacy allowance has been removed. This score applies only to the local rules, not live IAM or overall application security. Cloud validation blocked by expired Firebase CLI authentication.",
+  "findings": [],
+  "deploymentVerified": false,
+  "checked": ["create/update parity", "no client-controlled authority", "server-only access model", "client resource exhaustion denied", "client writes denied regardless of type", "identity-independent deny-all" ]
+}

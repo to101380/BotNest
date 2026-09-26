@@ -90,6 +90,7 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
     if (!user.uid || !["google.com", "password"].includes(user.firebase?.sign_in_provider)) throw new HttpError(403, "請使用正式帳號登入。");
     if (user.firebase.sign_in_provider === "password" && user.email_verified !== true) throw new HttpError(403, "請先完成 Email 驗證，再重新登入。");
     req.securityUid = user.uid;
+    await store.aiAttempt(user.uid, "api", now(), 120);
     return user;
   }
   async function zernioRequest(path, options = {}) {
@@ -127,9 +128,11 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
 
   return async (req, res) => {
     res.set("Cache-Control", "no-store");
+    res.set("Referrer-Policy", "no-referrer");
     res.set("X-Content-Type-Options", "nosniff");
     try {
       const path = new URL(req.originalUrl || req.url, "https://botnest.invalid").pathname;
+      if (req.rawBody?.length > 8 * 1024 * 1024) throw new HttpError(413, "請求內容過大。");
       if (path === "/zernio-webhook") {
         if (req.method !== "POST") throw new HttpError(405, "請由 Zernio 傳送 POST Webhook。");
         if (!req.rawBody || req.rawBody.length > 1024 * 1024) throw new HttpError(413, "Webhook 內容過大。");
@@ -158,8 +161,9 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
           pictureUrl: String(sender.avatarUrl || sender.picture || conversation.participantPicture || "").slice(0, 2048) });
         return res.status(200).json({ ok: true, created: saved.created });
       }
-      if (path === "/zernio-callback" && req.method === "GET") {
-        const callback = new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
+      if ((path === "/zernio-callback" && req.method === "GET") || (path === "/api/zernio/complete" && req.method === "POST")) {
+        const completing = path === "/api/zernio/complete";
+        const callback = completing ? new URLSearchParams(req.body || {}) : new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
         const redirect = new URL("https://planning-with-ai-52d58.web.app/");
         redirect.hash = "channels";
         if (callback.get("error")) {
@@ -170,15 +174,26 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
         const platform = callback.get("connected");
         const profileId = callback.get("profileId"), accountId = callback.get("accountId");
         if (!["facebook", "instagram"].includes(platform) || !/^[a-f0-9]{24}$/i.test(profileId || "") || !/^[a-f0-9]{24}$/i.test(accountId || "")) throw new HttpError(400, "社群授權回傳資料不完整。");
+        const stateToken = callback.get("state");
+        if (!/^[A-Za-z0-9_-]{43}$/.test(stateToken || "")) throw new HttpError(403, "社群授權狀態無效，請重新連接。");
+        if (!completing) {
+          // The same-origin landing page supplies both the original login and the
+          // approved-device cookie. GET callbacks never bind accounts.
+          const landing = new URL("https://planning-with-ai-52d58.web.app/oauth-complete.html");
+          landing.hash = new URLSearchParams({ connected: platform, profileId, accountId, state: stateToken }).toString();
+          return res.redirect(302, landing.toString());
+        }
+        const user = await authenticated(req);
         const owner = await store.zernioOwner(profileId);
-        if (!owner) throw new HttpError(404, "找不到這次社群帳號連接紀錄。");
+        if (!owner || owner.uid !== user.uid) throw new HttpError(403, "請使用開始連接的原帳號與裝置完成授權。");
+        await store.validateZernioState(owner.uid, platform, profileId, digest(stateToken), now());
         const listed = await zernioRequest(`/accounts?profileId=${encodeURIComponent(profileId)}&platform=${platform}`);
         const match = (listed.accounts || []).find(item => item._id === accountId && item.platform === platform);
         if (!match) throw new HttpError(403, "無法驗證已授權的社群帳號。");
-        await store.bindZernioPlatform(owner.uid, profileId, platform, { accountId, username: String(match.username || "").slice(0, 120), displayName: String(match.displayName || match.username || platform).slice(0, 120), platform }, now());
+        await store.bindZernioPlatform(owner.uid, profileId, platform, { accountId, username: String(match.username || "").slice(0, 120), displayName: String(match.displayName || match.username || platform).slice(0, 120), platform }, now(), digest(stateToken));
         redirect.searchParams.set("platform", platform);
         redirect.searchParams.set("zernio", "connected");
-        return res.redirect(302, redirect.toString());
+        return res.json({ redirectUrl: redirect.toString() });
       }
       const mediaRoute = /^\/api\/line\/media\/(\d{5,20})\/([a-f0-9-]{36})$/.exec(path);
       if (mediaRoute && ["GET", "HEAD"].includes(req.method)) {
@@ -231,6 +246,8 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
         }
         if (["/api/zernio/connect/facebook", "/api/zernio/connect/instagram"].includes(path) && req.method === "POST") {
           const platform = path.split("/").at(-1);
+          if (!Number.isSafeInteger(user.auth_time) || now() / 1000 - user.auth_time > 600 || user.auth_time > now() / 1000 + 60) throw new HttpError(401, "連接社群帳號前請重新登入。");
+          await store.aiAttempt(user.uid, "social-connect", now(), 5);
           const origin = req.get("origin");
           if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站連接社群帳號。");
           let value = await store.zernioAccount(user.uid), profileId = value?.profileId;
@@ -240,7 +257,9 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
             if (!/^[a-f0-9]{24}$/i.test(profileId || "")) throw new HttpError(503, "Zernio Profile 建立失敗。");
             await store.saveZernioProfile(user.uid, profileId, now());
           }
-          const redirectUrl = "https://planning-with-ai-52d58.web.app/zernio-callback";
+          const stateToken = randomBytes(32).toString("base64url");
+          await store.saveZernioState(user.uid, platform, profileId, digest(stateToken), now());
+          const redirectUrl = "https://planning-with-ai-52d58.web.app/zernio-callback?state=" + stateToken;
           const connected = await zernioRequest(`/connect/${platform}?profileId=${encodeURIComponent(profileId)}&redirect_url=${encodeURIComponent(redirectUrl)}${platform === "instagram" ? "&loginMethod=instagram_login" : ""}`);
           if (typeof connected.authUrl !== "string" || !/^https:\/\//i.test(connected.authUrl)) throw new HttpError(503, "Zernio 未回傳授權網址。");
           return res.json({ authUrl: connected.authUrl });

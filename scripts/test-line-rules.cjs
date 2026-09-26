@@ -10,7 +10,7 @@ const fs = require('node:fs/promises');
   for (const document of paths) for (const method of ['get', 'list', 'create', 'update', 'delete']) for (const signedIn of [false, true]) {
     testCases.push({ expectation: 'DENY', request: { path: `/databases/(default)/documents/${document}`, method, auth: signedIn ? { uid: 'alice', token: {} } : null, time: '2026-09-14T00:00:00Z' } });
   }
-  testCases.push({ expectation: 'ALLOW', request: { path: '/databases/(default)/documents/legacy/example', method: 'get', auth: { uid: 'alice', token: {} }, time: '2026-09-14T00:00:00Z' } });
+  testCases.push({ expectation: 'DENY', request: { path: '/databases/(default)/documents/legacy/example', method: 'get', auth: { uid: 'alice', token: {} }, time: '2026-09-14T00:00:00Z' } });
   testCases.push({ expectation: 'DENY', request: { path: '/databases/(default)/documents/legacy/example', method: 'get', auth: { uid: 'alice', token: {} }, time: '2026-09-19T00:00:00Z' } });
   const response = await fetch('https://firebaserules.googleapis.com/v1/projects/planning-with-ai-52d58:test', {
     method: 'POST', headers: { Authorization: `Bearer ${token.access_token}`, 'Content-Type': 'application/json' },

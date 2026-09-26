@@ -11,7 +11,10 @@
         ".git",
         "test",
         "*-debug.log",
-        "*.local"
+        "*.local",
+        ".env*",
+        "**/*.pem",
+        "**/*service-account*.json"
       ]
     }
   ],
@@ -101,6 +104,10 @@
           {
             "key": "X-Content-Type-Options",
             "value": "nosniff"
+          },
+          {
+            "key": "Strict-Transport-Security",
+            "value": "max-age=31536000"
           }
         ]
       }

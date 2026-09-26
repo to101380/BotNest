@@ -180,9 +180,10 @@ test("Zernio Facebook OAuth creates a tenant profile and binds only a verified a
   assert.equal(connect.code, 200);
   assert.equal(connect.body.authUrl, "https://zernio.com/connect/test");
   assert.ok(calls.every(call => call.options.headers.Authorization === "Bearer server-only-key"));
-  const callback = await f.request(`/zernio-callback?connected=facebook&profileId=${profileId}&accountId=${accountId}`, { token: null });
-  assert.equal(callback.code, 302);
-  assert.match(callback.headers.location, /zernio=connected/);
+  const state = new URL(new URL(calls.find(call => call.url.includes("/connect/facebook")).url).searchParams.get("redirect_url")).searchParams.get("state");
+  const callback = await f.request("/api/zernio/complete", { method: "POST", body: { connected: "facebook", profileId, accountId, state } });
+  assert.equal(callback.code, 200);
+  assert.match(callback.body.redirectUrl, /zernio=connected/);
   const account = await f.request("/api/zernio/account");
   assert.deepEqual(account.body.facebook, { accountId, username: "botnest", displayName: "BotNest Page", platform: "facebook", connectedAt: 1000000 });
   assert.ok(!JSON.stringify(account.body).includes("server-only-key"));
@@ -200,14 +201,16 @@ test("Instagram binding reuses the tenant profile and preserves Messenger", asyn
   assert.equal((await f.request("/api/zernio/connect/instagram", {method: "POST", body: {profileId: "attacker"}})).code, 200);
   assert.ok(calls[0].includes(`profileId=${profileId}`));
   assert.ok(calls[0].includes("loginMethod=instagram_login"));
-  const callback = `/zernio-callback?connected=instagram&profileId=${profileId}&accountId=${accountId}`;
+  const state = new URL(new URL(calls.find(url => url.includes("/connect/instagram"))).searchParams.get("redirect_url")).searchParams.get("state");
+  const callback = `/zernio-callback?connected=instagram&profileId=${profileId}&accountId=${accountId}&state=${state}`;
   assert.equal((await f.request(callback, {token: null})).code, 302);
+  assert.equal((await f.request("/api/zernio/complete", {method: "POST", body: {connected: "instagram", profileId, accountId, state}})).code, 200);
   const account = (await f.request("/api/zernio/account")).body;
   assert.equal(account.instagram.username, "myshop");
   assert.equal(account.facebook.accountId, "c".repeat(24));
   assert.equal((await f.request("/api/zernio/account", {token: "bob"})).body.instagram, null);
-  assert.equal((await f.request(callback.replace(accountId, "d".repeat(24)), {token: null})).code, 403);
-  assert.equal((await f.request(callback.replace("connected=instagram", "connected=facebook"), {token: null})).code, 403);
+  assert.equal((await f.request("/api/zernio/complete", {method: "POST", body: {connected: "instagram", profileId, accountId: "d".repeat(24), state}})).code, 403);
+  assert.equal((await f.request("/api/zernio/complete", {method: "POST", body: {connected: "facebook", profileId, accountId, state}})).code, 403);
   assert.ok(!JSON.stringify(account).includes("server-secret"));
 });
 
