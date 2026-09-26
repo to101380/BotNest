@@ -25,10 +25,12 @@ export function createStore(db) {
     async aiKnowledge(uid) {
       return rows(await accounts.doc(uid).collection("aiKnowledge").where("deleted", "==", false).limit(40).get()).sort((a, b) => b.updatedAt - a.updatedAt);
     },
-    async saveAiKnowledge(uid, id, item, at) {
+    async saveAiKnowledge(uid, id, item, at, { createOnly = false } = {}) {
       const account = accounts.doc(uid), ref = account.collection("aiKnowledge").doc(id), meter = account.collection("limits").doc("knowledge");
       return db.runTransaction(async tx => {
         const [prior, usage] = await tx.getAll(ref, meter), old = prior.data(), current = usage.data() || { count: 0, characters: 0 };
+        if (old?.deleted) throw new HttpError(404, "這筆知識已刪除，請重新新增。");
+        if (createOnly && old) return { id, ...old };
         const count = current.count + (!old || old.deleted ? 1 : 0), characters = current.characters - (old?.content?.length || 0) + item.content.length;
         if (count > 40 || characters > 800000) throw new HttpError(429, "知識庫最多 40 筆、合計 80 萬字。");
         const value = { ...old, ...item, deleted: false, updatedAt: at, createdAt: old?.createdAt || at };

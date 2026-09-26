@@ -29,8 +29,11 @@ export async function handleAiApi({ user, path, req, res, store, getOpenAiKey, o
     return res.json({ item: await store.saveAiKnowledge(uid, randomUUID(), item, now()) });
   }
   if (path === "/api/ai/knowledge" && req.method === "POST") {
+    if (req.body?.draftId !== undefined && (typeof req.body.draftId !== "string" || !docId.test(req.body.draftId))) throw aiError(400, "草稿識別碼無效。");
     await store.aiAttempt(uid, "knowledge", now());
-    return res.json({ item: await store.saveAiKnowledge(uid, randomUUID(), { ...cleanKnowledge(req.body), kind: "text", url: "" }, now()) });
+    // A lost create response can be retried without duplicating a draft or
+    // overwriting an existing document. IDs remain scoped to the signed-in user.
+    return res.json({ item: await store.saveAiKnowledge(uid, req.body.draftId || randomUUID(), { ...cleanKnowledge(req.body), kind: "text", url: "" }, now(), { createOnly: true }) });
   }
   const knowledgeId = /^\/api\/ai\/knowledge\/([a-f0-9-]{36})$/.exec(path)?.[1];
   if (knowledgeId) {

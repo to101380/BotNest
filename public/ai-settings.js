@@ -1,3 +1,4 @@
+import { createAutoSave } from "./auto-save.js";
 import { showAiModel } from "./ai-model.js";
 const $ = id => document.getElementById(id);
 const date = value => new Date(value).toLocaleString("zh-TW", { dateStyle: "short", timeStyle: "short" });
@@ -6,7 +7,7 @@ const text = (tag, value, className) => { const node = document.createElement(ta
 export function createAiSettings() {
   const root = $("assistant-page");
   root.innerHTML = `
-    <div class="assistant-header"><div><span class="assistant-eyebrow">BOTNEST AI</span><h1 id="assistant-title" tabindex="-1">AI 助理</h1><p>設定品牌知識，讓回覆更貼近你。</p><p class="assistant-model"><img src="/openai-icon.png" alt="" width="18" height="18"><span id="assistant-model-name" aria-live="polite">正在讀取模型…</span></p></div><div class="assistant-header-actions"><span id="assistant-live" class="assistant-badge">讀取中</span><button id="assistant-save" class="assistant-primary" type="button">儲存設定</button></div></div>
+    <div class="assistant-header"><div><span class="assistant-eyebrow">BOTNEST AI</span><h1 id="assistant-title" tabindex="-1">AI 助理</h1><p>設定品牌知識，讓回覆更貼近你。</p><p class="assistant-model"><img src="/openai-icon.png" alt="" width="18" height="18"><span id="assistant-model-name" aria-live="polite">正在讀取模型…</span></p></div><div class="assistant-header-actions"><span id="assistant-live" class="assistant-badge">讀取中</span><span id="assistant-save-state" role="status" aria-live="polite">變更後自動儲存</span><button id="assistant-retry" class="assistant-secondary" type="button" hidden>重試</button></div></div>
     <div class="assistant-overview"><div><span class="assistant-spark" aria-hidden="true">✦</span><div><strong>準備好，再開始回覆</strong><p>先設定角色與知識，透過測試確認，再開啟自動回覆。</p></div></div><div class="assistant-metrics"><span><strong id="assistant-knowledge-count">—</strong>啟用知識</span><span><strong id="assistant-channel-count">—</strong>回覆渠道</span></div></div>
     <div class="assistant-tabs" role="tablist" aria-label="AI 客服設定分頁">
       <button id="assistant-tab-persona" role="tab" aria-selected="true" aria-controls="assistant-persona" data-tab="persona">身分與語氣</button><button id="assistant-tab-knowledge" role="tab" aria-selected="false" aria-controls="assistant-knowledge" data-tab="knowledge" tabindex="-1">知識庫</button><button id="assistant-tab-rules" role="tab" aria-selected="false" aria-controls="assistant-rules" data-tab="rules" tabindex="-1">回覆規則</button><button id="assistant-tab-test" role="tab" aria-selected="false" aria-controls="assistant-test" data-tab="test" tabindex="-1">測試對話</button>
@@ -50,8 +51,9 @@ export function createAiSettings() {
       <div class="assistant-section-heading"><div><h2>正式啟用前，先聊聊看</h2><p>使用已儲存的設定與啟用知識，不會傳到 LINE 或 Messenger。測試會使用模型額度。</p></div><button id="assistant-test-clear" class="assistant-secondary" type="button">清空對話</button></div>
       <div class="assistant-test-layout"><div class="assistant-test-chat"><div class="assistant-test-top"><label for="assistant-test-provider">模擬渠道</label><select id="assistant-test-provider"><option value="line">LINE</option><option value="facebook">Messenger</option><option value="instagram">Instagram</option></select><span>測試模式</span></div><div id="assistant-test-messages" aria-live="polite"><div class="assistant-test-empty"><span aria-hidden="true">✦</span><strong>從顧客的第一個問題開始</strong><p>例如「你們幾點營業？」或「我想申請退款」。</p></div></div><form id="assistant-test-form"><label class="sr-only" for="assistant-test-question">模擬顧客提問</label><textarea id="assistant-test-question" rows="2" maxlength="2000" placeholder="輸入顧客可能會問的問題…" required></textarea><button id="assistant-test-send" class="assistant-primary" type="submit">測試回覆</button></form></div><div class="assistant-card assistant-evidence"><h2>這次回答的依據</h2><p id="assistant-test-decision" class="assistant-muted">傳送問題後，這裡會顯示判斷與引用來源。</p><div id="assistant-test-sources"></div></div></div>
     </section>
-    <dialog id="knowledge-dialog" class="knowledge-dialog"><form id="knowledge-form"><div class="assistant-section-heading"><h2 id="knowledge-dialog-title">新增知識</h2><button id="knowledge-close" type="button" aria-label="關閉知識編輯">×</button></div><label for="knowledge-title">標題</label><input id="knowledge-title" maxlength="120" required placeholder="例如：配送與退換貨政策"><label for="knowledge-content">知識內容</label><textarea id="knowledge-content" rows="15" maxlength="40000" required placeholder="請提供已確認的商品資訊、政策或問答內容。"></textarea><label class="assistant-toggle-row"><span>儲存後啟用，供 AI 參考</span><input id="knowledge-enabled" type="checkbox"></label><p id="knowledge-editor-status" role="status"></p><div class="knowledge-dialog-actions"><button class="assistant-primary" type="submit">儲存知識</button></div></form></dialog>`;
+    <dialog id="knowledge-dialog" class="knowledge-dialog"><form id="knowledge-form"><div class="assistant-section-heading"><h2 id="knowledge-dialog-title">新增知識</h2><button id="knowledge-close" type="button" aria-label="關閉知識編輯">×</button></div><label for="knowledge-title">標題</label><input id="knowledge-title" maxlength="120" required placeholder="例如：配送與退換貨政策"><label for="knowledge-content">知識內容</label><textarea id="knowledge-content" rows="15" maxlength="40000" required placeholder="請提供已確認的商品資訊、政策或問答內容。"></textarea><label class="assistant-toggle-row"><span>啟用，供 AI 參考（變更自動儲存）</span><input id="knowledge-enabled" type="checkbox"></label><p id="knowledge-editor-status" role="status"></p><div class="knowledge-dialog-actions"><button id="knowledge-discard" class="assistant-secondary" type="button" hidden>放棄未儲存變更</button><button id="knowledge-retry" class="assistant-secondary" type="button" hidden>重試</button><button class="assistant-primary" type="submit">完成</button></div></form></dialog>`;
   let user, active = false, epoch = 0, controller = new AbortController(), dirty = false, ready = false, saving = false, testing = false, importing = false, editing = null, items = [], testHistory = [];
+  let settingsSaver, knowledgeSaver, draftId, closing = false;
   const fields = ["role", "businessInfo", "tone", "language", "forbidden", "instructions", "humanPauseMinutes", "handoffMessage"];
   function status(value, error = false) { $("assistant-status").textContent = value; $("assistant-status").classList.toggle("error", error); }
   async function api(path, options = {}) {
@@ -65,15 +67,43 @@ export function createAiSettings() {
   }
   const report = error => { if (error.name !== "AbortError") status(error.message, true); };
   function controls() {
-    for (const field of root.querySelectorAll('#assistant-persona input, #assistant-persona textarea, #assistant-rules input, #assistant-rules textarea, #assistant-rules select')) field.disabled = !ready || saving;
-    $("assistant-save").disabled = !ready || saving; $("assistant-save").textContent = saving ? "儲存中…" : dirty ? "儲存變更" : "儲存設定";
-    $("assistant-test-send").disabled = !ready || testing || dirty; $("assistant-test-send").textContent = testing ? "正在產生回覆…" : dirty ? "請先儲存設定" : "測試回覆";
+    for (const field of root.querySelectorAll('#assistant-persona input, #assistant-persona textarea, #assistant-rules input, #assistant-rules textarea, #assistant-rules select')) field.disabled = !ready;
+    $("assistant-test-send").disabled = !ready || testing || dirty || saving || !!knowledgeSaver?.pending(); $("assistant-test-send").textContent = testing ? "正在產生回覆…" : dirty || saving ? "等待自動儲存…" : "測試回覆";
     $("knowledge-add").disabled = !ready;
     $("knowledge-upload").disabled = !ready || importing; $("knowledge-url-form").querySelector("button").disabled = !ready || importing;
     $("assistant-test-clear").disabled = testing;
   }
-  function markDirty() { dirty = true; controls(); status("設定已修改，請按右上角「儲存變更」。"); }
-  for (const id of ["assistant-persona", "assistant-rules"]) $(id).addEventListener("input", markDirty);
+  function markDirty(event) {
+    if (!ready || event.isComposing) return;
+    settingsSaver.change(event.type === "change");
+  }
+  for (const id of ["assistant-persona", "assistant-rules"]) {
+    $(id).addEventListener("input", markDirty);
+    $(id).addEventListener("change", markDirty);
+    $(id).addEventListener("compositionstart", () => settingsSaver?.pause());
+    $(id).addEventListener("compositionend", () => settingsSaver?.resume());
+  }
+  function updateSummary(settings) {
+    $("assistant-live").textContent = !settings.configured ? "待設定 API Key" : settings.enabled ? "AI 自動回覆已開啟" : "AI 自動回覆已關閉";
+    $("assistant-live").classList.toggle("active", settings.enabled && settings.configured);
+    $("assistant-channel-count").textContent = Number(settings.channels.line) + Number(settings.channels.facebook) + Number(settings.channels.instagram);
+  }
+  function startSettingsSaver() {
+    settingsSaver = createAutoSave({ read: formSettings,
+      valid: value => !!(value.role.trim() && value.language.trim() && value.handoffMessage.trim() && Number.isInteger(value.humanPauseMinutes) && value.humanPauseMinutes >= 1 && value.humanPauseMinutes <= 1440 && value.schedule.days.length && value.schedule.start && value.schedule.end && value.schedule.start !== value.schedule.end),
+      write: async value => { const result = await api("settings", { method: "PUT", body: JSON.stringify(value) }); updateSummary(result.settings); },
+      state: ({ phase, pending, error }) => {
+        dirty = pending; saving = phase === "saving";
+        $("assistant-save-state").textContent = phase === "saved" ? "已自動儲存" : phase === "error" ? `尚未儲存：${error.message}` : phase === "invalid" ? "尚未儲存，請填妥必填欄位及有效時段" : phase === "saving" ? "儲存中…" : "等待自動儲存…";
+        $("assistant-save-state").classList.toggle("error", phase === "error" || phase === "invalid");
+        $("assistant-retry").hidden = phase !== "error"; controls();
+      }
+    });
+  }
+  $("assistant-retry").addEventListener("click", () => void settingsSaver?.flush());
+  window.addEventListener("online", () => { if (settingsSaver?.pending()) void settingsSaver.flush(); if (knowledgeSaver?.pending()) void knowledgeSaver.flush(); });
+  window.addEventListener("beforeunload", event => { if (settingsSaver?.pending() || knowledgeSaver?.pending()) { event.preventDefault(); event.returnValue = ""; } });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) { if (settingsSaver?.pending()) void settingsSaver.flush(); if (knowledgeSaver?.pending()) void knowledgeSaver.flush(); } });
   function fill(settings) {
     showAiModel($("assistant-model-name"), settings.model);
     for (const field of fields) $("assistant-" + field).value = settings[field] ?? "";
@@ -94,20 +124,50 @@ export function createAiSettings() {
       channels: { line: $("assistant-line").checked, facebook: $("assistant-facebook").checked, instagram: $("assistant-instagram").checked }, schedule: { mode: $("assistant-hours-mode").value, timezone: $("assistant-timezone").value, days: [...root.querySelectorAll('[name="assistant-day"]:checked')].map(day => Number(day.value)), start: $("assistant-start").value, end: $("assistant-end").value },
       handoffKeywords: $("assistant-keywords").value.split(/[,，、\n]+/).map(value => value.trim()).filter(Boolean) };
   }
-  $("assistant-save").addEventListener("click", async () => {
-    if (saving || !ready) return; saving = true; controls();
-    try { const result = await api("settings", { method: "PUT", body: JSON.stringify(formSettings()) }); fill(result.settings); status("設定已儲存，會套用到新的顧客訊息。"); }
-    catch (error) { report(error); } finally { saving = false; controls(); }
-  });
   function sources(container, values) {
     container.replaceChildren();
     if (!values?.length) { container.append(text("p", "這次沒有引用知識來源。", "assistant-muted")); return; }
     for (const source of values) { const details = document.createElement("details"); details.className = "assistant-source"; details.append(text("summary", source.title), text("p", source.excerpt)); container.append(details); }
   }
   function openEditor(item = null) {
+    knowledgeSaver?.dispose(); draftId = crypto.randomUUID();
     editing = item?.id || null; $("knowledge-title").value = item?.title || ""; $("knowledge-content").value = item?.content || ""; $("knowledge-enabled").checked = item?.enabled ?? true;
-    $("knowledge-dialog-title").textContent = item ? "編輯知識" : "新增知識"; $("knowledge-editor-status").textContent = ""; $("knowledge-dialog").showModal();
+    $("knowledge-dialog-title").textContent = item ? "編輯知識" : "新增知識"; $("knowledge-editor-status").textContent = "變更後自動儲存，標題與內容皆需填寫。"; $("knowledge-retry").hidden = true; $("knowledge-discard").hidden = true; $("knowledge-editor-status").classList.remove("error");
+    knowledgeSaver = createAutoSave({
+      read: () => ({ title: $("knowledge-title").value, content: $("knowledge-content").value, enabled: $("knowledge-enabled").checked }),
+      valid: value => !!(value.title.trim() && value.content.trim()),
+      write: async value => {
+        if (!editing) { const created = await api("knowledge", { method: "POST", body: JSON.stringify({ ...value, draftId }) }); editing = created.item.id; }
+        const result = await api(`knowledge/${editing}`, { method: "PUT", body: JSON.stringify(value) });
+        items = [result.item, ...items.filter(row => row.id !== result.item.id)]; renderKnowledge();
+      },
+      state: ({ phase, error }) => {
+        $("knowledge-editor-status").textContent = phase === "saved" ? "已自動儲存" : phase === "error" ? `尚未儲存：${error.message}` : phase === "invalid" ? "尚未儲存，請填寫標題與內容。" : phase === "saving" ? "儲存中…" : "等待自動儲存…";
+        $("knowledge-retry").hidden = phase !== "error"; $("knowledge-discard").hidden = !["error", "invalid"].includes(phase); $("knowledge-editor-status").classList.toggle("error", ["error", "invalid"].includes(phase)); controls();
+      }
+    });
+    $("knowledge-dialog").showModal();
   }
+  async function closeEditor() {
+    if (closing) return; closing = true; const generation = epoch;
+    try {
+      if (knowledgeSaver?.pending() && !await knowledgeSaver.flush()) return;
+      if (generation !== epoch) return;
+      knowledgeSaver?.dispose(); knowledgeSaver = null; $("knowledge-dialog").close(); controls();
+    } finally { closing = false; }
+  }
+  $("knowledge-form").addEventListener("compositionstart", () => knowledgeSaver?.pause());
+  $("knowledge-form").addEventListener("compositionend", () => knowledgeSaver?.resume());
+  for (const eventName of ["input", "change"]) $("knowledge-form").addEventListener(eventName, event => {
+    if (!event.isComposing && ["knowledge-title", "knowledge-content", "knowledge-enabled"].includes(event.target.id)) knowledgeSaver?.change(eventName === "change");
+  });
+  $("knowledge-dialog").addEventListener("cancel", event => { event.preventDefault(); void closeEditor(); });
+  $("knowledge-discard").addEventListener("click", async () => {
+    if (!confirm("放棄尚未儲存的輸入？已經自動儲存的內容會保留。")) return;
+    knowledgeSaver?.dispose(); knowledgeSaver = null; $("knowledge-dialog").close(); controls();
+    try { await loadKnowledge(); } catch (error) { report(error); }
+  });
+  $("knowledge-retry").addEventListener("click", () => void knowledgeSaver?.flush());
   function renderKnowledge() {
     $("assistant-knowledge-count").textContent = items.filter(item => item.enabled).length;
     const list = $("knowledge-list"); list.replaceChildren();
@@ -125,11 +185,8 @@ export function createAiSettings() {
     }
   }
   async function loadKnowledge() { items = (await api("knowledge")).items; renderKnowledge(); }
-  $("knowledge-add").addEventListener("click", () => openEditor()); $("knowledge-close").addEventListener("click", () => $("knowledge-dialog").close());
-  $("knowledge-form").addEventListener("submit", async event => { event.preventDefault(); const button = event.submitter; button.disabled = true;
-    try { await api(editing ? `knowledge/${editing}` : "knowledge", { method: editing ? "PUT" : "POST", body: JSON.stringify({ title: $("knowledge-title").value, content: $("knowledge-content").value, enabled: $("knowledge-enabled").checked }) }); $("knowledge-dialog").close(); await loadKnowledge(); status("知識已儲存。"); }
-    catch (error) { if (error.name !== "AbortError") $("knowledge-editor-status").textContent = error.message; } finally { button.disabled = false; }
-  });
+  $("knowledge-add").addEventListener("click", () => openEditor()); $("knowledge-close").addEventListener("click", () => void closeEditor());
+  $("knowledge-form").addEventListener("submit", event => { event.preventDefault(); void closeEditor(); });
   function showImportLoading(title) {
     $("knowledge-loading-title").textContent = title;
     if (!$("knowledge-loading").open) $("knowledge-loading").showModal();
@@ -137,7 +194,7 @@ export function createAiSettings() {
   $("knowledge-loading").addEventListener("cancel", event => event.preventDefault());
   async function importKnowledge(body) {
     if (importing) return; const generation = epoch; importing = true; controls(); showImportLoading(body.kind === "url" ? "正在匯入網頁…" : /\.(jpe?g|png|webp)$/i.test(body.name || "") ? "正在上傳並辨識圖片文字…" : "正在上傳並擷取文字…"); status(/\.(jpe?g|png|webp)$/i.test(body.name || "") ? "正在辨識圖片文字，完成後請核對內容…" : "正在擷取文字，完成後請檢查內容並啟用…");
-    try { const result = await api("knowledge/import", { method: "POST", body: JSON.stringify(body) }); await loadKnowledge(); if (generation !== epoch) return; $("knowledge-loading").close(); openEditor(result.item); status("已匯入為草稿。確認內容後勾選啟用並儲存。"); }
+    try { const result = await api("knowledge/import", { method: "POST", body: JSON.stringify(body) }); await loadKnowledge(); if (generation !== epoch) return; $("knowledge-loading").close(); openEditor(result.item); status("已匯入為草稿。確認內容後勾選啟用，變更會自動儲存。"); }
     catch (error) { report(error); } finally { if (generation === epoch) { importing = false; $("knowledge-loading").close(); controls(); } }
   }
   $("knowledge-url-form").addEventListener("submit", event => { event.preventDefault(); void importKnowledge({ kind: "url", url: $("knowledge-url").value }); });
@@ -151,7 +208,7 @@ export function createAiSettings() {
   });
   function chatBubble(content, role) { const bubble = text("div", content, `assistant-test-bubble ${role}`); $("assistant-test-messages").append(bubble); bubble.scrollIntoView({ block: "nearest" }); }
   $("assistant-test-form").addEventListener("submit", async event => {
-    event.preventDefault(); if (testing || dirty || !ready) return;
+    event.preventDefault(); if (testing || dirty || saving || knowledgeSaver?.pending() || !ready) return;
     const question = $("assistant-test-question").value.trim(); if (!question) return;
     testing = true; controls(); $("assistant-test-messages").querySelector(".assistant-test-empty")?.remove(); chatBubble(question, "user"); $("assistant-test-question").value = "";
     try { const { result } = await api("test", { method: "POST", body: JSON.stringify({ question, history: testHistory.slice(-14), provider: $("assistant-test-provider").value }) });
@@ -167,11 +224,18 @@ export function createAiSettings() {
   const tabs = [...root.querySelectorAll("[data-tab]")];
   for (const [index, button] of tabs.entries()) { button.addEventListener("click", () => selectTab(button.dataset.tab)); button.addEventListener("keydown", event => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length; tabs[next].focus(); selectTab(tabs[next].dataset.tab); }); }
   return { setSession(nextUser, visible) {
+    // Keep the same user's pending writes alive when navigating within the app.
+    if (user?.uid === nextUser?.uid && active) {
+      if (!visible) { if (settingsSaver?.pending()) void settingsSaver.flush(); if (knowledgeSaver?.pending()) void knowledgeSaver.flush(); }
+      return;
+    }
     const nextActive = !!nextUser && visible; if (user?.uid === nextUser?.uid && active === nextActive) return;
+    settingsSaver?.dispose(); knowledgeSaver?.dispose(); settingsSaver = knowledgeSaver = null;
+    $("assistant-save-state").textContent = "變更後自動儲存"; $("assistant-retry").hidden = true;
     $("knowledge-loading").close();
     epoch++; controller.abort(); controller = new AbortController(); user = nextUser; active = nextActive; ready = false; dirty = false; testing = false; saving = false; importing = false;
     showAiModel($("assistant-model-name"), null, "正在讀取模型…");
     items = []; testHistory = []; $("knowledge-dialog").close(); $("assistant-test-messages").replaceChildren(); $("assistant-test-sources").replaceChildren(); renderKnowledge(); controls();
-    if (active) { status("正在讀取 AI 客服設定…"); void Promise.all([api("settings"), loadKnowledge()]).then(([data]) => { fill(data.settings); ready = true; $("assistant-connections").textContent = `已連接：${[data.connections.line ? "LINE" : "", data.connections.facebook ? "Messenger" : "", data.connections.instagram ? "Instagram" : ""].filter(Boolean).join("、") || "尚未連接渠道，可先設定與測試"}`; controls(); status(""); }).catch(error => { if (error.name !== "AbortError") showAiModel($("assistant-model-name"), null, "暫時無法讀取模型"); report(error); }); }
+    if (active) { status("正在讀取 AI 客服設定…"); void Promise.all([api("settings"), loadKnowledge()]).then(([data]) => { fill(data.settings); startSettingsSaver(); ready = true; $("assistant-connections").textContent = `已連接：${[data.connections.line ? "LINE" : "", data.connections.facebook ? "Messenger" : "", data.connections.instagram ? "Instagram" : ""].filter(Boolean).join("、") || "尚未連接渠道，可先設定與測試"}`; controls(); status(""); }).catch(error => { if (error.name !== "AbortError") showAiModel($("assistant-model-name"), null, "暫時無法讀取模型"); report(error); }); }
   } };
 }
