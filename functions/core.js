@@ -1,3 +1,4 @@
+import { attachInboxAi } from "./inbox-ai.js";
 import { createHash, createHmac, timingSafeEqual, randomBytes, randomUUID, createCipheriv, createDecipheriv } from "node:crypto";
 import { MEDIA_ORIGIN, mediaSignature, validMediaSignature, validateUpload } from "./media.js";
 import { handleAiApi } from "./ai-api.js";
@@ -303,6 +304,7 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
             lastText: String(item.lastMessage || "").slice(0, 10000), updatedAt: Number.isFinite(Date.parse(item.updatedTime)) ? Date.parse(item.updatedTime) : now(), unreadCount: Number(item.unreadCount || 0),
           }));
           await Promise.all(items.map(async item => { item.customer = await store.zernioCustomer(user.uid, digest(`${social.accountId}:${item.remoteId}`)); }));
+          await attachInboxAi(store, user.uid, items, platform, now());
           return res.json({ items, next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
         }
         if (path === "/api/zernio/messages" && req.method === "GET") {
@@ -404,6 +406,7 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
           await store.saveProfile(account.channelId, item.id, profile);
           Object.assign(item, profile);
         }));
+        await attachInboxAi(store, user.uid, page.items, "line", now());
         return res.json(page);
       }
       const customer = /^\/api\/line\/conversations\/([a-f0-9]{64})\/customer$/.exec(path);

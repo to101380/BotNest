@@ -1,6 +1,6 @@
 // Presentation only: observe existing UI state without delaying navigation or requests.
 const ease = "cubic-bezier(.22, 1, .36, 1)";
-const groupSelector = ".assistant-tabs, .email-tabs, #app-nav, .conversation-ai-controls";
+const groupSelector = ".assistant-tabs, .email-tabs, #app-nav, .conversation-ai-controls, .inbox-status-filters";
 const pageSelector = "#ai-page, #assistant-page, #customers-page, #channels-page, #account-page, #signed-out";
 const panelSelector = `${pageSelector}, .assistant-panel`;
 const selectedSelector = '[aria-selected="true"], [aria-pressed="true"], [aria-current="page"]';

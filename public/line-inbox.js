@@ -1,3 +1,4 @@
+import { filterConversations, inboxMode } from "./inbox-filters.js";
 import { showAiModel } from "./ai-model.js";
 import { watchHistoryScroll } from "./history-scroll.js";
 import { pollDelay, conversationVersion, needsMessageRefresh } from "./inbox-polling.js";
@@ -48,6 +49,38 @@ export function createLineInbox() {
     void refresh(false, true).finally(() => { if (resumedEpoch === epoch) scheduleRefresh(); });
   }
   const conversations = new Map(), messages = new Map();
+  let filterMode = "all", searchQuery = "", filterTimer, scanning = false, scanEpoch = 0, listLoaded = false;
+  const filtering = () => filterMode !== "all" || !!searchQuery.trim();
+  const filterStyle = document.createElement("link"); filterStyle.rel = "stylesheet"; filterStyle.href = "/inbox-filters.css"; document.head.append(filterStyle);
+  const filters = document.createElement("div"); filters.className = "inbox-filters";
+  filters.innerHTML = '<label class="sr-only" for="inbox-name-search">搜尋用戶名字</label><input id="inbox-name-search" type="search" placeholder="搜尋用戶名字…" autocomplete="off"><div class="inbox-status-filters" role="group" aria-label="篩選回覆狀態"><button type="button" data-filter="all" aria-pressed="true">全部</button><button type="button" data-filter="auto" aria-pressed="false">AI 回覆中</button><button type="button" data-filter="human" aria-pressed="false">真人接手</button><button type="button" data-filter="off" aria-pressed="false">關閉 AI</button></div><p id="inbox-filter-summary" class="inbox-filter-summary" role="status" aria-live="polite"></p>';
+  document.querySelector(".conversation-toolbar").append(filters);
+  const hasMore = () => !!(conversationNext || zernioConversationNext || instagramNext);
+  function applyFilter() {
+    scanEpoch++; scanning = false; clearTimeout(filterTimer); showConversations();
+    if (filtering()) filterTimer = setTimeout(() => void scanMore(), 250);
+  }
+  $("inbox-name-search").addEventListener("input", event => { searchQuery = event.target.value; applyFilter(); });
+  filters.addEventListener("click", event => {
+    const mode = event.target.closest("[data-filter]")?.dataset.filter; if (!mode) return;
+    filterMode = mode;
+    for (const button of filters.querySelectorAll("[data-filter]")) button.setAttribute("aria-pressed", String(button.dataset.filter === mode));
+    applyFilter();
+  });
+  async function scanMore() {
+    const generation = epoch, scan = scanEpoch, visited = new Set();
+    scanning = true; showConversations();
+    try {
+      while (active && generation === epoch && scan === scanEpoch && filtering() && hasMore()) {
+        if (refreshing) { await new Promise(resolve => setTimeout(resolve, 100)); continue; }
+        const before = JSON.stringify([conversationNext, zernioConversationNext, instagramNext]);
+        if (visited.has(before)) break; visited.add(before);
+        await refresh(true, false, true);
+        if (before === JSON.stringify([conversationNext, zernioConversationNext, instagramNext])) break;
+      }
+    } finally { if (generation === epoch && scan === scanEpoch) { scanning = false; showConversations(); } }
+  }
+
   const drafts = new Map(), localReplies = new Map();
   const attachments = new Map();
   let sending = false, uploading = false, customerSaving = false, zernioBusy = false, facebookAccount = null, instagramAccount = null;
@@ -84,7 +117,7 @@ export function createLineInbox() {
     const provider = isSocial(item) ? item.provider : "line", conversationId = isSocial(item) ? item.remoteId : id;
     const data = await aiApi(`conversation?provider=${provider}&conversationId=${encodeURIComponent(conversationId)}`);
     if (id !== selected || requestId !== aiRequest) return;
-    selectedAi = { ...data, id }; renderAiControl();
+    selectedAi = { ...data, id }; conversations.set(id, { ...conversations.get(id), ai: data }); showConversations(); renderAiControl();
   }
   aiBar.addEventListener("click", async event => {
     const mode = event.target.closest("button")?.dataset.aiMode, item = conversations.get(selected), id = selected;
@@ -92,7 +125,7 @@ export function createLineInbox() {
     changingAi = true; aiRequest++; renderAiControl();
     try {
       const data = await aiApi("conversation", { method: "PUT", body: JSON.stringify({ provider: isSocial(item) ? item.provider : "line", conversationId: isSocial(item) ? item.remoteId : id, mode, revision: selectedAi.control.revision || 0 }) });
-      if (id === selected) selectedAi = { ...data, id }; status(data.state.reason);
+      if (id === selected) selectedAi = { ...data, id }; conversations.set(id, { ...conversations.get(id), ai: data }); showConversations(); status(data.state.reason);
     } catch (error) { report(error); } finally { changingAi = false; if (id === selected) { renderAiControl(); void loadAiControl().catch(report); } }
   });
   const messageArea = $("line-messages");
@@ -335,8 +368,11 @@ export function createLineInbox() {
   });
   function showConversations() {
     $("line-conversations").replaceChildren();
-    $("line-empty").hidden = conversations.size > 0;
-    for (const item of [...conversations.values()].sort((a, b) => b.updatedAt - a.updatedAt)) {
+    const visible = filterConversations([...conversations.values()], searchQuery, filterMode);
+    $("line-empty").hidden = visible.length > 0;
+    $("line-empty").textContent = filtering() ? scanning || hasMore() ? "正在尋找符合條件的對話；可載入更多繼續搜尋。" : "沒有符合條件的對話，請試試其他名字或狀態。" : "還沒有對話。完成連線後，傳一則訊息給你的帳號。";
+    $("inbox-filter-summary").textContent = filtering() ? `${visible.length} 段符合 · 已搜尋 ${conversations.size} 段${scanning ? " · 搜尋其他對話中…" : hasMore() ? " · 尚有更多對話" : ""}` : "";
+    for (const item of visible.sort((a, b) => b.updatedAt - a.updatedAt)) {
       const button = document.createElement("button");
       button.type = "button"; button.className = "conversation-item";
       button.setAttribute("aria-pressed", String(selected === item.id));
@@ -346,7 +382,11 @@ export function createLineInbox() {
       const details = document.createElement("span"); details.className = "conversation-details";
       preview.className = "conversation-preview";
       const heading = document.createElement("span"); heading.className = "conversation-title-row"; heading.append(name, time);
-      details.append(heading, preview); button.append(avatar(item), details);
+      const aiLabel = document.createElement("span"); aiLabel.className = "conversation-ai-label";
+      const mode = inboxMode(item.ai); aiLabel.dataset.mode = mode;
+      aiLabel.textContent = ({ auto: "AI 回覆中", human: "真人接手", off: "關閉 AI", unknown: "AI 狀態待確認" })[mode];
+      aiLabel.title = item.ai?.state.reason || "重新整理以取得狀態";
+      details.append(heading, preview, aiLabel); button.append(avatar(item), details);
       button.addEventListener("click", () => selectConversation(item.id));
       $("line-conversations").append(button);
     }
@@ -498,9 +538,10 @@ export function createLineInbox() {
     const results = await Promise.allSettled(tasks);
     const failed = results.find(result => result.status === "rejected"); if (failed) report(failed.reason);
   }
-  async function refresh(more = false, force = true) {
+  async function refresh(more = false, force = true, filterScan = false) {
     if (refreshing || (!channel && !facebookAccount && !instagramAccount) || !active || saving) return;
     const currentEpoch = epoch;
+    const resetPages = !more && (force || !filtering() || !listLoaded);
     refreshing = true; $("line-refresh").disabled = true;
     try {
       const linePromise = channel && (!more || conversationNext) ? api(`conversations${more && conversationNext ? `?before=${encodeURIComponent(conversationNext)}` : ""}`) : null;
@@ -519,16 +560,18 @@ export function createLineInbox() {
         $("line-oa-state").classList.toggle("active", !!channel.verifiedAt);
       }
       // Keep a provider's existing list on transient failure.
-      if (!more) for (const [id, item] of conversations) {
+      if (resetPages) for (const [id, item] of conversations) {
         const result = item.provider === "instagram" ? instagramResult : item.provider === "facebook" ? facebookResult : data;
         if (result) conversations.delete(id);
       }
       for (const item of data?.items || []) conversations.set(item.id, item);
       for (const item of facebookResult?.items || []) conversations.set(item.id, item);
       for (const item of instagramResult?.items || []) conversations.set(item.id, item);
-      if (instagramResult) instagramNext = instagramResult.next || null;
-      if (data) conversationNext = data.next || null;
-      if (facebookResult) zernioConversationNext = facebookResult.next || null;
+      if (instagramResult && (more || resetPages)) instagramNext = instagramResult.next || null;
+      if (data && (more || resetPages)) conversationNext = data.next || null;
+      if (facebookResult && (more || resetPages)) zernioConversationNext = facebookResult.next || null;
+      listLoaded = true;
+      if (filtering() && hasMore() && !scanning && !filterScan) { clearTimeout(filterTimer); filterTimer = setTimeout(() => void scanMore(), 250); }
       const listVersion = JSON.stringify([...conversations.values()].map(conversationVersion).sort());
       if (!more) { unchangedRounds = listVersion === lastListVersion ? unchangedRounds + 1 : 0; lastListVersion = listVersion; }
       showConversations();
@@ -538,7 +581,7 @@ export function createLineInbox() {
         try { sessionStorage.removeItem("botnest-open-conversation"); } catch { /* Storage may be unavailable. */ }
         await selectConversation(pendingConversation); status(""); return;
       }
-      if (more) historyMode(true);
+      if (more && !filterScan) historyMode(true);
       if (!more && needsMessageRefresh(messageSnapshot, conversations.get(selected), Date.now(), force)) await loadMessages();
       if (currentEpoch !== epoch) return;
       if (!changingAi) await loadAiControl();
@@ -793,6 +836,8 @@ export function createLineInbox() {
       channelAiSettings = null; channelAiSaving = false; renderChannelAiToggle(); channelAiFeedback("");
       sending = false; uploading = false; customerSaving = false; zernioBusy = false; customerTags = []; attachments.clear(); drafts.clear(); localReplies.clear(); $("line-reply-text").value = ""; replyControls();
       $("line-emoji-panel").hidden = true; $("line-pick-emoji").setAttribute("aria-expanded", "false");
+      scanEpoch++; scanning = false; listLoaded = false; clearTimeout(filterTimer); searchQuery = ""; filterMode = "all"; $("inbox-name-search").value = "";
+      for (const button of filters.querySelectorAll("[data-filter]")) button.setAttribute("aria-pressed", String(button.dataset.filter === "all"));
       conversationNext = zernioConversationNext = instagramNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
       historyMode(false);
       $("line-oa-name").textContent = $("line-webhook-url").value = $("line-channel-id").value = "";
