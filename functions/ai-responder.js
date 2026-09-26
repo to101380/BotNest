@@ -3,6 +3,13 @@ import { unseal } from "./core.js";
 import { generateAnswer } from "./ai-engine.js";
 import { aiEligibility, normalizeAiSettings } from "./ai-policy.js";
 
+const fingerprint = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+function knowledgeFingerprint(items) {
+  return fingerprint(items.filter(item => item.enabled && !item.deleted)
+    .map(({ id, title, content, url }) => ({ id, title, content, url: url || "" }))
+    .sort((a, b) => a.id.localeCompare(b.id)));
+}
+
 function operationId(value) {
   const hash = createHash("sha256").update(`openai:${value}`).digest("hex");
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
@@ -38,13 +45,27 @@ async function respond({ store, uid, provider, conversationId, messageId, messag
   try {
     // Cosmetic, bounded and best-effort; only after eligibility and the send lease.
     await typing().catch(() => {});
-    const result = prior?.result || await generateAnswer({ settings: ai, knowledge: () => store.aiKnowledge(uid), history: await history(), getOpenAiKey, fetchOpenAi });
-    await store.saveAiLog(uid, id, { ...base, result, status: "prepared", reason: result.reason });
+    const settingsVersion = fingerprint(ai);
+    let knowledgeVersion = null;
+    const knowledgeUnchanged = async () => knowledgeVersion === null || knowledgeFingerprint(await store.aiKnowledge(uid)) === knowledgeVersion;
+    if (prior?.result) {
+      knowledgeVersion = prior.knowledgeVersion ?? null;
+      // A prepared answer may outlive the data it used. Legacy answers without
+      // a version cannot be safely resumed, especially after partial delivery.
+      if (prior.settingsVersion !== settingsVersion || !Object.hasOwn(prior, "knowledgeVersion") || !await knowledgeUnchanged()) {
+        await store.saveAiLog(uid, id, { status: "skipped", reason: "商家資料已更新，取消舊版本回覆" });
+        await finish("skipped"); return { skipped: true };
+      }
+    }
+    const result = prior?.result || await generateAnswer({ settings: ai, knowledge: async () => {
+      const items = await store.aiKnowledge(uid); knowledgeVersion = knowledgeFingerprint(items); return items;
+    }, history: await history(), getOpenAiKey, fetchOpenAi });
+    await store.saveAiLog(uid, id, { ...base, result, settingsVersion, knowledgeVersion, status: "prepared", reason: result.reason });
     // Check policy again after inference in case a human took over while the model was running.
     const [latestSettings, latestControl, liveMessage] = await Promise.all([store.accountAiSettings(uid), store.aiControl(uid, provider, conversationId), provider === "line" ? store.getMessage(message.channelId, conversationId, messageId) : store.getZernioMessage(uid, conversationId, messageId)]);
     const allowed = aiEligibility(latestSettings, provider, latestControl, now());
-    if (!allowed.allowed || (latestControl.revision || 0) !== (control.revision || 0) || JSON.stringify(normalizeAiSettings(latestSettings)) !== JSON.stringify(ai) || liveMessage?.unsent) {
-      await store.saveAiLog(uid, id, { status: "skipped", reason: allowed.allowed ? "設定或對話已更新，取消這次回覆" : allowed.reason });
+    if (!allowed.allowed || (latestControl.revision || 0) !== (control.revision || 0) || JSON.stringify(normalizeAiSettings(latestSettings)) !== JSON.stringify(ai) || liveMessage?.unsent || !await knowledgeUnchanged()) {
+      await store.saveAiLog(uid, id, { status: "skipped", reason: allowed.allowed ? "設定、知識或對話已更新，取消這次回覆" : allowed.reason });
       await finish("skipped"); return { skipped: true };
     }
     const deliveryControl = result.action === "handoff"
@@ -65,8 +86,8 @@ async function respond({ store, uid, provider, conversationId, messageId, messag
         // Permit this handoff acknowledgement after our own mode change, but stop
         // if a human or a newer message changes the conversation during delivery.
         const eligibilityControl = result.action === "handoff" ? { ...controlNow, mode: control.mode } : controlNow;
-        if (!aiEligibility(settingsNow, provider, eligibilityControl, now()).allowed || (controlNow.revision || 0) !== (deliveryControl.revision || 0) || JSON.stringify(normalizeAiSettings(settingsNow)) !== JSON.stringify(ai) || (conversationNow?.latestIncomingId && conversationNow.latestIncomingId !== messageId)) {
-          await store.saveAiLog(uid, id, { status: "skipped", reason: "對話或設定已更新，停止剩餘段落", sentParts });
+        if (!aiEligibility(settingsNow, provider, eligibilityControl, now()).allowed || (controlNow.revision || 0) !== (deliveryControl.revision || 0) || JSON.stringify(normalizeAiSettings(settingsNow)) !== JSON.stringify(ai) || (conversationNow?.latestIncomingId && conversationNow.latestIncomingId !== messageId) || !await knowledgeUnchanged()) {
+          await store.saveAiLog(uid, id, { status: "skipped", reason: "對話、設定或知識已更新，停止剩餘段落", sentParts });
           await finish("skipped"); return { skipped: true };
         }
       }

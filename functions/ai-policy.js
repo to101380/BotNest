@@ -62,21 +62,24 @@ function tokens(value) {
 export function retrieveKnowledge(items, question, settings) {
   const documents = items.filter(item => item.enabled && !item.deleted);
   const business = [settings.businessInfo, settings.instructions].filter(Boolean).join("\n");
-  if (business) documents.unshift({ id: "business", title: "商家資訊與補充指示", content: business, enabled: true });
   const query = tokens(question), chunks = [];
   for (const item of documents) for (let start = 0, index = 1; start < item.content.length; start += 900, index++) {
     const excerpt = item.content.slice(start, start + 1100), words = tokens(`${item.title} ${excerpt}`);
     let score = 0; for (const word of query) if (words.has(word)) score += 1;
     chunks.push({ id: `${item.id}:${index}`, documentId: item.id, title: item.title, excerpt, score, url: item.url || "" });
   }
+  // Settings are bounded at write time (6,000 + 4,000 characters). Always include
+  // their full current value; old matching documents must not displace it.
+  const currentBusiness = business ? [{ id: "business:1", documentId: "business", title: "目前商家資訊與補充指示", excerpt: business, score: 0, url: "" }] : [];
+  const capacity = 8 - currentBusiness.length;
   // Small knowledge bases fit in full, including generic questions without lexical overlap.
-  if (chunks.length <= 8) return chunks;
+  if (chunks.length <= capacity) return [...currentBusiness, ...chunks];
   const ranked = chunks.sort((a, b) => b.score - a.score);
-  const selected = ranked.filter(item => item.score > 0 || item.documentId === "business").slice(0, 8);
+  const selected = ranked.filter(item => item.score > 0).slice(0, capacity);
   // Fill unused context with one opening excerpt per document, rather than dropping all unmatched knowledge.
   for (const chunk of ranked) {
-    if (selected.length >= 8) break;
+    if (selected.length >= capacity) break;
     if (!selected.some(item => item.documentId === chunk.documentId)) selected.push(chunk);
   }
-  return selected;
+  return [...currentBusiness, ...selected];
 }
