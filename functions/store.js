@@ -214,7 +214,7 @@ export function createStore(db) {
       const limitRef = account.collection("limits").doc("zernioAi"); let result = false;
       await db.runTransaction(async tx => {
         const [message, limit] = await tx.getAll(ref, limitRef), value = message.data(), usage = limit.data();
-        if (!value || value.direction !== "incoming" || value.type !== "text" || value.unsent || ["sent", "handoff", "skipped", "failed"].includes(value.aiStatus) || value.aiLeaseUntil > at || (value.aiAttempts || 0) >= 3) return;
+        if (!value || value.direction !== "incoming" || !["text", "image"].includes(value.type) || value.unsent || ["sent", "handoff", "skipped", "failed"].includes(value.aiStatus) || value.aiLeaseUntil > at || (value.aiAttempts || 0) >= 3) return;
         const sameMinute = usage && at - usage.minuteSince < 60000, sameDay = usage && at - usage.daySince < 86400000;
         if ((sameMinute ? usage.minuteCount : 0) >= 20 || (sameDay ? usage.dayCount : 0) >= 500) {
           tx.set(ref, { aiStatus: "throttled", aiLeaseUntil: 0, aiUpdatedAt: at }, { merge: true }); return;
@@ -269,14 +269,14 @@ export function createStore(db) {
       let result = false;
       await db.runTransaction(async tx => {
         const [message, limit] = await tx.getAll(ref, limitRef), value = message.data(), usage = limit.data();
-        if (!value || value.direction !== "incoming" || value.type !== "text" || value.unsent || ["sent", "handoff", "skipped", "failed"].includes(value.aiStatus)) return;
+        if (!value || value.direction !== "incoming" || !["text", "image"].includes(value.type) || value.unsent || ["sent", "handoff", "skipped", "failed"].includes(value.aiStatus)) return;
         if (value.aiLeaseUntil > at || (value.aiAttempts || 0) >= 3) return;
         const sameMinute = usage && at - usage.minuteSince < 60000, sameDay = usage && at - usage.daySince < 86400000;
         if ((sameMinute ? usage.minuteCount : 0) >= 20 || (sameDay ? usage.dayCount : 0) >= 500) {
           tx.set(ref, { aiStatus: "throttled", aiLeaseUntil: 0, aiUpdatedAt: at }, { merge: true });
           return;
         }
-        tx.set(ref, { aiStatus: "processing", aiLeaseUntil: at + 60000, aiAttempts: (value.aiAttempts || 0) + 1 }, { merge: true });
+        tx.set(ref, { aiStatus: "processing", aiLeaseUntil: at + 120000, aiAttempts: (value.aiAttempts || 0) + 1 }, { merge: true });
         tx.set(limitRef, { minuteSince: sameMinute ? usage.minuteSince : at, minuteCount: (sameMinute ? usage.minuteCount : 0) + 1,
           daySince: sameDay ? usage.daySince : at, dayCount: (sameDay ? usage.dayCount : 0) + 1 });
         result = true;

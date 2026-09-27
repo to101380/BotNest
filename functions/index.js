@@ -58,11 +58,11 @@ export const botnestApi = onRequest({
 let aiResponder;
 export const lineAiAutoReply = onDocumentCreated({
   document: "botnest/state/channels/{channelId}/conversations/{conversationId}/messages/{messageId}",
-  region: "us-central1", timeoutSeconds: 60, memory: "256MiB", maxInstances: 5,
+  region: "us-central1", timeoutSeconds: 90, memory: "256MiB", maxInstances: 5,
   secrets: [encryptionKey, openAiKey], retry: false,
 }, event => {
   const message = event.data?.data();
-  if (!message || message.direction !== "incoming" || message.type !== "text" || message.unsent) return;
+  if (!message || message.direction !== "incoming" || !["text", "image"].includes(message.type) || message.unsent) return;
   aiResponder ||= createAiResponder({ store: createStore(getFirestore()), getKey: () => encryptionKey.value(), getOpenAiKey: () => openAiKey.value() });
   return aiResponder(event.params);
 });
@@ -74,7 +74,7 @@ export const facebookAiAutoReply = onDocumentCreated({
   secrets: [openAiKey, zernioApiKey], retry: false,
 }, event => {
   const message = event.data?.data();
-  if (!message || message.direction !== "incoming" || message.type !== "text" || message.unsent) return;
+  if (!message || message.direction !== "incoming" || !["text", "image"].includes(message.type) || message.unsent) return;
   zernioAiResponder ||= createZernioAiResponder({ store: createStore(getFirestore()), getOpenAiKey: () => openAiKey.value(), getZernioKey: () => zernioApiKey.value() });
   return zernioAiResponder(event.params);
 });
