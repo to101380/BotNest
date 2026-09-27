@@ -2,10 +2,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { aiError, normalizeAiSettings, validateAiSettings, aiEligibility } from "./ai-policy.js";
 import { cleanKnowledge, importFile, importUrl } from "./knowledge.js";
 import { generateAnswer } from "./ai-engine.js";
+import { handleUsage, meteredOpenAi } from "./ai-usage.js";
+import { canMonitor } from "./security-monitor.js";
 const hash = value => createHash("sha256").update(value).digest("hex");
 const docId = /^[a-f0-9-]{36}$/;
 export async function handleAiApi({ user, path, req, res, store, getOpenAiKey, openAiConfigured, fetchOpenAi, zernioRequest, now }) {
   const uid = user.uid, query = new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
+  const clientResult = result => { if (!result || canMonitor(user)) return result; const { usage, ...visible } = result; return visible; };
+  if (path === "/api/ai/usage") return handleUsage({ user, query, req, res, store, now });
+  fetchOpenAi = meteredOpenAi(store, uid, { provider: "workspace", kind: path === "/api/ai/test" ? "test" : "knowledge" }, fetchOpenAi, now);
   if (!["GET", "HEAD"].includes(req.method)) {
     const origin = req.get("origin");
     if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw aiError(403, "請從正式網站更新 AI 客服。");
@@ -51,12 +56,13 @@ export async function handleAiApi({ user, path, req, res, store, getOpenAiKey, o
     try {
       const result = await generateAnswer({ settings, knowledge: await store.aiKnowledge(uid), history: [...history, { role: "user", content: question.trim() }], getOpenAiKey, fetchOpenAi });
       await store.saveAiLog(uid, id, { ...base, result, status: result.action === "handoff" ? "handoff" : "test", reason: result.reason });
-      return res.json({ result, liveEnabled: settings.enabled });
+      return res.json({ result: clientResult(result), liveEnabled: settings.enabled });
     } catch (error) { await store.saveAiLog(uid, id, { ...base, status: "failed", reason: "AI 測試未完成，請稍後再試。" }); throw error; }
   }
   if (path === "/api/ai/logs" && req.method === "GET") {
     const before = query.get("before"); if (before && !docId.test(before)) throw aiError(400, "分頁參數錯誤。");
-    return res.json(await store.aiLogs(uid, before));
+    const page = await store.aiLogs(uid, before);
+    return res.json({ ...page, items: page.items.map(item => ({ ...item, ...(item.result ? { result: clientResult(item.result) } : {}) })) });
   }
   if (path === "/api/ai/conversation") {
     const input = req.method === "GET" ? Object.fromEntries(query) : req.body || {}, { provider, conversationId } = input;

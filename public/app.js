@@ -1,3 +1,4 @@
+import { createAiUsage } from "./ai-usage.js";
 import { hasFirebaseConfig, providerName, authErrorMessage, linkProviderAccount, reauthenticateForLink, validateEmailRegistration, reauthenticatePasswordForLink, linkEmailPassword } from "./auth-helpers.js";
 import { createLineInbox } from "./line-inbox.js";
 import { createCustomerManager } from "./customer-manager.js";
@@ -6,6 +7,7 @@ const $ = id => document.getElementById(id);
 const lineInbox = createLineInbox();
 const customerManager = createCustomerManager();
 const aiSettings = createAiSettings();
+const aiUsage = createAiUsage();
 let auth;
 let sdk;
 let busy = false;
@@ -23,30 +25,32 @@ function renderPage(moveFocus = false) {
   const customersPage = signedIn && location.hash === "#customers";
   const channelsPage = signedIn && location.hash === "#channels";
   const assistantPage = signedIn && location.hash === "#assistant";
+  const usagePage = signedIn && location.hash === "#usage";
   $("app-nav").hidden = !signedIn;
   document.body.classList.toggle("authenticated", signedIn);
-  $("account-page").hidden = aiPage || customersPage || channelsPage || assistantPage;
+  $("account-page").hidden = aiPage || customersPage || channelsPage || assistantPage || usagePage;
   $("ai-page").hidden = !aiPage;
   $("customers-page").hidden = !customersPage;
   $("channels-page").hidden = !channelsPage;
   $("assistant-page").hidden = !assistantPage;
-  const pageTitle = assistantPage ? "assistant-title" : aiPage ? "ai-title" : customersPage ? "customers-title" : channelsPage ? "channels-title" : "welcome";
+  const pageTitle = usagePage ? "usage-title" : assistantPage ? "assistant-title" : aiPage ? "ai-title" : customersPage ? "customers-title" : channelsPage ? "channels-title" : "welcome";
   $("signed-in").setAttribute("aria-labelledby", pageTitle);
   document.querySelector(".login-card").setAttribute("aria-labelledby", signedIn ? pageTitle : "title");
   document.body.classList.toggle("inbox-open", signedIn);
-  document.body.classList.toggle("account-open", signedIn && !aiPage && !customersPage && !channelsPage && !assistantPage);
-  document.body.classList.toggle("assistant-open", assistantPage);
+  document.body.classList.toggle("account-open", signedIn && !aiPage && !customersPage && !channelsPage && !assistantPage && !usagePage);
+  document.body.classList.toggle("assistant-open", assistantPage || usagePage);
   document.body.classList.toggle("customers-open", customersPage);
   document.body.classList.toggle("channels-open", channelsPage);
   lineInbox.setSession(auth?.currentUser || null, aiPage ? "inbox" : channelsPage ? "settings" : null);
   customerManager.setSession(auth?.currentUser || null, customersPage);
   aiSettings.setSession(auth?.currentUser || null, assistantPage);
-  for (const [id, active] of [["nav-account", !aiPage && !customersPage && !channelsPage && !assistantPage], ["nav-ai", aiPage], ["nav-customers", customersPage], ["nav-channels", channelsPage], ["nav-assistant", assistantPage]]) {
+  aiUsage.setSession(auth?.currentUser || null, usagePage);
+  for (const [id, active] of [["nav-usage", usagePage], ["nav-account", !aiPage && !customersPage && !channelsPage && !assistantPage && !usagePage], ["nav-ai", aiPage], ["nav-customers", customersPage], ["nav-channels", channelsPage], ["nav-assistant", assistantPage]]) {
     if (signedIn && active) $(id).setAttribute("aria-current", "page");
     else $(id).removeAttribute("aria-current");
   }
-  document.title = signedIn ? `${assistantPage ? "AI 助理" : aiPage ? "訊息" : customersPage ? "顧客" : channelsPage ? "連線" : "帳號"}｜BotNest` : "登入｜BotNest";
-  if (moveFocus && (aiPage || customersPage || channelsPage || assistantPage)) $(pageTitle).focus();
+  document.title = signedIn ? `${usagePage ? "AI 用量" : assistantPage ? "AI 助理" : aiPage ? "訊息" : customersPage ? "顧客" : channelsPage ? "連線" : "帳號"}｜BotNest` : "登入｜BotNest";
+  if (moveFocus && (aiPage || customersPage || channelsPage || assistantPage || usagePage)) $(pageTitle).focus();
 }
 window.addEventListener("hashchange", () => renderPage(true));
 function clearLinkProof() {

@@ -2,6 +2,7 @@ import { createMonitor, aiMetrics } from "./security-monitor.js";
 import { HttpError } from "./core.js";
 import { createHash, randomUUID } from "node:crypto";
 import { normalizeAiSettings } from "./ai-policy.js";
+import { createUsageStore } from "./ai-usage.js";
 
 const digestId = value => createHash("sha256").update(String(value)).digest("hex");
 
@@ -22,6 +23,7 @@ export function createStore(db) {
     return { items: result.slice(0, limit), next: result.length > limit ? result[limit - 1].id : null };
   }
   return {
+    ...createUsageStore(db),
     async aiKnowledge(uid) {
       return rows(await accounts.doc(uid).collection("aiKnowledge").where("deleted", "==", false).limit(40).get()).sort((a, b) => b.updatedAt - a.updatedAt);
     },

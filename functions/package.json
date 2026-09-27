@@ -16,6 +16,7 @@
     "firebase-functions": "7.0.0",
     "ipaddr.js": "2.5.0",
     "mammoth": "1.12.3",
+    "music-metadata": "11.16.1",
     "unpdf": "1.8.1",
     "yauzl": "3.4.0"
   }

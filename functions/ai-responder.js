@@ -1,4 +1,5 @@
 import { readAudioResponse, downloadPublicAudio, transcribeAudio, AUDIO_CLARIFICATION } from "./audio-input.js";
+import { meteredOpenAi } from "./ai-usage.js";
 import { downloadPublicImage, readImageResponse } from "./image-input.js";
 import { createHash } from "node:crypto";
 import { unseal } from "./core.js";
@@ -45,6 +46,7 @@ async function respond({ store, uid, provider, conversationId, messageId, messag
     return { skipped: true };
   }
   try {
+    fetchOpenAi = meteredOpenAi(store, uid, { provider }, fetchOpenAi, now);
     // Cosmetic, bounded and best-effort; only after eligibility and the send lease.
     await typing().catch(() => {});
     const settingsVersion = fingerprint(ai);
