@@ -1,3 +1,4 @@
+import "./account-layout.js";
 // Presentation only: observe existing UI state without delaying navigation or requests.
 const ease = "cubic-bezier(.22, 1, .36, 1)";
 const groupSelector = ".assistant-tabs, .email-tabs, #app-nav, .conversation-ai-controls, .inbox-status-filters";

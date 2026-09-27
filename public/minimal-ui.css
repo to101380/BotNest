@@ -241,3 +241,8 @@ body.account-open #welcome{font-size:28px;margin:18px 0 8px}
 @media(max-width:720px){.assistant-header-actions{flex-direction:row;align-items:center}.knowledge-card .knowledge-copy{flex-basis:calc(100% - 60px)}.knowledge-card .knowledge-actions{margin-top:4px}}
 @media(max-width:600px){#line-inbox .conversation-ai-controls span{flex-basis:100%;max-width:none;margin-bottom:3px}#line-inbox .conversation-ai-controls button{font-size:10px;padding:5px 6px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+/* Account actions share the profile card's content alignment. */
+body.account-open #account-page .account-card-footer{margin-top:28px;padding-top:22px;border-top:1px solid var(--line)}
+body.account-open #account-page .account-card-footer #logout{display:block;width:160px;max-width:100%;margin:0 0 14px;min-height:42px}
+body.account-open #account-page .account-card-footer #status{display:block;margin:0;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
+body.account-open #account-page .account-card-footer #status:empty{display:none}
