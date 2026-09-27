@@ -1,6 +1,6 @@
 # Conversation audio playback
 
-LINE, Messenger and Instagram audio messages now render a player inside the conversation instead of a generic attachment link. Audio downloads only after a user clicks Play. Native controls provide playback, pause and seeking; narrow layouts include a separate accessible seek slider. Playback uses an in-memory Blob URL, allowed only by the media-src CSP directive.
+LINE, Messenger and Instagram audio messages now render a player inside the conversation instead of a generic attachment link. Audio downloads only after a user clicks Play. Native controls provide playback, pause and seeking in a standalone light-gray pill, without an outer message bubble or duplicate slider. Playback uses an in-memory Blob URL, allowed only by the media-src CSP directive.
 
 The message renderer retains existing audio rows during polling and removes stale rows, so updates do not interrupt playback. Starting another recording pauses the previous one. Changing conversation, leaving the inbox, deleting the visible message or ending the session disposes the player and releases its Blob URL; late download results cannot recreate a disposed player.
 
