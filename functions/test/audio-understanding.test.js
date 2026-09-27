@@ -76,3 +76,21 @@ for(const provider of ['facebook','instagram'])test(`${provider}: authenticated 
  assert.equal(res.code,200);assert.equal(saved.type,'audio');assert.equal(saved.text,text||'[語音]');assert.equal(saved.attachments[0].type,'audio');
  }
 });
+
+test('Messenger Ogg/Opus voice is submitted as an ogg audio file',async()=>{
+ const bytes=Buffer.concat([Buffer.from('OggS'),Buffer.alloc(24),Buffer.from('OpusHead')]);
+ const file=audioFile(bytes);assert.equal(file.extension,'ogg');assert.equal(file.type,'audio/ogg');
+ assert.equal(await transcribeAudio(file,{getOpenAiKey:()=> 'test',fetchOpenAi:async(_,options)=>{assert.equal(options.body.get('file').name,'voice.ogg');assert.equal(options.body.get('file').type,'audio/ogg');return Response.json({text:'請問如何訂購？'})}}),'請問如何訂購？');
+ assert.throws(()=>audioFile(Buffer.from('OggS')));
+ const invalid=Buffer.from(bytes);invalid[4]=1;assert.throws(()=>audioFile(invalid));
+});
+test('Meta attachment requests include an application User-Agent and retain pinned DNS across redirects',async()=>{
+ const { downloadPublicAudio }=await import('../audio-input.js');const {EventEmitter}=await import('node:events');const {Readable}=await import('node:stream');let calls=0;
+ const validate=async value=>({url:new URL(value),address:{address:'93.184.216.34',family:4}});
+ const request=(url,options,callback)=>{
+ calls++;assert.equal(options.headers['User-Agent'],'BotNest/1.0');assert.equal(options.headers.Authorization,undefined);options.lookup(url.hostname,{},(_,address)=>assert.equal(address,'93.184.216.34'));
+ const req=new EventEmitter();req.destroy=error=>req.emit('error',error);
+ queueMicrotask(()=>{const first=calls===1;const res=Readable.from(first?[]:[Buffer.from('0000ftypisom0000')]);res.statusCode=first?302:200;res.headers=first?{location:'https://cdn.example.com/voice'}:{};res.on('end',()=>req.emit('close'));callback(res)});return req;
+ };
+ assert.equal((await downloadPublicAudio('https://lookaside.example.com/voice',{validate,request})).extension,'mp4');assert.equal(calls,2);
+});

@@ -15,6 +15,7 @@ export async function readMediaResponse(response, maxBytes) {
 
 // Attachments are untrusted input even when their webhook is authenticated.
 // Validate every redirect and pin public DNS; never forward platform credentials.
+// Meta lookaside media returns an HTML page when User-Agent is absent.
 export async function downloadPublicMedia(value, { validate = validatePublicUrl, request = https.get, maxBytes } = {}, redirects = 0, deadline = Date.now() + 8000) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error("media_limit");
   let dnsTimer;
@@ -24,7 +25,7 @@ export async function downloadPublicMedia(value, { validate = validatePublicUrl,
   ]).finally(() => clearTimeout(dnsTimer));
   if (Date.now() >= deadline) throw new Error("media_timeout");
   return new Promise((resolve, reject) => {
-    const req = request(url, { agent: false, lookup: (_host, options, cb) => options?.all ? cb(null, [address]) : cb(null, address.address, address.family), headers: { Accept: "*/*", "Accept-Encoding": "identity" } }, response => {
+    const req = request(url, { agent: false, lookup: (_host, options, cb) => options?.all ? cb(null, [address]) : cb(null, address.address, address.family), headers: { "User-Agent": "BotNest/1.0", Accept: "*/*", "Accept-Encoding": "identity" } }, response => {
       if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
         response.resume();
         if (redirects >= 3 || !response.headers.location) return reject(new Error("media_redirect"));

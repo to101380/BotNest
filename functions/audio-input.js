@@ -7,6 +7,7 @@ export function audioFile(bytes) {
   let extension, type;
   if (bytes.length >= 12 && head.startsWith("RIFF") && head.slice(8) === "WAVE") { extension = "wav"; type = "audio/wav"; }
   else if (bytes.length >= 12 && head.slice(4, 8) === "ftyp") { extension = "mp4"; type = "audio/mp4"; }
+  else if (bytes.length >= 28 && head.startsWith("OggS") && bytes[4] === 0) { extension = "ogg"; type = "audio/ogg"; }
   else if (bytes.length >= 4 && bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) { extension = "webm"; type = "audio/webm"; }
   else if (bytes.length >= 4 && (head.startsWith("ID3") || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0 && (bytes[1] & 0x06) !== 0))) { extension = "mp3"; type = "audio/mpeg"; }
   else throw new Error("audio_format");
