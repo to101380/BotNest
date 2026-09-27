@@ -1,0 +1,13 @@
+# Conversation audio playback
+
+LINE, Messenger and Instagram audio messages now render a player inside the conversation instead of a generic attachment link. Audio downloads only after a user clicks Play. Native controls provide playback, pause and seeking; narrow layouts include a separate accessible seek slider. Playback uses an in-memory Blob URL, allowed only by the media-src CSP directive.
+
+The message renderer retains existing audio rows during polling and removes stale rows, so updates do not interrupt playback. Starting another recording pauses the previous one. Changing conversation, leaving the inbox, deleting the visible message or ending the session disposes the player and releases its Blob URL; late download results cannot recreate a disposed player.
+
+LINE playback authenticates the session, resolves the owner's channel, checks the message type and withdrawn state, and downloads only the fixed LINE content endpoint. The withdrawn state is checked again before returning bytes. Social playback requires a five-minute HMAC ticket issued from the authenticated, account-filtered message list; the ticket binds the user, provider, currently connected account and attachment URL. Deleted messages receive no ticket. A downloaded recording may remain playable locally until the conversation changes or the message disappears; tickets are not a remote revocation mechanism. Safe public-media downloading preserves DNS pinning, redirect checks, the Meta User-Agent fix and the 8 MiB audio limit. No provider credentials are sent to the browser, and responses use no-store.
+
+Tests: 227 repository tests and 55 syntax checks pass; 61 media tests pass against isolated production source. Coverage includes authentication, cross-account and cross-provider ticket rejection, expiry/tampering, LINE withdrawal, and tenant-filtered social ticket creation. A headless Edge browser, with the release CSP applied, successfully played synthesized WAV, OGG and M4A recordings, sought using the mobile slider, paused, retained playback through message refresh, fit a 390 px viewport and released audio on logout. Production customer recordings were not used for this test.
+
+Deployment uses a fresh production snapshot. Only the API function, player assets and media-src policy are updated; unrelated local changes are excluded.
+
+Published 2026-09-27: Hosting version e1ea9e7c423dad16; all 34 deployed website files match the release. The active API archive matches all 18 staged source files. Health returns 200, unauthenticated settings and audio requests return 401, and the live CSP includes media-src self plus blob.

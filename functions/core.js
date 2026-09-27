@@ -1,3 +1,4 @@
+import { audioTicket, socialAudio, lineAudio } from "./audio-playback.js";
 import { audioAttachments } from "./audio-input.js";
 import { imageAttachments } from "./image-input.js";
 import { attachInboxAi } from "./inbox-ai.js";
@@ -76,7 +77,7 @@ function cleanCustomer(input) {
   return result;
 }
 
-export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () => "", openAiConfigured = () => !!getOpenAiKey(), getZernioKey = () => "", media, fetchLine = fetch, fetchZernio = fetch, fetchOpenAi = fetch, now = Date.now }) {
+export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () => "", openAiConfigured = () => !!getOpenAiKey(), getZernioKey = () => "", media, fetchAudio, fetchLine = fetch, fetchZernio = fetch, fetchOpenAi = fetch, now = Date.now }) {
   const zernioWebhookUrl = "https://planning-with-ai-52d58.web.app/zernio-webhook";
   const zernioWebhookToken = () => createHmac("sha256", Buffer.from(getKey(), "base64")).update("botnest-zernio-webhook-v1").digest("hex");
   let zernioWebhookReady = false, zernioWebhookSetup;
@@ -274,6 +275,10 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
         if (!["facebook", "instagram"].includes(platform)) throw new HttpError(400, "不支援的訊息渠道。");
         const zernio = await store.zernioAccount(user.uid), social = zernio?.[platform];
         if (!social?.accountId) throw new HttpError(409, "請先在渠道設定連接此社群帳號。");
+        if (path === "/api/zernio/audio" && req.method === "POST") {
+          try { return res.json(await socialAudio(req.body?.ticket, { uid: user.uid, platform, accountId: social.accountId }, getKey(), now(), fetchAudio)); }
+          catch { throw new HttpError(400, "語音暫時無法播放，請重新整理對話後再試。"); }
+        }
         const customerRoute = path === "/api/zernio/customer" || path === "/api/zernio/customer/notes" || /^\/api\/zernio\/customer\/notes\/[a-f0-9-]{36}$/.test(path);
         if (customerRoute) {
           const remoteId = query.get("conversationId");
@@ -320,7 +325,7 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
             const attachment = Array.isArray(item.attachments) ? item.attachments[0] : null, kind = attachment?.type;
             const sentAt = Number.isFinite(Date.parse(item.createdAt)) ? Date.parse(item.createdAt) : now();
             const normalizedAttachment = attachment && typeof attachment.url === "string" ? { kind: kind === "image" ? "image" : "file", name: attachment.filename || labels[kind] || "社群附件", url: attachment.url.slice(0, 4096), external: true, expiresAt: sentAt + 86400000 } : null;
-            return { id: `${platform}-${digest(`${social.accountId}:${item.id}`)}`, remoteId: String(item.id), direction: item.direction === "outgoing" ? "outgoing" : "incoming", type: kind || "text", text: String(item.message || labels[kind] || "").slice(0, 10000), sentAt, unsent: !!item.isDeleted, status: item.deliveryStatus || (item.direction === "outgoing" ? "sent" : undefined), ...(normalizedAttachment ? { attachment: normalizedAttachment } : {}) };
+            return { id: `${platform}-${digest(`${social.accountId}:${item.id}`)}`, remoteId: String(item.id), direction: item.direction === "outgoing" ? "outgoing" : "incoming", type: kind || "text", text: String(item.message || labels[kind] || "").slice(0, 10000), sentAt, unsent: !!item.isDeleted, status: item.deliveryStatus || (item.direction === "outgoing" ? "sent" : undefined), ...(normalizedAttachment ? { attachment: normalizedAttachment } : {}), ...(kind === "audio" && normalizedAttachment && !item.isDeleted ? { audioTicket: audioTicket({ uid: user.uid, platform, accountId: social.accountId, url: normalizedAttachment.url }, getKey(), now()) } : {}) };
           });
           return res.json({ items, next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
         }
@@ -376,6 +381,16 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
       const query = new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
       const before = query.get("before");
       if (before && !/^[a-zA-Z0-9_-]{1,128}$/.test(before)) throw new HttpError(400, "分頁參數無效。");
+      const voice = /^\/api\/line\/conversations\/([a-f0-9]{64})\/messages\/([A-Za-z0-9_-]{1,128})\/audio$/.exec(path);
+      if (voice && req.method === "GET") {
+        const message = await store.getMessage(account.channelId, voice[1], voice[2]);
+        if (!message || message.type !== "audio" || message.unsent || !account.accessToken) throw new HttpError(404, "語音不存在或已收回。");
+        try {
+          const data = await lineAudio(`https://api-data.line.me/v2/bot/message/${encodeURIComponent(voice[2])}/content`, unseal(account.accessToken, getKey(), `${account.channelId}:access-token`), fetchLine);
+          if ((await store.getMessage(account.channelId, voice[1], voice[2]))?.unsent) throw new Error("unsent");
+          return res.json(data);
+        } catch { throw new HttpError(400, "語音已過期或暫時無法播放，請稍後重試。"); }
+      }
       const upload = /^\/api\/line\/conversations\/([a-f0-9]{64})\/attachments$/.exec(path);
       if (upload && req.method === "POST") {
         const origin = req.get("origin");

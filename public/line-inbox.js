@@ -1,3 +1,4 @@
+import { createAudioPlayer } from "./audio-player.js";
 import { filterConversations, inboxMode } from "./inbox-filters.js";
 import { showAiModel } from "./ai-model.js";
 import { watchHistoryScroll } from "./history-scroll.js";
@@ -401,6 +402,28 @@ export function createLineInbox() {
       return null;
     } catch { return null; }
   };
+  const audioRows = new Map();
+  function clearAudio() { for (const row of audioRows.values()) row.player.dispose(); audioRows.clear(); }
+  function audioRow(item) {
+    let row = audioRows.get(item.id);
+    if (!row) {
+      const conversationId = selected, conversation = conversations.get(selected);
+      row = { item, bubble: document.createElement("article") };
+      row.bubble.className = `message-bubble audio-message${item.direction === "outgoing" ? " outgoing" : ""}`;
+      row.player = createAudioPlayer(async () => {
+        if (isSocial(conversation)) {
+          if (!row.item.audioTicket) throw new Error("語音連結尚未就緒，請重新整理對話。");
+          return zernioApi(`audio?platform=${conversation.provider}`, { method: "POST", body: JSON.stringify({ ticket: row.item.audioTicket }) });
+        }
+        return api(`conversations/${conversationId}/messages/${encodeURIComponent(item.id)}/audio`);
+      }, current => { for (const other of audioRows.values()) if (other.player.audio !== current) other.player.audio.pause(); });
+      const time = document.createElement("time"); time.textContent = formatClock(item.sentAt); time.dateTime = new Date(item.sentAt).toISOString();
+      row.bubble.append(row.player.root);
+      if (item.text && item.text !== "[語音]") { const caption = document.createElement("p"); caption.textContent = item.text; row.bubble.append(caption); }
+      row.bubble.append(time); audioRows.set(item.id, row);
+    }
+    row.item = item; return row.bubble;
+  }
   let viewerItems = [], viewerIndex = 0;
   function renderImageViewer() {
     const current = viewerItems[viewerIndex];
@@ -426,16 +449,17 @@ export function createLineInbox() {
     const previousTop = messageArea.scrollTop, previousHeight = messageArea.scrollHeight;
     const scrollToLatest = scrollMode === "bottom" || (scrollMode === "auto" && followLatest);
     messageResize.disconnect();
-    $("line-messages").replaceChildren();
+    const desired = [], activeAudio = new Set();
     let renderedDay = null;
     for (const item of [...messages.values()].sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id))) {
       const itemDay = dayKey(item.sentAt);
       if (itemDay !== renderedDay) {
         const divider = document.createElement("div"), label = document.createElement("span");
         divider.className = "message-date-divider"; divider.setAttribute("role", "separator");
-        label.textContent = formatDay(item.sentAt); divider.append(label); $("line-messages").append(divider);
+        label.textContent = formatDay(item.sentAt); divider.append(label); desired.push(divider);
         renderedDay = itemDay;
       }
+      if (item.type === "audio" && !item.unsent) { activeAudio.add(item.id); desired.push(audioRow(item)); continue; }
       const bubble = document.createElement("article"), text = document.createElement("p"), time = document.createElement("time");
       bubble.className = `message-bubble${item.unsent ? " unsent" : ""}${item.direction === "outgoing" ? " outgoing" : ""}`;
       text.textContent = item.text; time.textContent = formatClock(item.sentAt); time.dateTime = new Date(item.sentAt).toISOString();
@@ -481,8 +505,13 @@ export function createLineInbox() {
         }
         if (item.status !== "sent" && item.note) { const note = document.createElement("p"); note.className = "note"; note.textContent = item.note; bubble.append(note); }
       }
-      $("line-messages").append(bubble);
+      desired.push(bubble);
     }
+    for (const [id, row] of audioRows) if (!activeAudio.has(id)) { row.player.dispose(); audioRows.delete(id); }
+    // Keep audio rows connected while polling so playback and seeking are preserved.
+    const target = $("line-messages"), retained = new Set(desired);
+    for (const child of [...target.children]) if (!retained.has(child)) child.remove();
+    desired.forEach((node, index) => { if (target.children[index] !== node) target.insertBefore(node, target.children[index] || null); });
     followLatest = scrollToLatest;
     messageArea.scrollTop = scrollToLatest ? messageArea.scrollHeight : scrollMode === "older" ? previousTop + messageArea.scrollHeight - previousHeight : previousTop;
     historyScroll.sync();
@@ -525,7 +554,7 @@ export function createLineInbox() {
   async function selectConversation(id) {
     flushCustomerSave();
     messageRequest++; messageLoading = false; messageArea.removeAttribute("aria-busy");
-    selected = id; messages.clear(); messageNext = null; messageSnapshot = null; unchangedRounds = 0; scheduleRefresh();
+    clearAudio(); selected = id; messages.clear(); messageNext = null; messageSnapshot = null; unchangedRounds = 0; scheduleRefresh();
     historyMode(false);
     $("line-reply-text").value = drafts.get(id) || ""; replyControls();
     $("line-conversation-title").textContent = label(conversations.get(id));
@@ -822,12 +851,12 @@ export function createLineInbox() {
     else resumeRefresh();
   });
   window.addEventListener("focus", resumeRefresh);
-  window.addEventListener("pagehide", () => { clearSecrets(); controller?.abort(); clearTimeout(timer); messageResize.disconnect(); });
+  window.addEventListener("pagehide", () => { clearAudio(); clearSecrets(); controller?.abort(); clearTimeout(timer); messageResize.disconnect(); });
   return {
     setSession(nextUser, nextMode) {
       const nextActive = !!nextUser && !!nextMode;
       if (user?.uid === nextUser?.uid && active === nextActive && pageMode === nextMode) { user = nextUser; return; }
-      epoch++; controller?.abort(); clearTimeout(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
+      clearAudio(); epoch++; controller?.abort(); clearTimeout(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
       messageRequest++; messageLoading = false; messageArea.removeAttribute("aria-busy");
       messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; pageMode = nextMode; channel = null; facebookAccount = null, instagramAccount = null; selected = null; refreshing = false; saving = false;

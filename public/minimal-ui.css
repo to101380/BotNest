@@ -250,3 +250,17 @@ body.account-open #account-page .account-card-footer #status:empty{display:none}
 body.inbox-open .message-bubble.image-message,body.inbox-open .message-bubble.image-message.outgoing{background:transparent;border:0;box-shadow:none;padding:0;border-radius:0;color:var(--ink)}
 body.inbox-open .image-message .image-attachment{background:transparent;border:0;box-shadow:none;color:var(--ink)}
 body.inbox-open .image-message.outgoing time,body.inbox-open .image-message.outgoing .delivery-state{color:var(--muted)}
+
+/* Incoming voice notes: native accessible playback controls. */
+.message-audio { display: grid; gap: 6px; width: min(280px, 100%); }
+.message-audio audio { display: block; width: 100%; min-width: 0; height: 40px; }
+.message-audio audio[hidden], .message-audio button[hidden] { display: none; }
+.message-audio button { border: 0; border-radius: 16px; padding: 10px 16px; background: rgba(255,255,255,.65); color: #1d1d1f; cursor: pointer; }
+.message-audio button:disabled { opacity: .6; cursor: wait; }
+.message-audio .audio-note { font-size: 12px; overflow-wrap: anywhere; }
+body.inbox-open .message-bubble.audio-message { width: min(320px, 100%); max-width: 100%; min-width: 0; }
+
+.message-audio .audio-seek { display: none; }
+@media (max-width: 600px) {
+  .message-audio .audio-seek:not([hidden]) { display: block; width: 100%; min-width: 0; height: 18px; padding: 0; margin: 0; border: 0; background: transparent; accent-color: #007aff; }
+}
