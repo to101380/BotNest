@@ -51,8 +51,8 @@ export function createCustomerManager() {
     $("customers-list").replaceChildren(...rows.map(item => {
       const row = document.createElement("tr");
       const nameCell = document.createElement("td"), button = document.createElement("button"); button.type = "button"; button.className = "customer-name-button";
-      const details = document.createElement("span"), strong = document.createElement("strong"), source = document.createElement("span");
-      strong.textContent = customerName(item); source.textContent = `來自 ${providerName(item)}`; details.append(strong, source); button.append(makeAvatar(item), details); button.addEventListener("click", () => openConversation(item.id)); nameCell.append(button); row.append(nameCell);
+      const details = document.createElement("span"), strong = document.createElement("strong");
+      strong.textContent = customerName(item); button.setAttribute("aria-label", `${customerName(item)}，${providerName(item)}`); details.append(strong); button.append(makeAvatar(item), details); button.addEventListener("click", () => openConversation(item.id)); nameCell.append(button); row.append(nameCell);
       row.append(textCell(formatDate(item.createdAt || item.updatedAt)), textCell(formatDate(item.updatedAt)), textCell(item.customer?.phone), textCell(item.customer?.email));
       const tags = document.createElement("td"), tagWrap = document.createElement("div"); tagWrap.className = "customer-list-tags";
       for (const value of item.customer?.tags || []) { const tag = document.createElement("span"); tag.textContent = value; tagWrap.append(tag); }
