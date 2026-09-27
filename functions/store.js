@@ -214,7 +214,7 @@ export function createStore(db) {
       const limitRef = account.collection("limits").doc("zernioAi"); let result = false;
       await db.runTransaction(async tx => {
         const [message, limit] = await tx.getAll(ref, limitRef), value = message.data(), usage = limit.data();
-        if (!value || value.direction !== "incoming" || !["text", "image"].includes(value.type) || value.unsent || ["sent", "handoff", "skipped", "failed"].includes(value.aiStatus) || value.aiLeaseUntil > at || (value.aiAttempts || 0) >= 3) return;
+        if (!value || value.direction !== "incoming" || !["text", "image", "audio"].includes(value.type) || value.unsent || ["sent", "handoff", "skipped", "failed"].includes(value.aiStatus) || value.aiLeaseUntil > at || (value.aiAttempts || 0) >= 3) return;
         const sameMinute = usage && at - usage.minuteSince < 60000, sameDay = usage && at - usage.daySince < 86400000;
         if ((sameMinute ? usage.minuteCount : 0) >= 20 || (sameDay ? usage.dayCount : 0) >= 500) {
           tx.set(ref, { aiStatus: "throttled", aiLeaseUntil: 0, aiUpdatedAt: at }, { merge: true }); return;
@@ -269,7 +269,7 @@ export function createStore(db) {
       let result = false;
       await db.runTransaction(async tx => {
         const [message, limit] = await tx.getAll(ref, limitRef), value = message.data(), usage = limit.data();
-        if (!value || value.direction !== "incoming" || !["text", "image"].includes(value.type) || value.unsent || ["sent", "handoff", "skipped", "failed"].includes(value.aiStatus)) return;
+        if (!value || value.direction !== "incoming" || !["text", "image", "audio"].includes(value.type) || value.unsent || ["sent", "handoff", "skipped", "failed"].includes(value.aiStatus)) return;
         if (value.aiLeaseUntil > at || (value.aiAttempts || 0) >= 3) return;
         const sameMinute = usage && at - usage.minuteSince < 60000, sameDay = usage && at - usage.daySince < 86400000;
         if ((sameMinute ? usage.minuteCount : 0) >= 20 || (sameDay ? usage.dayCount : 0) >= 500) {

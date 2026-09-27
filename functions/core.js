@@ -1,3 +1,4 @@
+import { audioAttachments } from "./audio-input.js";
 import { imageAttachments } from "./image-input.js";
 import { attachInboxAi } from "./inbox-ai.js";
 import { createHash, createHmac, timingSafeEqual, randomBytes, randomUUID, createCipheriv, createDecipheriv } from "node:crypto";
@@ -151,7 +152,8 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
         const remoteMessageId = String(message.platformMessageId || message.id || message._id || payload.messageId || "");
         const platform = String(message.platform || payload.platform || account.platform || conversation.platform || "").toLowerCase();
         const text = String(message.text ?? message.message ?? payload.text ?? "").trim();
-        const attachments = imageAttachments(message, payload);
+        const audio = audioAttachments(message, payload);
+        const attachments = [...audio, ...imageAttachments(message, payload)];
         const direction = String(message.direction || payload.direction || "incoming").toLowerCase();
         if (!["facebook", "instagram"].includes(platform) || direction === "outgoing" || !accountId || !remoteConversationId || !remoteMessageId) return res.status(200).json({ ok: true, ignored: true });
         if ([accountId, remoteConversationId, remoteMessageId].some(value => value.length > 512 || /[\u0000-\u001f]/.test(value))) throw new HttpError(400, "Webhook 識別資料無效。");
@@ -159,8 +161,8 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
         if (!owner) return res.status(200).json({ ok: true, ignored: true });
         const timestamp = Date.parse(message.createdAt || payload.createdAt || body.createdAt || body.timestamp);
         const sender = message.sender || payload.sender || {};
-        const saved = await store.ingestZernio(owner.uid, { eventId: String(body.id || body.eventId || `${remoteMessageId}:received`).slice(0, 512), accountId, remoteConversationId, remoteMessageId, provider: platform, type: attachments.length ? "image" : text ? "text" : "unsupported", attachments,
-          text: (text || (attachments.length ? "[圖片]" : "")).slice(0, 10000), sentAt: Number.isFinite(timestamp) ? timestamp : now(), displayName: String(sender.name || conversation.participantName || (platform === "instagram" ? "Instagram 使用者" : "Facebook 使用者")).slice(0, 100),
+        const saved = await store.ingestZernio(owner.uid, { eventId: String(body.id || body.eventId || `${remoteMessageId}:received`).slice(0, 512), accountId, remoteConversationId, remoteMessageId, provider: platform, type: audio.length ? "audio" : attachments.length ? "image" : text ? "text" : "unsupported", attachments,
+          text: (text || (audio.length ? "[語音]" : attachments.length ? "[圖片]" : "")).slice(0, 10000), sentAt: Number.isFinite(timestamp) ? timestamp : now(), displayName: String(sender.name || conversation.participantName || (platform === "instagram" ? "Instagram 使用者" : "Facebook 使用者")).slice(0, 100),
           pictureUrl: String(sender.avatarUrl || sender.picture || conversation.participantPicture || "").slice(0, 2048) });
         return res.status(200).json({ ok: true, created: saved.created });
       }
@@ -227,7 +229,7 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
           if (normalized) {
             // Keep the short-lived credential encrypted and out of public message DTOs.
             // Redelivery may carry an already-used token, so it cannot start a Reply attempt.
-            const reply = ["text", "image"].includes(normalized.type) && receivedAt - normalized.sentAt < 19 * 60000 && !event.deliveryContext?.isRedelivery &&
+            const reply = ["text", "image", "audio"].includes(normalized.type) && receivedAt - normalized.sentAt < 19 * 60000 && !event.deliveryContext?.isRedelivery &&
               typeof event.replyToken === "string" && /^[A-Za-z0-9_-]{1,256}$/.test(event.replyToken)
               ? { replyToken: seal(event.replyToken, getKey(), `${channel.channelId}:${normalized.messageId}:reply-token`), replyExpiresAt: receivedAt + 45000 }
               : null;

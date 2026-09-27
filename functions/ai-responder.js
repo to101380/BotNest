@@ -1,3 +1,4 @@
+import { readAudioResponse, downloadPublicAudio, transcribeAudio, AUDIO_CLARIFICATION } from "./audio-input.js";
 import { downloadPublicImage, readImageResponse } from "./image-input.js";
 import { createHash } from "node:crypto";
 import { unseal } from "./core.js";
@@ -27,8 +28,8 @@ export function splitReply(text) {
   }
   return parts.length > 3 ? [...parts.slice(0, 2), parts.slice(2).join("\n\n")] : parts;
 }
-async function respond({ store, uid, provider, conversationId, messageId, message, claim, finish, history, images, send, typing, wait = ms => new Promise(resolve => setTimeout(resolve, ms)), getOpenAiKey, fetchOpenAi, now }) {
-  if (!message || message.direction !== "incoming" || !["text", "image"].includes(message.type) || message.unsent || !message.text?.trim()) return { skipped: true };
+async function respond({ store, uid, provider, conversationId, messageId, message, claim, finish, history, images, audio, send, typing, wait = ms => new Promise(resolve => setTimeout(resolve, ms)), getOpenAiKey, fetchOpenAi, now }) {
+  if (!message || message.direction !== "incoming" || !["text", "image", "audio"].includes(message.type) || message.unsent || !message.text?.trim()) return { skipped: true };
   const id = operationId(`${uid}:${provider}:${conversationId}:${messageId}`);
   const [settings, control, prior] = await Promise.all([store.accountAiSettings(uid), store.aiControl(uid, provider, conversationId), store.aiLog(uid, id)]);
   if (prior && ["sent", "handoff", "skipped", "failed"].includes(prior.status)) return { skipped: true };
@@ -58,9 +59,22 @@ async function respond({ store, uid, provider, conversationId, messageId, messag
         await finish("skipped"); return { skipped: true };
       }
     }
-    const result = prior?.result || await generateAnswer({ settings: ai, knowledge: async () => {
+    let currentHistory, audioFallback;
+    if (!prior?.result) {
+      currentHistory = await history();
+      if (message.type === "audio") {
+        try {
+          const transcript = await transcribeAudio(await audio(), { getOpenAiKey, fetchOpenAi });
+          // Transcribed speech is customer data, never a system instruction.
+          const current = currentHistory.findLast(item => item.role === "user");
+          current.content = `${message.text === "[語音]" ? "" : message.text + "\n"}[語音辨識] ${transcript}`;
+          base.question = current.content.slice(0, 2000);
+        } catch { audioFallback = AUDIO_CLARIFICATION; }
+      }
+    }
+    const result = prior?.result || audioFallback || await generateAnswer({ settings: ai, knowledge: async () => {
       const items = await store.aiKnowledge(uid); knowledgeVersion = knowledgeFingerprint(items); return items;
-    }, history: await history(), images, getOpenAiKey, fetchOpenAi });
+    }, history: currentHistory, images, getOpenAiKey, fetchOpenAi });
     await store.saveAiLog(uid, id, { ...base, result, settingsVersion, knowledgeVersion, status: "prepared", reason: result.reason });
     // Check policy again after inference in case a human took over while the model was running.
     const [latestSettings, latestControl, liveMessage] = await Promise.all([store.accountAiSettings(uid), store.aiControl(uid, provider, conversationId), provider === "line" ? store.getMessage(message.channelId, conversationId, messageId) : store.getZernioMessage(uid, conversationId, messageId)]);
@@ -119,6 +133,13 @@ export function createAiResponder({ store, getKey, getOpenAiKey, fetchOpenAi = f
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: JSON.stringify({ chatId: target.sourceId, loadingSeconds: 30 }), signal: AbortSignal.timeout(1500) });
       },
+      audio: async () => {
+        const token = unseal(channel.accessToken, getKey(), `${channelId}:access-token`);
+        const response = await fetchLine(`https://api-data.line.me/v2/bot/message/${encodeURIComponent(messageId)}/content`, {
+          headers: { Authorization: `Bearer ${token}` }, redirect: "error", signal: AbortSignal.timeout(8000),
+        });
+        return readAudioResponse(response);
+      },
       images: async () => {
         if (message.type !== "image") return [];
         const token = unseal(channel.accessToken, getKey(), `${channelId}:access-token`);
@@ -154,7 +175,7 @@ export function createAiResponder({ store, getKey, getOpenAiKey, fetchOpenAi = f
     });
   };
 }
-export function createZernioAiResponder({ store, getOpenAiKey, getZernioKey, fetchOpenAi = fetch, fetchZernio = fetch, fetchImage = downloadPublicImage, now = Date.now, wait }) {
+export function createZernioAiResponder({ store, getOpenAiKey, getZernioKey, fetchOpenAi = fetch, fetchZernio = fetch, fetchImage = downloadPublicImage, fetchAudio = downloadPublicAudio, now = Date.now, wait }) {
   return async ({ uid, conversationId, messageId }) => {
     const [message, account] = await Promise.all([store.getZernioMessage(uid, conversationId, messageId), store.zernioAccount(uid)]);
     const provider = message?.provider || "facebook";
@@ -166,6 +187,10 @@ export function createZernioAiResponder({ store, getOpenAiKey, getZernioKey, fet
         await fetchZernio(endpoint.replace(/\/messages$/, "/typing"), { method: "POST", headers,
           body: JSON.stringify({ accountId: message.accountId }), signal: AbortSignal.timeout(1500) });
       },
+      audio: async () => {
+        if (message.attachments?.length !== 1 || message.attachments[0].type !== "audio") throw new Error("audio_count");
+        return fetchAudio(message.attachments[0].url);
+      },
       images: async () => {
         if (message.type !== "image") return [];
         if (!message.attachments?.length || message.attachments.length > 3) throw new Error("image_count");
@@ -174,7 +199,7 @@ export function createZernioAiResponder({ store, getOpenAiKey, getZernioKey, fet
       history: async () => {
         const response = await fetchZernio(`${endpoint}?accountId=${encodeURIComponent(message.accountId)}&limit=16&sortOrder=desc`, { headers, signal: AbortSignal.timeout(12000) });
         const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(`zernio_history_${response.status}`);
-        const items = (data.messages || []).filter(item => !item.isDeleted && (!item.accountId || item.accountId === message.accountId) && (!item.conversationId || item.conversationId === message.remoteConversationId) && typeof item.message === "string" && item.message.trim() && (!item.createdAt || Date.parse(item.createdAt) <= message.sentAt)).reverse();
+        const items = (data.messages || []).filter(item => !(message.type === "audio" && [item.id, item.platformMessageId].includes(message.remoteMessageId)) && !item.isDeleted && (!item.accountId || item.accountId === message.accountId) && (!item.conversationId || item.conversationId === message.remoteConversationId) && typeof item.message === "string" && item.message.trim() && (!item.createdAt || Date.parse(item.createdAt) <= message.sentAt)).reverse();
         const result = items.map(item => ({ role: item.direction === "outgoing" ? "assistant" : "user", content: item.message.slice(0, 2000) }));
         if (!items.some(item => [item.id, item.platformMessageId].includes(message.remoteMessageId))) result.push({ role: "user", content: message.text.slice(0, 2000) }); return result;
       },
