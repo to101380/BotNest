@@ -246,3 +246,7 @@ body.account-open #account-page .account-card-footer{margin-top:28px;padding-top
 body.account-open #account-page .account-card-footer #logout{display:block;width:160px;max-width:100%;margin:0 0 14px;min-height:42px}
 body.account-open #account-page .account-card-footer #status{display:block;margin:0;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
 body.account-open #account-page .account-card-footer #status:empty{display:none}
+/* Photos are standalone media, not colored text bubbles. */
+body.inbox-open .message-bubble.image-message,body.inbox-open .message-bubble.image-message.outgoing{background:transparent;border:0;box-shadow:none;padding:0;border-radius:0;color:var(--ink)}
+body.inbox-open .image-message .image-attachment{background:transparent;border:0;box-shadow:none;color:var(--ink)}
+body.inbox-open .image-message.outgoing time,body.inbox-open .image-message.outgoing .delivery-state{color:var(--muted)}
