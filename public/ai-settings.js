@@ -17,7 +17,7 @@ export function createAiSettings() {
     <section id="assistant-persona" role="tabpanel" aria-labelledby="assistant-tab-persona" class="assistant-panel">
       <div class="assistant-two-col"><div class="assistant-card"><div class="assistant-card-title"><span class="assistant-step">01</span><div><h2>品牌與語氣</h2><p>角色、商家資訊與說話方式，會套用至所有啟用的渠道。</p></div></div>
         <label for="assistant-role">客服角色</label><input id="assistant-role" maxlength="120" placeholder="例如：博序的線上客服助理">
-        <label for="assistant-businessInfo">商家介紹與基本資訊</label><textarea id="assistant-businessInfo" rows="6" maxlength="6000" placeholder="介紹你的品牌、服務對象、營業時間與聯絡方式。詳細商品及政策可放在知識庫。"></textarea>
+        <label for="assistant-businessInfo">商家介紹與基本資訊</label><textarea id="assistant-businessInfo" rows="12" maxlength="6000" placeholder="介紹你的品牌、服務對象、營業時間與聯絡方式。詳細商品及政策可放在知識庫。"></textarea>
         <div class="assistant-fields"><div><label for="assistant-tone">說話語氣</label><input id="assistant-tone" maxlength="200" placeholder="親切、簡潔、有禮貌"></div><div><label for="assistant-language">回覆語言</label><input id="assistant-language" maxlength="80" placeholder="繁體中文"></div></div>
       </div><div class="assistant-card"><div class="assistant-card-title"><span class="assistant-step">02</span><div><h2>回覆原則</h2><p>清楚告訴 AI 哪些內容需要交給真人。</p></div></div>
         <label for="assistant-forbidden">禁止回答或承諾的內容</label><textarea id="assistant-forbidden" rows="5" maxlength="2000" placeholder="例如：不得承諾折扣、不得判定退款、不得猜測訂單狀態。"></textarea>
