@@ -1,7 +1,7 @@
 import https from "node:https";
 import { lookup } from "node:dns/promises";
 import ipaddr from "ipaddr.js";
-import { load } from "cheerio";
+import { extractKnowledgeHtml } from "./knowledge-html.js";
 import { AI_DEFAULTS, aiError } from "./ai-policy.js";
 
 export const KNOWLEDGE_LIMIT = 40000;
@@ -41,13 +41,9 @@ async function fetchPublicPage(value, redirects = 0) {
   });
 }
 export async function importUrl(value) {
-  const page = await fetchPublicPage(value); let content = page.content, title = new URL(page.url).hostname;
-  if (page.html) {
-    const $ = load(content); title = $("title").first().text().trim() || title;
-    $("script,style,noscript,iframe,svg,nav,footer,header,form").remove(); $("br").replaceWith("\n"); $("p,div,li,h1,h2,h3,tr").append("\n");
-    content = ($("main").length ? $("main") : $("article").length ? $("article") : $("body")).text();
-  }
-  return imported({ title, content, kind: "url", url: page.url });
+  const page = await fetchPublicPage(value);
+  const extracted = page.html ? extractKnowledgeHtml(page.content, page.url) : { content: page.content, title: new URL(page.url).hostname };
+  return imported({ ...extracted, kind: "url", url: page.url });
 }
 function imported(value) {
   const content = value.content.replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n\s*\n\s*\n/g, "\n\n").trim();

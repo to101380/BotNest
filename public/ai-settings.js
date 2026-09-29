@@ -130,6 +130,10 @@ export function createAiSettings() {
     for (const source of values) { const details = document.createElement("details"); details.className = "assistant-source"; details.append(text("summary", source.title), text("p", source.excerpt)); container.append(details); }
   }
   function openEditor(item = null) {
+    let warning = $("knowledge-import-warning");
+    if (!warning) { warning = text("p", "", "assistant-muted"); warning.id = "knowledge-import-warning"; $("knowledge-title").after(warning); }
+    warning.textContent = Array.isArray(item?.importWarnings) ? item.importWarnings.join(" ") : "";
+    warning.hidden = !warning.textContent;
     knowledgeSaver?.dispose(); draftId = crypto.randomUUID();
     editing = item?.id || null; $("knowledge-title").value = item?.title || ""; $("knowledge-content").value = item?.content || ""; $("knowledge-enabled").checked = item?.enabled ?? true;
     $("knowledge-dialog-title").textContent = item ? "編輯知識" : "新增知識"; $("knowledge-editor-status").textContent = "變更後自動儲存，標題與內容皆需填寫。"; $("knowledge-retry").hidden = true; $("knowledge-discard").hidden = true; $("knowledge-editor-status").classList.remove("error");
