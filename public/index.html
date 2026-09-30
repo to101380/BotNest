@@ -138,7 +138,6 @@
                   <label for="line-reply-text">回覆這段對話</label>
                   <div class="composer-tools" role="group" aria-label="附件與表情符號">
                     <button id="line-pick-image" type="button" title="傳送圖片" aria-label="選取圖片" disabled="">▧ <span>圖片</span></button>
-                    <button id="line-image-library" type="button" aria-label="圖片素材" title="圖片素材" disabled>▦ <span>圖片素材</span></button>
                     <button id="line-pick-file" type="button" title="傳送文件連結" aria-label="選取文件" disabled="">📎 <span>文件</span></button>
                     <button id="line-pick-emoji" type="button" aria-label="選取表情符號" aria-expanded="false" disabled="">☺ <span>表情符號</span></button>
                     <input id="line-image-input" type="file" accept="image/jpeg,image/png,image/webp" hidden="">
@@ -146,20 +145,12 @@
                   </div>
                   <div id="line-emoji-panel" class="emoji-panel" role="group" aria-label="表情符號" hidden=""></div>
                   <div id="line-attachment-preview" class="attachment-preview" hidden=""><span id="line-attachment-name"></span><button id="line-remove-attachment" type="button" aria-label="移除待傳附件">移除</button></div>
-                  <section id="line-card-editor" class="line-card-editor" aria-label="圖片回覆設定" hidden>
-                    <div class="image-reply-options"><label for="line-image-format">呈現方式</label><select id="line-image-format"><option value="card">LINE 圖片卡片</option><option value="image">一般圖片</option></select><button id="line-save-image" type="button">加入圖片素材</button></div>
-                    <div id="line-card-fields" class="line-card-fields">
-                      <div class="line-card-inputs"><label for="line-card-title">標題（選填）</label><input id="line-card-title" maxlength="80" placeholder="例如：黑色小包"><label for="line-card-description">說明（選填）</label><textarea id="line-card-description" maxlength="500" rows="2" placeholder="款式、尺寸或想補充的內容"></textarea></div>
-                      <div class="line-card-sample" aria-label="LINE 卡片示意"><img id="line-card-sample-image" alt="待傳送圖片"><div><strong id="line-card-sample-title"></strong><p id="line-card-sample-description"></p></div><span>查看圖片</span></div>
-                    </div><p id="line-image-expiry" class="note"></p>
-                  </section>
                   <textarea id="line-reply-text" rows="3" maxlength="5000" placeholder="輸入回覆內容…" disabled=""></textarea>
                   <div class="reply-actions"><span id="line-reply-hint" class="note">先選擇一段對話。</span><button id="line-send" class="email-primary" type="submit" disabled="">傳送回覆</button></div>
                   
                   
                 <details class="reply-help"><summary>回覆說明</summary><p id="reply-channel-note" class="note">Enter 傳送，Shift＋Enter 換行。</p><p id="reply-attachment-note" class="note">圖片自動壓縮；文件上限 5 MB，以 30 天有效的下載連結傳送。</p></details></form>
               </section>
-              <dialog id="line-library-dialog" class="line-library-dialog" aria-labelledby="line-library-title"><div class="line-library-heading"><h2 id="line-library-title">圖片素材</h2><button id="line-library-close" type="button" aria-label="關閉圖片素材">×</button></div><p class="note">收藏自己上傳的圖片，供這個 LINE 官方帳號的其他對話重複使用。圖片保留 30 天，到期前一天停止提供選取；移出素材不會撤回已傳送的圖片。</p><label for="line-library-search">搜尋已載入的圖片</label><input id="line-library-search" type="search" placeholder="輸入圖片檔名"><p id="line-library-state" role="status"></p><div id="line-library-grid" class="line-library-grid"></div><button id="line-library-more" type="button" hidden>載入更多</button></dialog>
               <aside id="customer-panel" class="customer-panel" aria-label="客戶資料" hidden="">
                 <div class="customer-panel-heading">
                   <div id="customer-avatar"></div>

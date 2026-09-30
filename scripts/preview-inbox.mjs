@@ -7,7 +7,6 @@ import { randomBytes } from "node:crypto";
 import { createHandler, normalizeEvent, seal } from "../functions/core.js";
 import { createStore } from "../functions/store.js";
 import { memoryDb } from "../functions/test/memory.js";
-import { mediaSignature } from "../functions/media.js";
 const root = fileURLToPath(new URL("../public/", import.meta.url));
 const store = createStore(memoryDb()), key = randomBytes(32).toString("base64");
 await store.bind("preview", { channelId: "1234567890", ownerUid: "preview", botUserId: `U${"a".repeat(32)}`, displayName: "BotNest 示範帳號", basicId: "@demo", secret: seal("a".repeat(32), key, "1234567890"), accessToken: seal("demo-only-token", key, "1234567890:access-token"), verifiedAt: Date.now() });
@@ -18,12 +17,7 @@ for (const [i, text] of ["你好，我想了解服務內容。", "可以告訴�
   await store.ingest("1234567890", normalizeEvent({ type: "message", webhookEventId: `demo-${i}`, timestamp: Date.now() - (3 - i) * 60000, source: { type: "user", userId: `U${"b".repeat(32)}` }, message: { type: "text", id: String(i), text } }));
 }
 const previewMedia = new Map();
-const demoImageId = "11111111-1111-4111-8111-111111111111", demoExpiry = Date.now() + 30 * 86400000;
-const demoPath = `/api/line/media/1234567890/${demoImageId}`, demoBytes = await readFile(new URL("line-brand.png", new URL("../public/", import.meta.url)));
-previewMedia.set("demo-image", demoBytes);
-await store.saveAttachment("1234567890", demoImageId, { id: demoImageId, kind: "image", name: "示範圖片.png", mime: "image/png", size: demoBytes.length, expiresAt: demoExpiry, storagePath: "demo-image", library: true, librarySavedAt: Date.now(), url: `https://planning-with-ai-52d58.web.app${demoPath}?expires=${demoExpiry}&signature=${mediaSignature(demoPath, String(demoExpiry), key)}` });
 const handler = createHandler({ store, getKey: () => key,
-  authorizeSession: async () => {}, // Only this loopback fixture uses a fake identity.
   openAiConfigured: () => true,
   getOpenAiKey: () => "preview-never-a-real-key",
   fetchOpenAi: async () => new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ action: "reply", text: "您好！我們週一至五上午 9 點至下午 6 點營業，週末公休。", reason: "依商家提供的營業資訊（本機模擬）", grounded: true, kind: "answer", sourceIds: ["business:1"] }) }] }] }), { headers: { "Content-Type": "application/json" } }),
@@ -78,7 +72,7 @@ http.createServer(async (req, res) => {
       req.originalUrl = req.url; req.get = name => name.toLowerCase() === "origin" ? "https://planning-with-ai-52d58.web.app" : req.headers[name.toLowerCase()];
       res.set = (k, v) => { res.setHeader(k, v); return res; };
       res.status = code => { res.statusCode = code; return res; };
-      res.json = data => { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(data).replaceAll("https://planning-with-ai-52d58.web.app", `http://127.0.0.1:${process.env.BOTNEST_PREVIEW_PORT || 5191}`)); };
+      res.json = data => { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(data)); };
       res.send = data => res.end(data);
       return await handler(req, res);
     }
@@ -89,7 +83,6 @@ http.createServer(async (req, res) => {
     if (relative.startsWith("..") || path.isAbsolute(relative)) { res.statusCode = 403; return res.end(); }
     let data = await readFile(target);
     if (target.endsWith("index.html")) data = data.toString().replace('src="/app.js"', 'src="/__preview.js"');
-    if (target.endsWith("line-inbox.js")) data = data.toString().replaceAll("https://planning-with-ai-52d58.web.app", `http://127.0.0.1:${process.env.BOTNEST_PREVIEW_PORT || 5191}`);
     res.setHeader("Content-Type", types[path.extname(target)] || "application/octet-stream"); res.end(data);
   } catch { res.statusCode = 404; res.end("Not found"); }
 }).listen(Number(process.env.BOTNEST_PREVIEW_PORT || 5191), "127.0.0.1", () => console.log(`Demo data only: http://127.0.0.1:${process.env.BOTNEST_PREVIEW_PORT || 5191}`));

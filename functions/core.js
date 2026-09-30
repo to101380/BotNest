@@ -394,17 +394,6 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
         } catch { throw new HttpError(400, "語音已過期或暫時無法播放，請稍後重試。"); }
       }
       const upload = /^\/api\/line\/conversations\/([a-f0-9]{64})\/attachments$/.exec(path);
-      if (path === "/api/line/image-library" && req.method === "GET") {
-        const page = await store.imageLibrary(account.channelId, before);
-        return res.json({ items: page.items.filter(item => item.library && item.kind === "image" && !item.messageId && item.expiresAt > now() + 86400000).map(({ id, name, kind, size, url, expiresAt }) => ({ id, name, kind, size, url, expiresAt, library: true })), next: page.next });
-      }
-      const libraryImage = /^\/api\/line\/image-library\/([a-f0-9-]{36})$/.exec(path);
-      if (libraryImage && ["PUT", "DELETE"].includes(req.method)) {
-        const origin = req.get("origin");
-        if (origin && ![MEDIA_ORIGIN, "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站管理素材。");
-        await store.updateLibraryImage(account.channelId, libraryImage[1], req.method === "PUT", now());
-        return res.json({ ok: true });
-      }
       if (upload && req.method === "POST") {
         const origin = req.get("origin");
         if (origin && ![MEDIA_ORIGIN, "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站上傳。");
@@ -503,11 +492,11 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
       if (messages && req.method === "POST") {
         const origin = req.get("origin");
         if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站回覆。");
-        const { text = "", operationId, attachmentId = null, imageCard = null } = req.body || {};
+        const { text = "", operationId, attachmentId = null } = req.body || {};
         if (typeof text !== "string" || (!attachmentId && !text.trim()) || text.length > 5000 || (attachmentId && !/^[a-f0-9-]{36}$/.test(attachmentId)) || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(operationId || "")) throw new HttpError(400, "請輸入 1～5000 字的回覆或選取附件。");
         if (!account.accessToken) throw new HttpError(409, "請先更新 OA 連線憑證，啟用網頁回覆。");
         const token = unseal(account.accessToken, getKey(), `${account.channelId}:access-token`);
-        const operation = await store.prepareReply(account.channelId, messages[1], operationId, text, now(), attachmentId, null, null, imageCard);
+        const operation = await store.prepareReply(account.channelId, messages[1], operationId, text, now(), attachmentId);
         if (operation.claimed) await store.pauseAiForHuman(user.uid, "line", messages[1], now());
         if (!operation.claimed) return res.status(["sent", "failed"].includes(operation.status) ? 200 : 202).json({ message: operation.message });
         let state = "uncertain", note = "傳送結果尚未確認，請用這則訊息的重試按鈕確認，避免另發一則。";
