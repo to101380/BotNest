@@ -145,14 +145,18 @@ export function createLineInbox() {
     const canReply = facebook ? !!(current?.provider === "instagram" ? instagramAccount : facebookAccount) : !!channel?.canReply;
     const enabled = active && !!selected && canReply && !saving && !sending && !uploading;
     $("line-reply-text").disabled = $("line-send").disabled = !enabled;
-    for (const id of ["line-pick-image", "line-pick-file", "line-remove-attachment"]) $(id).disabled = !enabled || facebook;
+    for (const id of ["line-pick-image", "line-remove-attachment"]) $(id).disabled = !enabled;
+    $("line-pick-file").hidden = current?.provider === "instagram";
+    $("line-pick-file").disabled = !enabled || current?.provider === "instagram";
+    $("line-pick-file").title = facebook ? "傳送文件" : "傳送文件連結";
     $("line-pick-emoji").disabled = !enabled;
     $("line-attachment-preview").hidden = !attachments.has(selected) && !uploading;
     $("line-attachment-name").textContent = uploading ? "正在準備附件…" : attachments.has(selected) ? `${attachments.get(selected).kind === "image" ? "圖片" : "文件"}：${attachments.get(selected).name}（待傳送）` : "";
     $("line-send").textContent = sending ? "傳送中…" : "傳送";
-    $("line-reply-hint").textContent = !selected ? "先選擇一段對話。" : !canReply ? "請先到渠道設定完成連線。" : facebook ? `${channelName(current)} 文字回覆 · 最多 5000 字` : "最多 5000 字";
+    $("line-reply-hint").textContent = !selected ? "先選擇一段對話。" : !canReply ? "請先到渠道設定完成連線。" : facebook ? `${channelName(current)} · 最多 5000 字` : "最多 5000 字";
     $("reply-channel-note").textContent = facebook ? `Enter 傳送，Shift＋Enter 換行。回覆會透過 ${channelName(current)} 傳送。` : "Enter 傳送，Shift＋Enter 換行。回覆會使用 OA 的 LINE 訊息額度。";
-    $("reply-attachment-note").hidden = !!facebook;
+    $("reply-attachment-note").hidden = false;
+    $("reply-attachment-note").textContent = current?.provider === "instagram" ? "圖片會自動壓縮；選取後按傳送才會送出。" : facebook ? "圖片會自動壓縮；文件上限 5 MB，以附件傳送。" : "圖片自動壓縮；文件上限 5 MB，以 30 天有效的下載連結傳送。";
   }
   const status = (text, error = false) => {
     for (const id of ["line-status", "channel-status"]) { $(id).textContent = text; $(id).classList.toggle("error", error); }
@@ -397,7 +401,7 @@ export function createLineInbox() {
   const trustedMediaUrl = attachment => {
     try {
       const url = new URL(attachment.url, location.origin);
-      if (url.origin === "https://planning-with-ai-52d58.web.app" && url.pathname.startsWith("/api/line/media/")) return url;
+      if (url.origin === "https://planning-with-ai-52d58.web.app" && ["/api/line/media/", "/api/zernio/media/"].some(prefix => url.pathname.startsWith(prefix))) return url;
       if (attachment.external && url.protocol === "https:" && /(^|\.)(fbcdn\.net|cdninstagram\.com|fbsbx\.com)$/i.test(url.hostname)) return url;
       return null;
     } catch { return null; }
@@ -641,7 +645,7 @@ export function createLineInbox() {
   async function sendReply(conversationId, text, operationId, attachment) {
     const currentConversation = conversations.get(conversationId), facebook = isSocial(currentConversation);
     const canReply = facebook ? !!(currentConversation?.provider === "instagram" ? instagramAccount : facebookAccount) : !!channel?.canReply;
-    if (sending || !active || !canReply || !conversationId || (!text.trim() && !attachment) || (facebook && attachment)) return;
+    if (sending || !active || !canReply || !conversationId || (!text.trim() && !attachment) || (currentConversation?.provider === "instagram" && attachment?.kind === "file")) return;
     const isRetry = !!operationId;
     operationId ||= crypto.randomUUID();
     const currentEpoch = epoch;
@@ -651,11 +655,11 @@ export function createLineInbox() {
     if (selected === conversationId) { historyMode(false); messages.set(initial.id, initial); showMessages("bottom"); }
     try {
       const data = facebook
-        ? await zernioApi(`messages?platform=${currentConversation.provider}`, { method: "POST", body: JSON.stringify({ conversationId: currentConversation.remoteId, text, operationId }) })
+        ? await zernioApi(`messages?platform=${currentConversation.provider}`, { method: "POST", body: JSON.stringify({ conversationId: currentConversation.remoteId, text, operationId, attachmentId: attachment?.id || null }) })
         : await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId, attachmentId: attachment?.id || null }) });
       localReplies.set(operationId, { conversationId, message: data.message });
       if (selected === conversationId) void loadAiControl().catch(report);
-      if (selected === conversationId) { messages.set(data.message.id, data.message); showMessages(); }
+      if (selected === conversationId) { if (data.message.id !== initial.id) messages.delete(initial.id); messages.set(data.message.id, data.message); showMessages(); }
       status(data.message.status === "sent" ? "" : data.message.note || "傳送狀態待確認。", data.message.status !== "sent");
     } catch (error) {
       if (currentEpoch !== epoch) return;
@@ -672,7 +676,9 @@ export function createLineInbox() {
     } finally { if (currentEpoch === epoch) { sending = false; replyControls(); showMessages(); } }
   }
   async function uploadFile(file, kind) {
-    if (!file || uploading || sending || !selected || !active || !channel?.canReply || isSocial(conversations.get(selected))) return;
+    const currentConversation = conversations.get(selected), social = isSocial(currentConversation);
+    const canReply = social ? !!(currentConversation.provider === "instagram" ? instagramAccount : facebookAccount) : !!channel?.canReply;
+    if (!file || uploading || sending || !selected || !active || !canReply || (currentConversation?.provider === "instagram" && kind !== "image")) return;
     const conversationId = selected, currentEpoch = epoch;
     uploading = true; replyControls();
     try {
@@ -696,7 +702,10 @@ export function createLineInbox() {
       let binary = "";
       for (let offset = 0; offset < bytes.length; offset += 32768) binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
       if (currentEpoch !== epoch) return;
-      const data = await api(`conversations/${conversationId}/attachments`, { method: "POST", body: JSON.stringify({ name, kind, data: btoa(binary) }) });
+      const data = social
+        ? await zernioApi(`attachments?platform=${currentConversation.provider}`, { method: "POST", body: JSON.stringify({ conversationId: currentConversation.remoteId, name, kind, data: btoa(binary) }) })
+        : await api(`conversations/${conversationId}/attachments`, { method: "POST", body: JSON.stringify({ name, kind, data: btoa(binary) }) });
+      if (currentEpoch !== epoch) return;
       attachments.set(conversationId, data.attachment);
       status("附件已準備好，按傳送後才會送給對方。");
     } catch (error) { if (currentEpoch === epoch) report(error); }

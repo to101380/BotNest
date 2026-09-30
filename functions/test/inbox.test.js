@@ -114,6 +114,88 @@ async function fixture(overrides = {}) {
   return { db, store, request, webhook };
 }
 
+async function socialAttachmentFixture(send = async () => new Response(JSON.stringify({ success: true, data: { messageId: "sent-file" } }))) {
+  let clock = 1800000000000;
+  const calls = [], objects = new Map();
+  const f = await fixture({ now: () => clock, getZernioKey: () => "fixture-key", media: { save: async (path, bytes) => objects.set(path, bytes), read: async path => objects.get(path) }, fetchZernio: async (url, options = {}) => {
+    calls.push({ url, options });
+    if (options.method === "POST") return send(url, options);
+    return new Response(JSON.stringify({ messages: [], pagination: { hasMore: false } }));
+  } });
+  for (const uid of ["alice", "bob"]) {
+    await f.store.saveZernioProfile(uid, `profile-${uid}`, clock);
+    for (const platform of ["facebook", "instagram"]) await f.store.bindZernioPlatform(uid, `profile-${uid}`, platform, { accountId: `${uid}-${platform}`, platform }, clock);
+    const account = f.db.collection("botnest").doc("state").collection("accounts").doc(uid);
+    const { channelId, ...withoutLine } = (await account.get()).data();
+    await account.set(withoutLine);
+  }
+  const upload = (platform, kind = "image", overrides = {}) => f.request(`/api/zernio/attachments?platform=${platform}`, { method: "POST", body: { conversationId: "thread-1", kind, name: kind === "image" ? "photo.png" : "guide.txt", data: kind === "image" ? "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY9sAAAAASUVORK5CYII=" : Buffer.from("file contents").toString("base64"), ...overrides } });
+  return { ...f, calls, objects, upload, tick: delta => { clock += delta; } };
+}
+
+test("Messenger images and documents and Instagram images send native attachments without a LINE account", async () => {
+  for (const [platform, kind] of [["facebook", "image"], ["facebook", "file"], ["instagram", "image"]]) {
+    const f = await socialAttachmentFixture();
+    const uploaded = await f.upload(platform, kind);
+    assert.equal(uploaded.code, 200);
+    const attachment = uploaded.body.attachment;
+    assert.equal(attachment.storagePath, undefined); assert.equal(attachment.ownerUid, undefined);
+    assert.match(f.calls[0].url, new RegExp(`accountId=alice-${platform}`));
+    const body = { conversationId: "thread-1", text: "", attachmentId: attachment.id, operationId: randomUUID(), accountId: "attacker" };
+    const result = await f.request(`/api/zernio/messages?platform=${platform}`, { method: "POST", body });
+    assert.equal(result.code, 200); assert.equal(result.body.message.status, "sent"); assert.equal(result.body.message.type, kind);
+    assert.deepEqual(JSON.parse(f.calls.at(-1).options.body), { accountId: `alice-${platform}`, attachmentUrl: attachment.url, attachmentType: kind });
+    const count = f.calls.length;
+    assert.deepEqual((await f.request(`/api/zernio/messages?platform=${platform}`, { method: "POST", body })).body, result.body);
+    assert.equal(f.calls.length, count);
+    assert.equal((await f.request(`/api/zernio/messages?platform=${platform}`, { method: "POST", body: { ...body, text: "changed" } })).code, 409);
+    const downloaded = await f.request(attachment.url, { token: null });
+    assert.equal(downloaded.code, 200); assert.ok(downloaded.body.length > 0);
+    assert.equal((await f.request(attachment.url, { token: null, method: "HEAD" })).body, "");
+    assert.equal((await f.request(attachment.url.replace("signature=", "signature=0"), { token: null })).code, 403);
+    f.tick(30 * 86400000);
+    assert.equal((await f.request(attachment.url, { token: null })).code, 403);
+  }
+});
+
+test("social attachments cannot cross tenants, conversations or platforms and Instagram rejects documents", async () => {
+  const f = await socialAttachmentFixture();
+  const attachment = (await f.upload("facebook")).body.attachment;
+  const body = { conversationId: "thread-1", text: "", attachmentId: attachment.id, operationId: randomUUID() };
+  assert.equal((await f.request("/api/zernio/messages", { method: "POST", token: "bob", body })).code, 400);
+  assert.equal((await f.request("/api/zernio/messages", { method: "POST", body: { ...body, conversationId: "other" } })).code, 400);
+  assert.equal((await f.request("/api/zernio/messages?platform=instagram", { method: "POST", body })).code, 400);
+  assert.equal((await f.upload("instagram", "file")).code, 400);
+  assert.equal((await f.upload("facebook", "file", { name: "script.html" })).code, 400);
+  assert.equal((await f.request("/api/zernio/attachments", { method: "POST", token: null, body: {} })).code, 401);
+  assert.equal((await f.request("/api/zernio/attachments", { method: "POST", headers: { origin: "https://evil.example" }, body: {} })).code, 403);
+  assert.equal(f.calls.filter(call => call.options.method === "POST").length, 0);
+  f.tick(29 * 86400000);
+  assert.equal((await f.request("/api/zernio/messages", { method: "POST", body })).code, 400);
+});
+
+test("uncertain and partially successful social attachment sends are never blindly repeated", async () => {
+  for (const send of [async () => { throw Error("timeout"); }, async () => new Response("{}", { status: 500 }), async () => new Response(JSON.stringify({ success: true, data: { messageId: "partial", partialFailure: { part: "text", error: "rejected" } } }))]) {
+    const f = await socialAttachmentFixture(send), attachment = (await f.upload("facebook")).body.attachment;
+    const body = { conversationId: "thread-1", text: "說明", attachmentId: attachment.id, operationId: randomUUID() };
+    const first = await f.request("/api/zernio/messages", { method: "POST", body });
+    assert.equal(first.code, 202); assert.equal(first.body.message.status, "uncertain");
+    f.tick(25000);
+    const second = await f.request("/api/zernio/messages", { method: "POST", body });
+    assert.equal(second.code, 202); assert.deepEqual(second.body, first.body);
+    assert.equal(f.calls.filter(call => call.options.method === "POST").length, 1);
+    assert.equal(JSON.parse(f.calls.at(-1).options.body).message, "說明");
+  }
+});
+
+test("concurrent attachment sends claim a single upstream operation and upstream rejections are visible", async () => {
+  const f = await socialAttachmentFixture(async () => new Response("{}", { status: 400 })), attachment = (await f.upload("instagram")).body.attachment;
+  const body = { conversationId: "thread-1", attachmentId: attachment.id, operationId: randomUUID() };
+  const results = await Promise.all([f.request("/api/zernio/messages?platform=instagram", { method: "POST", body }), f.request("/api/zernio/messages?platform=instagram", { method: "POST", body })]);
+  assert.ok(results.some(result => result.body.message.status === "failed"));
+  assert.equal(f.calls.filter(call => call.options.method === "POST").length, 1);
+});
+
 test("OA secrets are authenticated ciphertext bound to their channel", () => {
   const value = seal(secret, key, "1234567890");
   assert.equal(unseal(value, key, "1234567890"), secret);

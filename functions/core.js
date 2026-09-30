@@ -204,6 +204,17 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
         return res.json({ redirectUrl: redirect.toString() });
       }
       const mediaRoute = /^\/api\/line\/media\/(\d{5,20})\/([a-f0-9-]{36})$/.exec(path);
+      const socialMediaRoute = /^\/api\/zernio\/media\/([a-f0-9-]{36})\/[^/]+$/.exec(path);
+      if (socialMediaRoute && ["GET", "HEAD"].includes(req.method)) {
+        const params = new URL(req.originalUrl || req.url, MEDIA_ORIGIN).searchParams;
+        if (!validMediaSignature(path, params.get("expires"), params.get("signature"), getKey(), now())) throw new HttpError(403, "附件連結無效或已過期。");
+        const attachment = await store.getSocialAttachment(socialMediaRoute[1]);
+        if (!attachment || attachment.expiresAt <= now()) throw new HttpError(404, "附件已過期或不存在。");
+        res.set("Content-Type", attachment.mime);
+        res.set("Content-Disposition", `${attachment.kind === "image" ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(attachment.name)}`);
+        res.set("Content-Security-Policy", "default-src 'none'; sandbox");
+        return res.status(200).send(req.method === "HEAD" ? "" : await media.read(attachment.storagePath));
+      }
       if (mediaRoute && ["GET", "HEAD"].includes(req.method)) {
         const params = new URL(req.originalUrl || req.url, MEDIA_ORIGIN).searchParams;
         if (!validMediaSignature(path, params.get("expires"), params.get("signature"), getKey(), now())) throw new HttpError(403, "附件連結無效或已過期。");
@@ -277,6 +288,24 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
         if (!["facebook", "instagram"].includes(platform)) throw new HttpError(400, "不支援的訊息渠道。");
         const zernio = await store.zernioAccount(user.uid), social = zernio?.[platform];
         if (!social?.accountId) throw new HttpError(409, "請先在渠道設定連接此社群帳號。");
+        if (path === "/api/zernio/attachments" && req.method === "POST") {
+          const origin = req.get("origin");
+          if (origin && ![MEDIA_ORIGIN, "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站上傳。");
+          const { conversationId } = req.body || {};
+          if (typeof conversationId !== "string" || !conversationId || conversationId.length > 512 || /[\u0000-\u001f]/.test(conversationId)) throw new HttpError(400, "社群對話參數無效。");
+          const file = validateUpload(req.body);
+          if (platform === "instagram" && file.kind !== "image") throw new HttpError(400, "Instagram 僅支援上傳圖片。");
+          await store.reserveSocialUpload(user.uid, file.size, now());
+          // Validate access through the connected account before storing any bytes.
+          await zernioRequest(`/inbox/conversations/${encodeURIComponent(conversationId)}/messages?accountId=${encodeURIComponent(social.accountId)}&limit=1`);
+          const id = randomUUID(), expiresAt = now() + 30 * 86400000;
+          const mediaPath = `/api/zernio/media/${id}/${encodeURIComponent(file.name)}`;
+          const url = `${MEDIA_ORIGIN}${mediaPath}?expires=${expiresAt}&signature=${mediaSignature(mediaPath, String(expiresAt), getKey())}`;
+          const attachment = { id, ownerUid: user.uid, platform, accountId: social.accountId, conversationId, name: file.name, kind: file.kind, mime: file.mime, size: file.size, expiresAt, url, storagePath: `botnest/social/${digest(user.uid)}/${id}` };
+          await media.save(attachment.storagePath, file.bytes, file.mime);
+          await store.saveSocialAttachment(id, attachment);
+          return res.json({ attachment: { id, name: file.name, kind: file.kind, size: file.size, url, expiresAt } });
+        }
         if (path === "/api/zernio/audio" && req.method === "POST") {
           try { return res.json(await socialAudio(req.body?.ticket, { uid: user.uid, platform, accountId: social.accountId }, getKey(), now(), fetchAudio)); }
           catch { throw new HttpError(400, "語音暫時無法播放，請重新整理對話後再試。"); }
@@ -327,6 +356,15 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
             const attachment = Array.isArray(item.attachments) ? item.attachments[0] : null, kind = attachment?.type;
             const sentAt = Number.isFinite(Date.parse(item.createdAt)) ? Date.parse(item.createdAt) : now();
             const normalizedAttachment = attachment && typeof attachment.url === "string" ? { kind: kind === "image" ? "image" : "file", name: attachment.filename || labels[kind] || "社群附件", url: attachment.url.slice(0, 4096), external: true, expiresAt: sentAt + 86400000 } : null;
+            if (normalizedAttachment) {
+              try {
+                const mediaUrl = new URL(normalizedAttachment.url);
+                if (mediaUrl.origin === MEDIA_ORIGIN && mediaUrl.pathname.startsWith("/api/zernio/media/") && /^\d{13}$/.test(mediaUrl.searchParams.get("expires") || "")) {
+                  normalizedAttachment.external = false;
+                  normalizedAttachment.expiresAt = Number(mediaUrl.searchParams.get("expires"));
+                }
+              } catch { /* Untrusted or malformed provider URLs remain non-renderable. */ }
+            }
             return { id: `${platform}-${digest(`${social.accountId}:${item.id}`)}`, remoteId: String(item.id), direction: item.direction === "outgoing" ? "outgoing" : "incoming", type: kind || "text", text: String(item.message || labels[kind] || "").slice(0, 10000), sentAt, unsent: !!item.isDeleted, status: item.deliveryStatus || (item.direction === "outgoing" ? "sent" : undefined), ...(normalizedAttachment ? { attachment: normalizedAttachment } : {}), ...(kind === "audio" && normalizedAttachment && !item.isDeleted ? { audioTicket: audioTicket({ uid: user.uid, platform, accountId: social.accountId, url: normalizedAttachment.url }, getKey(), now()) } : {}) };
           });
           return res.json({ items, next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
@@ -334,9 +372,26 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
         if (path === "/api/zernio/messages" && req.method === "POST") {
           const origin = req.get("origin");
           if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站回覆社群訊息。");
-          const { conversationId, text, operationId } = req.body || {};
-          if (typeof conversationId !== "string" || !conversationId || conversationId.length > 512 || /[\u0000-\u001f]/.test(conversationId) || typeof text !== "string" || !text.trim() || text.length > 5000 || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(operationId || "")) throw new HttpError(400, "社群回覆格式錯誤。");
+          const { conversationId, text = "", operationId, attachmentId = null } = req.body || {};
+          if (typeof conversationId !== "string" || !conversationId || conversationId.length > 512 || /[\u0000-\u001f]/.test(conversationId) || typeof text !== "string" || (!text.trim() && !attachmentId) || text.length > 5000 || (attachmentId !== null && (typeof attachmentId !== "string" || !/^[a-f0-9-]{36}$/.test(attachmentId))) || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(operationId || "")) throw new HttpError(400, "社群回覆格式錯誤。");
           await store.zernioSendAttempt(user.uid, now());
+          if (attachmentId) {
+            const operation = await store.prepareSocialAttachmentReply(user.uid, operationId, { platform, accountId: social.accountId, conversationId, text: text.trim(), attachmentId }, now());
+            if (!operation.claimed) return res.status(operation.message.status === "uncertain" ? 202 : 200).json({ message: operation.message });
+            await store.pauseAiForHuman(user.uid, platform, digest(`${social.accountId}:${conversationId}`), now());
+            let message = operation.message;
+            try {
+              const data = await zernioRequest(`/inbox/conversations/${encodeURIComponent(conversationId)}/messages`, { method: "POST", headers: { "Idempotency-Key": operationId }, body: JSON.stringify({ accountId: social.accountId, ...(text.trim() ? { message: text.trim() } : {}), attachmentUrl: message.attachment.url, attachmentType: message.attachment.kind }) });
+              const result = data.data || data, remoteId = result.messageId;
+              if (data.success === false || result.partialFailure || !remoteId) {
+                message = { ...message, note: result.partialFailure ? "附件或文字僅部分傳送成功，請到原平台確認；不會自動重送。" : "平台未確認完整傳送結果，請到原平台查看；不會自動重送。" };
+              } else message = { ...message, id: `${platform}-${digest(`${social.accountId}:${remoteId}`)}`, remoteId: String(remoteId), status: "sent", note: "已交給平台傳送。" };
+            } catch (error) {
+              if (error instanceof HttpError && error.status < 500 && error.status !== 409) message = { ...message, status: "failed", note: "平台拒絕傳送，請確認對話的回覆期限、帳號權限與檔案格式。" };
+            }
+            await store.finishSocialAttachmentReply(user.uid, operationId, message);
+            return res.status(message.status === "uncertain" ? 202 : 200).json({ message });
+          }
           await store.pauseAiForHuman(user.uid, platform, digest(`${social.accountId}:${conversationId}`), now());
           const data = await zernioRequest(`/inbox/conversations/${encodeURIComponent(conversationId)}/messages`, { method: "POST", headers: { "Idempotency-Key": operationId }, body: JSON.stringify({ accountId: social.accountId, message: text.trim() }) });
           const messageId = String(data.messageId || data.data?.messageId || `out-${operationId}`);

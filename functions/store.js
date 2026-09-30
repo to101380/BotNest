@@ -139,6 +139,41 @@ export function createStore(db) {
         tx.set(ref, { since: active ? old.since : at, count: active ? old.count + 1 : 1 });
       });
     },
+    async reserveSocialUpload(uid, size, at) {
+      const ref = accounts.doc(uid).collection("limits").doc("socialUploads");
+      await db.runTransaction(async tx => {
+        const old = (await tx.get(ref)).data(), active = old && at - old.since < 86400000;
+        const bytes = (active ? old.bytes : 0) + size, count = (active ? old.count : 0) + 1;
+        if (bytes > 100 * 1024 * 1024 || count > 100) throw new HttpError(429, "今日附件上傳額度已達上限，請明天再試。");
+        tx.set(ref, { since: active ? old.since : at, bytes, count });
+      });
+    },
+    async saveSocialAttachment(id, attachment) { await state.collection("socialAttachments").doc(id).set(attachment); },
+    async getSocialAttachment(id) { return (await state.collection("socialAttachments").doc(id).get()).data(); },
+    async prepareSocialAttachmentReply(uid, operationId, value, at) {
+      const ref = accounts.doc(uid).collection("socialAttachmentOutbox").doc(operationId);
+      return db.runTransaction(async tx => {
+        const previous = (await tx.get(ref)).data();
+        const fingerprint = digestId(JSON.stringify(value));
+        if (previous) {
+          if (previous.fingerprint !== fingerprint) throw new HttpError(409, "不可用同一筆傳送編號更改附件、內容或收件對象。");
+          return { ...previous, claimed: false };
+        }
+        const stored = (await tx.get(state.collection("socialAttachments").doc(value.attachmentId))).data();
+        if (!stored || stored.ownerUid !== uid || stored.platform !== value.platform || stored.accountId !== value.accountId || stored.conversationId !== value.conversationId || stored.expiresAt <= at + 86400000) throw new HttpError(400, "附件無效、已過期或不屬於這段對話，請重新上傳。");
+        if (value.platform === "instagram" && stored.kind !== "image") throw new HttpError(400, "Instagram 僅支援上傳圖片。");
+        const { id, name, kind, url, size, expiresAt } = stored;
+        const attachment = { id, name, kind, url, size, expiresAt };
+        const message = { id: `out-${operationId}`, operationId, direction: "outgoing", type: kind, text: value.text, attachment, sentAt: at, status: "uncertain", note: "傳送結果待確認；請先到原平台查看，勿重複傳送。", unsent: false };
+        const operation = { fingerprint, message, createdAt: at };
+        tx.set(ref, operation);
+        return { ...operation, claimed: true };
+      });
+    },
+    async finishSocialAttachmentReply(uid, operationId, message) {
+      await accounts.doc(uid).collection("socialAttachmentOutbox").doc(operationId).set({ message }, { merge: true });
+      return message;
+    },
     async zernioCustomer(uid, conversationId) {
       return (await accounts.doc(uid).collection("zernioCustomers").doc(conversationId).get()).data()?.customer || {};
     },
