@@ -25,3 +25,11 @@
 LINE 官方規格：https://developers.line.biz/en/docs/messaging-api/using-flex-messages/
 
 修改前備份：GitHub tag `backup-before-line-image-cards-20260930`，commit `6da55d9`。備份包含現況程式與文件，不包含憑證、顧客資料與本機診斷暫存。
+
+## 2026-09-30 正式發布
+
+已發布至 https://planning-with-ai-52d58.web.app 。Hosting 版本 `64899cfe3ca19a11`，前一版本 `6cfd6003d4dcf196`。
+
+以最新正式快照建立 `.deploy-image-cards` 隔離目錄，僅套用 commit `532a187` 的圖片功能。後端僅部署 `botnest:botnestApi` 的 `core.js`、`store.js`、`image-card.js`；保留正式 `index.js`、原有身分驗證及其他函式。網站僅變更 `index.html`、`line-inbox.js`、`line-inbox.css`、新增 `image-reply.js`，保留原有 Hosting rewrites 與 headers。其他本機登入安全等未發布變更未一併上線。
+
+驗證：本機完整 245 項測試通過。隔離後端收件匣測試 52/54 通過；另兩項 OAuth 綁定測試在未修改的正式快照也失敗，屬既有版本與本機測試的差異，本次未改動相關流程。新圖片卡片、素材隔離、到期與重試測試均通過。发布後逐檔核對全部 37 個 Hosting 檔案、後端部署來源與 ACTIVE 狀態，並確認未登入呼叫素材 API 回應 401。尚未向真實 LINE 收件者送出驗收訊息。
