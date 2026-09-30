@@ -3,6 +3,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>登入｜BotNest</title>
   <meta name="description" content="在 BotNest 管理訊息、顧客與 AI 助理。">
+
+  <script type="module" src="/login-experience.js"></script>
   <link rel="stylesheet" href="/style.css?v=20260918-1">
   <link rel="stylesheet" href="/line-inbox.css?v=20260918-1">
   <link rel="stylesheet" href="/customer-manager.css?v=20260918-1">
@@ -10,7 +12,7 @@
   <link rel="stylesheet" href="/ai-settings.css?v=20260918-2">
   <link rel="stylesheet" href="/login-security.css">
   <script type="module" src="/app.js"></script>
-<link rel="stylesheet" href="/minimal-ui.css?v=20260926-1"><link rel="stylesheet" href="/ui-motion.css?v=20260926-1"><script type="module" src="/ui-motion.js"></script><link rel="stylesheet" href="/brand-ui.css?v=20260926-1"></head>
+<link rel="stylesheet" href="/minimal-ui.css?v=20260926-1"><link rel="stylesheet" href="/ui-motion.css?v=20260926-1"><script type="module" src="/ui-motion.js"></script><link rel="stylesheet" href="/brand-ui.css?v=20260926-1"><link rel="stylesheet" href="/login-design.css"></head>
 <body class="auth-pending">
   <div id="auth-loading" class="auth-loading" role="status" aria-live="polite" aria-label="正在確認登入狀態">
     <span class="auth-loading-mark" aria-hidden="true">B</span>
@@ -24,14 +26,19 @@
       <p class="auth-kicker">少一點切換，多一點連結。</p>
       <h2 id="auth-story-title">好對話。<br><span>好關係。</span></h2>
       <p class="auth-story-copy">訊息、顧客與 AI 助理，<br>在同一個工作空間，自然接上。</p>
-      <div class="auth-art" aria-hidden="true">
-        <div class="auth-orbit"></div>
-        <div class="auth-channel auth-channel-line"><img src="/line-brand.png" alt=""><span>LINE</span></div>
-        <div class="auth-channel auth-channel-meta"><span class="auth-meta-dot"></span><span>Messenger</span></div>
-        <div class="auth-channel auth-channel-ig"><span class="auth-ig-dot"></span><span>Instagram</span></div>
-        <div class="auth-conversation"><div class="auth-conversation-top"><span class="auth-mini-mark">B</span><strong>讓對話繼續</strong><span class="auth-online"></span></div><div class="auth-incoming">您好，想了解更多。</div><div class="auth-outgoing">當然，很高興為您介紹。<span>AI 助理</span></div></div>
-      </div>
-      <p class="auth-story-foot">YOUR CONVERSATIONS. ONE PLACE.</p>
+      <section class="auth-demo" aria-label="跨渠道訊息介面示意">
+        <div class="auth-demo-tabs" role="group" aria-label="切換示意渠道">
+          <button type="button" data-demo-channel="line" aria-pressed="true" aria-controls="auth-demo-content"><span class="demo-dot demo-line" aria-hidden="true"></span>LINE</button>
+          <button type="button" data-demo-channel="facebook" aria-pressed="false" aria-controls="auth-demo-content"><span class="demo-dot demo-facebook" aria-hidden="true"></span>Messenger</button>
+          <button type="button" data-demo-channel="instagram" aria-pressed="false" aria-controls="auth-demo-content"><span class="demo-dot demo-instagram" aria-hidden="true"></span>Instagram</button>
+        </div>
+        <div class="auth-demo-surface" id="auth-demo-content" aria-live="polite" aria-atomic="true">
+          <div class="auth-demo-heading"><span class="auth-demo-avatar" aria-hidden="true">林</span><div><strong>林小姐</strong><span id="auth-demo-source">透過 LINE 傳來訊息</span></div><span class="auth-demo-label">介面示意</span></div>
+          <p class="auth-demo-question" id="auth-demo-question">您好，想了解這款商品。</p>
+          <div class="auth-demo-reply"><span class="auth-demo-spark" aria-hidden="true">✦</span><div><span>AI 助理</span><p id="auth-demo-answer">您好，很高興為您介紹。<br>想先了解規格，還是使用方式呢？</p></div></div>
+        </div>
+        <p class="auth-demo-caption">不同渠道，同樣用心。<span>點選上方渠道，看看示意。</span></p>
+      </section>
     </aside>
     <nav id="app-nav" class="app-nav" aria-label="主要導覽" hidden="">
       <p class="nav-caption">工作空間</p>
