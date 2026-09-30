@@ -34,7 +34,7 @@ export function createLineInbox() {
   let selected = null, conversationNext = null, zernioConversationNext = null, instagramNext = null, messageNext = null, refreshing = false, saving = false, browsingHistory = false;
   let messageLoading = false, messageRequest = 0;
   let unchangedRounds = 0, lastListVersion = "", messageSnapshot = null, lastResume = 0;
-  let bulkMode = false, bulkBusy = false;
+  let bulkMode = false, bulkBusy = false, bulkAnchor = null;
   const bulkIds = new Set();
   function scheduleRefresh() {
     clearTimeout(timer);
@@ -83,7 +83,7 @@ export function createLineInbox() {
   }
   function setBulkSelection(id = null) {
     if (bulkBusy || (id && !conversations.has(id))) return;
-    bulkMode = !!id; bulkIds.clear(); if (id) bulkIds.add(id); clearBulkResult();
+    bulkMode = !!id; bulkAnchor = id; bulkIds.clear(); if (id) bulkIds.add(id); clearBulkResult();
     document.querySelector(".conversation-panel").scrollTop = 0;
     scanEpoch++; scanning = false; clearTimeout(filterTimer);
     showConversations();
@@ -94,12 +94,13 @@ export function createLineInbox() {
     select: id => setBulkSelection(id),
   });
   const selectionHelp = document.createElement("p"); selectionHelp.className = "note";
-  selectionHelp.textContent = "長按對話可批量選取；鍵盤可使用 Shift＋空白鍵。";
+  selectionHelp.textContent = "長按對話可批量選取；按住 Shift 點選可選取連續範圍。鍵盤可使用 Shift＋空白鍵進入選取模式。";
   document.querySelector(".conversation-toolbar .inbox-help").append(selectionHelp);
   bulkPanel.addEventListener("click", event => {
     const button = event.target.closest("button"); if (!button || button.disabled || bulkBusy) return;
     if (button.dataset.bulkMode) { void changeBulkMode(button.dataset.bulkMode); return; }
     if (button.dataset.bulkSelect === "exit") { setBulkSelection(); return; }
+    bulkAnchor = null;
     if (button.dataset.bulkSelect === "clear") bulkIds.clear();
     else for (const item of filterConversations([...conversations.values()], searchQuery, filterMode)) bulkIds.add(item.id);
     clearBulkResult(); showConversations();
@@ -473,6 +474,7 @@ export function createLineInbox() {
     $("line-empty").textContent = filtering() ? scanning || hasMore() ? "正在尋找符合條件的對話；可載入更多繼續搜尋。" : "沒有符合條件的對話，請試試其他名字或狀態。" : "還沒有對話。完成連線後，傳一則訊息給你的帳號。";
     $("inbox-filter-summary").textContent = filtering() ? `${visible.length} 段符合 · 已搜尋 ${conversations.size} 段${scanning ? " · 搜尋其他對話中…" : hasMore() ? " · 尚有更多對話" : ""}` : "";
     const visibleIds = new Set(visible.map(item => item.id));
+    if (!visibleIds.has(bulkAnchor)) bulkAnchor = null;
     if (!bulkBusy) for (const id of bulkIds) if (!visibleIds.has(id)) bulkIds.delete(id);
     for (const [id, row] of conversationRows) if (!visibleIds.has(id)) { row.button.remove(); conversationRows.delete(id); }
     let position = 0;
@@ -503,8 +505,19 @@ export function createLineInbox() {
       aiLabel.textContent = ({ auto: "AI 回覆中", human: "真人接手", off: "關閉 AI", unknown: "AI 狀態待確認" })[mode];
       aiLabel.title = item.ai?.state.reason || "重新整理以取得狀態";
       details.append(heading, preview, aiLabel); button.append(avatar(item), details);
-      button.addEventListener("click", () => {
-        if (bulkMode) { if (bulkBusy) return; if (bulkIds.has(item.id)) bulkIds.delete(item.id); else bulkIds.add(item.id); clearBulkResult(); showConversations(); }
+      button.addEventListener("click", event => {
+        if (bulkMode) {
+          if (bulkBusy) return;
+          const ids = [...list.children].map(row => row.dataset.conversationId);
+          if (event.shiftKey && bulkAnchor && ids.includes(bulkAnchor)) {
+            const from = ids.indexOf(bulkAnchor), to = ids.indexOf(item.id);
+            for (const id of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) bulkIds.add(id);
+          } else {
+            if (bulkIds.has(item.id)) bulkIds.delete(item.id); else bulkIds.add(item.id);
+            bulkAnchor = item.id;
+          }
+          clearBulkResult(); showConversations();
+        }
         else void selectConversation(item.id);
       });
       const focused = prior?.button === document.activeElement;
@@ -995,7 +1008,7 @@ export function createLineInbox() {
       const nextActive = !!nextUser && !!nextMode;
       if (user?.uid === nextUser?.uid && active === nextActive && pageMode === nextMode) { user = nextUser; return; }
       clearAudio(); epoch++; controller?.abort(); clearTimeout(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
-      longPress.reset(); bulkMode = false; bulkBusy = false; bulkIds.clear(); clearBulkResult();
+      longPress.reset(); bulkMode = false; bulkBusy = false; bulkAnchor = null; bulkIds.clear(); clearBulkResult();
       messageRequest++; messageLoading = false; messageArea.removeAttribute("aria-busy");
       messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; pageMode = nextMode; channel = null; facebookAccount = null, instagramAccount = null; selected = null; refreshing = false; saving = false;
