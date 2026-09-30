@@ -4,6 +4,7 @@ import { showAiModel } from "./ai-model.js";
 import { watchHistoryScroll } from "./history-scroll.js";
 import { pollDelay, conversationVersion, needsMessageRefresh } from "./inbox-polling.js";
 import { runBulkAi } from "./inbox-bulk.js";
+import { installConversationLongPress } from "./inbox-long-press.js";
 const $ = id => document.getElementById(id);
 const isSocial = item => ["facebook", "instagram"].includes(item?.provider);
 const channelName = item => item?.provider === "instagram" ? "Instagram" : item?.provider === "facebook" ? "Facebook Messenger" : "LINE";
@@ -60,11 +61,8 @@ export function createLineInbox() {
   filters.innerHTML = '<label class="sr-only" for="inbox-name-search">搜尋用戶名字</label><input id="inbox-name-search" type="search" placeholder="搜尋用戶名字…" autocomplete="off"><div class="inbox-status-filters" role="group" aria-label="篩選回覆狀態"><button type="button" data-filter="all" aria-pressed="true">全部</button><button type="button" data-filter="auto" aria-pressed="false">AI 回覆中</button><button type="button" data-filter="human" aria-pressed="false">真人接手</button><button type="button" data-filter="off" aria-pressed="false">關閉 AI</button></div><p id="inbox-filter-summary" class="inbox-filter-summary" role="status" aria-live="polite"></p>';
   document.querySelector(".conversation-toolbar").append(filters);
   const bulkStyle = document.createElement("link"); bulkStyle.rel = "stylesheet"; bulkStyle.href = "/inbox-bulk.css"; document.head.append(bulkStyle);
-  const bulkToggle = document.createElement("button"); bulkToggle.type = "button"; bulkToggle.className = "inbox-bulk-toggle";
-  bulkToggle.textContent = "批量選取"; bulkToggle.setAttribute("aria-pressed", "false"); bulkToggle.setAttribute("aria-controls", "inbox-bulk-panel");
-  $("line-refresh").before(bulkToggle);
   const bulkPanel = document.createElement("div"); bulkPanel.id = "inbox-bulk-panel"; bulkPanel.className = "inbox-bulk-panel"; bulkPanel.hidden = true;
-  bulkPanel.innerHTML = '<span class="inbox-bulk-count" role="status" aria-live="polite">已選取 0 段對話</span><div class="inbox-bulk-selection"><button type="button" data-bulk-select="all">全選目前清單</button><button type="button" data-bulk-select="clear">清除</button></div><div class="inbox-bulk-actions" role="group" aria-label="批量切換回覆模式"><button type="button" data-bulk-mode="auto">交回 AI</button><button type="button" data-bulk-mode="human">真人接手</button></div><p class="inbox-bulk-hint">只選取目前已載入且符合篩選的對話。</p>';
+  bulkPanel.innerHTML = '<div class="inbox-bulk-heading"><span class="inbox-bulk-count" role="status" aria-live="polite">已選取 0 段對話</span><button type="button" data-bulk-select="exit" aria-label="取消批量選取">取消</button></div><div class="inbox-bulk-selection"><button type="button" data-bulk-select="all">全選目前清單</button><button type="button" data-bulk-select="clear">清除</button></div><div class="inbox-bulk-actions" role="group" aria-label="批量切換回覆模式"><button type="button" data-bulk-mode="auto">交回 AI</button><button type="button" data-bulk-mode="human">真人接手</button></div><p class="inbox-bulk-hint">只選取目前已載入且符合篩選的對話。</p>';
   const bulkResult = document.createElement("div"); bulkResult.className = "inbox-bulk-result"; bulkResult.hidden = true;
   const bulkSummary = document.createElement("p"); bulkSummary.setAttribute("role", "status"); bulkSummary.setAttribute("aria-live", "polite");
   const bulkErrors = document.createElement("details"); bulkErrors.className = "inbox-bulk-errors"; bulkErrors.hidden = true;
@@ -75,8 +73,6 @@ export function createLineInbox() {
   function renderBulk() {
     document.querySelector(".conversation-panel").classList.toggle("bulk-selection-active", bulkMode);
     document.querySelector(".inbox-grid").classList.toggle("bulk-selection-active", bulkMode);
-    bulkToggle.disabled = bulkBusy || (!bulkMode && !conversations.size);
-    bulkToggle.textContent = bulkMode ? "完成選取" : "批量選取"; bulkToggle.setAttribute("aria-pressed", String(bulkMode));
     bulkPanel.hidden = !bulkMode; bulkPanel.setAttribute("aria-busy", String(bulkBusy));
     bulkPanel.querySelector(".inbox-bulk-count").textContent = `已選取 ${bulkIds.size} 段對話`;
     for (const button of bulkPanel.querySelectorAll("button")) button.disabled = bulkBusy || (button.dataset.bulkMode ? !bulkIds.size || refreshing || changingAi || sending : button.dataset.bulkSelect === "clear" && !bulkIds.size);
@@ -85,16 +81,25 @@ export function createLineInbox() {
     $("line-refresh").disabled = refreshing || bulkBusy;
     $("line-more-conversations").disabled = bulkBusy;
   }
-  bulkToggle.addEventListener("click", () => {
-    if (bulkBusy) return;
-    bulkMode = !bulkMode; bulkIds.clear(); clearBulkResult();
+  function setBulkSelection(id = null) {
+    if (bulkBusy || (id && !conversations.has(id))) return;
+    bulkMode = !!id; bulkIds.clear(); if (id) bulkIds.add(id); clearBulkResult();
     document.querySelector(".conversation-panel").scrollTop = 0;
     scanEpoch++; scanning = false; clearTimeout(filterTimer);
     showConversations();
+    if (id) conversationRows.get(id)?.button.focus({ preventScroll: true });
+  }
+  const longPress = installConversationLongPress($("line-conversations"), {
+    enabled: () => active && pageMode === "inbox" && !bulkMode && !bulkBusy,
+    select: id => setBulkSelection(id),
   });
+  const selectionHelp = document.createElement("p"); selectionHelp.className = "note";
+  selectionHelp.textContent = "長按對話可批量選取；鍵盤可使用 Shift＋空白鍵。";
+  document.querySelector(".conversation-toolbar .inbox-help").append(selectionHelp);
   bulkPanel.addEventListener("click", event => {
     const button = event.target.closest("button"); if (!button || button.disabled || bulkBusy) return;
     if (button.dataset.bulkMode) { void changeBulkMode(button.dataset.bulkMode); return; }
+    if (button.dataset.bulkSelect === "exit") { setBulkSelection(); return; }
     if (button.dataset.bulkSelect === "clear") bulkIds.clear();
     else for (const item of filterConversations([...conversations.values()], searchQuery, filterMode)) bulkIds.add(item.id);
     clearBulkResult(); showConversations();
@@ -481,6 +486,8 @@ export function createLineInbox() {
       }
       const button = document.createElement("button");
       button.type = "button"; button.className = "conversation-item";
+      button.dataset.conversationId = item.id;
+      if (!bulkMode) { button.title = "長按以批量選取"; button.setAttribute("aria-keyshortcuts", "Shift+Space"); }
       if (bulkMode) {
         button.classList.add("bulk-selectable"); button.setAttribute("role", "checkbox"); button.setAttribute("aria-checked", String(bulkIds.has(item.id))); button.disabled = bulkBusy;
         const check = document.createElement("span"); check.className = "conversation-bulk-check"; check.textContent = "✓"; check.setAttribute("aria-hidden", "true"); button.append(check);
@@ -982,13 +989,13 @@ export function createLineInbox() {
     else resumeRefresh();
   });
   window.addEventListener("focus", resumeRefresh);
-  window.addEventListener("pagehide", () => { clearAudio(); clearSecrets(); controller?.abort(); clearTimeout(timer); messageResize.disconnect(); });
+  window.addEventListener("pagehide", () => { longPress.reset(); clearAudio(); clearSecrets(); controller?.abort(); clearTimeout(timer); messageResize.disconnect(); });
   return {
     setSession(nextUser, nextMode) {
       const nextActive = !!nextUser && !!nextMode;
       if (user?.uid === nextUser?.uid && active === nextActive && pageMode === nextMode) { user = nextUser; return; }
       clearAudio(); epoch++; controller?.abort(); clearTimeout(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
-      bulkMode = false; bulkBusy = false; bulkIds.clear(); clearBulkResult();
+      longPress.reset(); bulkMode = false; bulkBusy = false; bulkIds.clear(); clearBulkResult();
       messageRequest++; messageLoading = false; messageArea.removeAttribute("aria-busy");
       messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; pageMode = nextMode; channel = null; facebookAccount = null, instagramAccount = null; selected = null; refreshing = false; saving = false;
