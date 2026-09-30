@@ -3,6 +3,7 @@ import { filterConversations, inboxMode } from "./inbox-filters.js";
 import { showAiModel } from "./ai-model.js";
 import { watchHistoryScroll } from "./history-scroll.js";
 import { pollDelay, conversationVersion, needsMessageRefresh } from "./inbox-polling.js";
+import { runBulkAi } from "./inbox-bulk.js";
 const $ = id => document.getElementById(id);
 const isSocial = item => ["facebook", "instagram"].includes(item?.provider);
 const channelName = item => item?.provider === "instagram" ? "Instagram" : item?.provider === "facebook" ? "Facebook Messenger" : "LINE";
@@ -32,6 +33,8 @@ export function createLineInbox() {
   let selected = null, conversationNext = null, zernioConversationNext = null, instagramNext = null, messageNext = null, refreshing = false, saving = false, browsingHistory = false;
   let messageLoading = false, messageRequest = 0;
   let unchangedRounds = 0, lastListVersion = "", messageSnapshot = null, lastResume = 0;
+  let bulkMode = false, bulkBusy = false;
+  const bulkIds = new Set();
   function scheduleRefresh() {
     clearTimeout(timer);
     if (!active || pageMode !== "inbox" || document.hidden) return;
@@ -56,10 +59,92 @@ export function createLineInbox() {
   const filters = document.createElement("div"); filters.className = "inbox-filters";
   filters.innerHTML = '<label class="sr-only" for="inbox-name-search">搜尋用戶名字</label><input id="inbox-name-search" type="search" placeholder="搜尋用戶名字…" autocomplete="off"><div class="inbox-status-filters" role="group" aria-label="篩選回覆狀態"><button type="button" data-filter="all" aria-pressed="true">全部</button><button type="button" data-filter="auto" aria-pressed="false">AI 回覆中</button><button type="button" data-filter="human" aria-pressed="false">真人接手</button><button type="button" data-filter="off" aria-pressed="false">關閉 AI</button></div><p id="inbox-filter-summary" class="inbox-filter-summary" role="status" aria-live="polite"></p>';
   document.querySelector(".conversation-toolbar").append(filters);
+  const bulkStyle = document.createElement("link"); bulkStyle.rel = "stylesheet"; bulkStyle.href = "/inbox-bulk.css"; document.head.append(bulkStyle);
+  const bulkToggle = document.createElement("button"); bulkToggle.type = "button"; bulkToggle.className = "inbox-bulk-toggle";
+  bulkToggle.textContent = "批量選取"; bulkToggle.setAttribute("aria-pressed", "false"); bulkToggle.setAttribute("aria-controls", "inbox-bulk-panel");
+  $("line-refresh").before(bulkToggle);
+  const bulkPanel = document.createElement("div"); bulkPanel.id = "inbox-bulk-panel"; bulkPanel.className = "inbox-bulk-panel"; bulkPanel.hidden = true;
+  bulkPanel.innerHTML = '<span class="inbox-bulk-count" role="status" aria-live="polite">已選取 0 段對話</span><div class="inbox-bulk-selection"><button type="button" data-bulk-select="all">全選目前清單</button><button type="button" data-bulk-select="clear">清除</button></div><div class="inbox-bulk-actions" role="group" aria-label="批量切換回覆模式"><button type="button" data-bulk-mode="auto">交回 AI</button><button type="button" data-bulk-mode="human">真人接手</button></div><p class="inbox-bulk-hint">只選取目前已載入且符合篩選的對話。</p>';
+  const bulkResult = document.createElement("div"); bulkResult.className = "inbox-bulk-result"; bulkResult.hidden = true;
+  const bulkSummary = document.createElement("p"); bulkSummary.setAttribute("role", "status"); bulkSummary.setAttribute("aria-live", "polite");
+  const bulkErrors = document.createElement("details"); bulkErrors.className = "inbox-bulk-errors"; bulkErrors.hidden = true;
+  const errorTitle = document.createElement("summary"); errorTitle.textContent = "查看未完成項目";
+  const errorList = document.createElement("ul"); bulkErrors.append(errorTitle, errorList); bulkResult.append(bulkSummary, bulkErrors);
+  filters.after(bulkPanel, bulkResult);
+  function clearBulkResult() { bulkResult.hidden = true; bulkErrors.hidden = true; bulkErrors.open = false; errorList.replaceChildren(); bulkSummary.textContent = ""; }
+  function renderBulk() {
+    document.querySelector(".conversation-panel").classList.toggle("bulk-selection-active", bulkMode);
+    document.querySelector(".inbox-grid").classList.toggle("bulk-selection-active", bulkMode);
+    bulkToggle.disabled = bulkBusy || (!bulkMode && !conversations.size);
+    bulkToggle.textContent = bulkMode ? "完成選取" : "批量選取"; bulkToggle.setAttribute("aria-pressed", String(bulkMode));
+    bulkPanel.hidden = !bulkMode; bulkPanel.setAttribute("aria-busy", String(bulkBusy));
+    bulkPanel.querySelector(".inbox-bulk-count").textContent = `已選取 ${bulkIds.size} 段對話`;
+    for (const button of bulkPanel.querySelectorAll("button")) button.disabled = bulkBusy || (button.dataset.bulkMode ? !bulkIds.size || refreshing || changingAi || sending : button.dataset.bulkSelect === "clear" && !bulkIds.size);
+    $("inbox-name-search").disabled = bulkBusy;
+    for (const button of filters.querySelectorAll("[data-filter]")) button.disabled = bulkBusy;
+    $("line-refresh").disabled = refreshing || bulkBusy;
+    $("line-more-conversations").disabled = bulkBusy;
+  }
+  bulkToggle.addEventListener("click", () => {
+    if (bulkBusy) return;
+    bulkMode = !bulkMode; bulkIds.clear(); clearBulkResult();
+    document.querySelector(".conversation-panel").scrollTop = 0;
+    scanEpoch++; scanning = false; clearTimeout(filterTimer);
+    showConversations();
+  });
+  bulkPanel.addEventListener("click", event => {
+    const button = event.target.closest("button"); if (!button || button.disabled || bulkBusy) return;
+    if (button.dataset.bulkMode) { void changeBulkMode(button.dataset.bulkMode); return; }
+    if (button.dataset.bulkSelect === "clear") bulkIds.clear();
+    else for (const item of filterConversations([...conversations.values()], searchQuery, filterMode)) bulkIds.add(item.id);
+    clearBulkResult(); showConversations();
+  });
+  function applyAiResult(id, data) {
+    const item = conversations.get(id); if (!item) return;
+    conversations.set(id, { ...item, ai: data });
+    if (selected === id) { selectedAi = { ...data, id }; renderAiControl(); }
+  }
+  async function changeBulkMode(mode) {
+    if (bulkBusy || refreshing || changingAi || sending || !bulkIds.size || !active) return;
+    const generation = epoch, items = [...bulkIds].map(id => conversations.get(id)).filter(Boolean);
+    const current = () => generation === epoch && active;
+    bulkBusy = true; aiRequest++; clearTimeout(timer); scanEpoch++; scanning = false; clearTimeout(filterTimer);
+    clearBulkResult(); bulkResult.hidden = false; bulkResult.classList.remove("error");
+    bulkSummary.textContent = `正在處理 0／${items.length} 段對話…`; showConversations(); renderAiControl();
+    try {
+      const results = await runBulkAi(items, mode, async (input, item) => {
+        try { return await aiApi("conversation", { method: "PUT", body: JSON.stringify(input) }); }
+        catch (error) {
+          // A conflict is refreshed for review, never automatically overwritten.
+          if (error.status === 409 && current()) {
+            try {
+              const data = await aiApi(`conversation?provider=${input.provider}&conversationId=${encodeURIComponent(input.conversationId)}`);
+              if (current()) applyAiResult(item.id, data);
+            } catch { /* Retain the failed selection for an explicit retry. */ }
+          }
+          throw error;
+        }
+      }, {
+        isCurrent: current,
+        onResult(result) { if (result.ok) { bulkIds.delete(result.id); applyAiResult(result.id, result.data); } showConversations(); },
+        onProgress(done, total) { bulkSummary.textContent = `正在處理 ${done}／${total} 段對話…`; },
+      });
+      if (!current()) return;
+      const succeeded = results.filter(result => result.ok), failed = results.filter(result => !result.ok);
+      const paused = mode === "auto" ? succeeded.filter(result => !result.data.state.allowed).length : 0;
+      bulkSummary.textContent = `已將 ${succeeded.length} 段設為${mode === "auto" ? " AI 模式" : "真人接手"}。${paused ? `其中 ${paused} 段仍依 AI 設定暫停回覆。` : ""}${failed.length ? ` ${failed.length} 段未完成，保留選取供重試。` : ""}`;
+      bulkResult.classList.toggle("error", !!failed.length); bulkErrors.hidden = !failed.length;
+      for (const result of failed) {
+        const item = items.find(item => item.id === result.id), row = document.createElement("li");
+        row.textContent = `${label(item)}（${channelName(item)}）：${result.error}`; errorList.append(row);
+      }
+    } catch (error) { if (current()) { bulkSummary.textContent = error.message; bulkResult.classList.add("error"); } }
+    finally { if (current()) { bulkBusy = false; showConversations(); renderAiControl(); scheduleRefresh(); } }
+  }
   const hasMore = () => !!(conversationNext || zernioConversationNext || instagramNext);
   function applyFilter() {
     scanEpoch++; scanning = false; clearTimeout(filterTimer); showConversations();
-    if (filtering()) filterTimer = setTimeout(() => void scanMore(), 250);
+    if (filtering() && !bulkMode) filterTimer = setTimeout(() => void scanMore(), 250);
   }
   $("inbox-name-search").addEventListener("input", event => { searchQuery = event.target.value; applyFilter(); });
   filters.addEventListener("click", event => {
@@ -106,7 +191,7 @@ export function createLineInbox() {
     const labels = { auto: ["交回 AI", "AI 回覆中"], human: ["真人接手", "真人接手中"], off: ["關閉 AI", "AI 已關閉"] };
     for (const button of aiBar.querySelectorAll("button")) {
       const pressed = displayMode === button.dataset.aiMode && (displayMode !== "auto" || current?.state.allowed);
-      button.disabled = !current || changingAi || !!globallyOff;
+      button.disabled = !current || changingAi || bulkBusy || !!globallyOff;
       button.setAttribute("aria-pressed", String(pressed));
       button.textContent = labels[button.dataset.aiMode][pressed ? 1 : 0];
     }
@@ -122,7 +207,7 @@ export function createLineInbox() {
   }
   aiBar.addEventListener("click", async event => {
     const mode = event.target.closest("button")?.dataset.aiMode, item = conversations.get(selected), id = selected;
-    if (!mode || !item || changingAi || selectedAi?.id !== selected) return;
+    if (!mode || !item || changingAi || bulkBusy || selectedAi?.id !== selected) return;
     changingAi = true; aiRequest++; renderAiControl();
     try {
       const data = await aiApi("conversation", { method: "PUT", body: JSON.stringify({ provider: isSocial(item) ? item.provider : "line", conversationId: isSocial(item) ? item.remoteId : id, mode, revision: selectedAi.control.revision || 0 }) });
@@ -283,7 +368,7 @@ export function createLineInbox() {
     const response = await fetch(`/api/ai/${path}`, { ...options, signal, cache: "no-store", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } });
     const data = await response.json().catch(() => ({ error: "AI 設定服務暫時無法使用。" }));
     if (currentEpoch !== epoch) throw new DOMException("Session changed", "AbortError");
-    if (!response.ok || data.error) throw new Error(data.error || "AI 設定服務暫時無法使用。");
+    if (!response.ok || data.error) { const error = new Error(data.error || "AI 設定服務暫時無法使用。"); error.status = response.status; throw error; }
     return data;
   }
   function customerRequest(conversationId, suffix = "", options = {}) {
@@ -383,11 +468,12 @@ export function createLineInbox() {
     $("line-empty").textContent = filtering() ? scanning || hasMore() ? "正在尋找符合條件的對話；可載入更多繼續搜尋。" : "沒有符合條件的對話，請試試其他名字或狀態。" : "還沒有對話。完成連線後，傳一則訊息給你的帳號。";
     $("inbox-filter-summary").textContent = filtering() ? `${visible.length} 段符合 · 已搜尋 ${conversations.size} 段${scanning ? " · 搜尋其他對話中…" : hasMore() ? " · 尚有更多對話" : ""}` : "";
     const visibleIds = new Set(visible.map(item => item.id));
+    if (!bulkBusy) for (const id of bulkIds) if (!visibleIds.has(id)) bulkIds.delete(id);
     for (const [id, row] of conversationRows) if (!visibleIds.has(id)) { row.button.remove(); conversationRows.delete(id); }
     let position = 0;
     for (const item of visible.sort((a, b) => b.updatedAt - a.updatedAt)) {
       const version = JSON.stringify([label(item), item.displayName, item.pictureUrl, item.provider, item.sourceType,
-        item.lastText, item.updatedAt, inboxMode(item.ai), item.ai?.state.reason, selected === item.id, dayKey(Date.now())]);
+        item.lastText, item.updatedAt, inboxMode(item.ai), item.ai?.state.reason, selected === item.id, dayKey(Date.now()), bulkMode, bulkBusy, bulkIds.has(item.id)]);
       const prior = conversationRows.get(item.id);
       if (prior?.version === version) {
         if (list.children[position] !== prior.button) list.insertBefore(prior.button, list.children[position] || null);
@@ -395,7 +481,10 @@ export function createLineInbox() {
       }
       const button = document.createElement("button");
       button.type = "button"; button.className = "conversation-item";
-      button.setAttribute("aria-pressed", String(selected === item.id));
+      if (bulkMode) {
+        button.classList.add("bulk-selectable"); button.setAttribute("role", "checkbox"); button.setAttribute("aria-checked", String(bulkIds.has(item.id))); button.disabled = bulkBusy;
+        const check = document.createElement("span"); check.className = "conversation-bulk-check"; check.textContent = "✓"; check.setAttribute("aria-hidden", "true"); button.append(check);
+      } else button.setAttribute("aria-pressed", String(selected === item.id));
       const name = document.createElement("strong"), preview = document.createElement("span"), time = document.createElement("time");
       name.textContent = label(item); preview.textContent = item.lastText;
       time.dateTime = new Date(item.updatedAt).toISOString(); time.textContent = formatConversationTime(item.updatedAt);
@@ -407,7 +496,10 @@ export function createLineInbox() {
       aiLabel.textContent = ({ auto: "AI 回覆中", human: "真人接手", off: "關閉 AI", unknown: "AI 狀態待確認" })[mode];
       aiLabel.title = item.ai?.state.reason || "重新整理以取得狀態";
       details.append(heading, preview, aiLabel); button.append(avatar(item), details);
-      button.addEventListener("click", () => selectConversation(item.id));
+      button.addEventListener("click", () => {
+        if (bulkMode) { if (bulkBusy) return; if (bulkIds.has(item.id)) bulkIds.delete(item.id); else bulkIds.add(item.id); clearBulkResult(); showConversations(); }
+        else void selectConversation(item.id);
+      });
       const focused = prior?.button === document.activeElement;
       prior?.button.remove();
       list.insertBefore(button, list.children[position] || null);
@@ -415,6 +507,7 @@ export function createLineInbox() {
       conversationRows.set(item.id, { version, button }); position++;
     }
     $("line-more-conversations").hidden = !conversationNext && !zernioConversationNext && !instagramNext;
+    renderBulk();
     showConversationHeader();
   }
   const trustedMediaUrl = attachment => {
@@ -590,10 +683,10 @@ export function createLineInbox() {
     const failed = results.find(result => result.status === "rejected"); if (failed) report(failed.reason);
   }
   async function refresh(more = false, force = true, filterScan = false) {
-    if (refreshing || (!channel && !facebookAccount && !instagramAccount) || !active || saving) return;
+    if (refreshing || bulkBusy || (!channel && !facebookAccount && !instagramAccount) || !active || saving) return;
     const currentEpoch = epoch, currentAiRequest = aiRequest;
     const resetPages = !more && (force || !filtering() || !listLoaded);
-    refreshing = true; $("line-refresh").disabled = true;
+    refreshing = true; renderBulk();
     try {
       const linePromise = channel && (!more || conversationNext) ? api(`conversations${more && conversationNext ? `?before=${encodeURIComponent(conversationNext)}` : ""}`) : null;
       const facebookPromise = facebookAccount && (!more || zernioConversationNext) ? zernioApi(`conversations${more && zernioConversationNext ? `?cursor=${encodeURIComponent(zernioConversationNext)}` : ""}`) : null;
@@ -622,7 +715,7 @@ export function createLineInbox() {
       if (data && (more || resetPages)) conversationNext = data.next || null;
       if (facebookResult && (more || resetPages)) zernioConversationNext = facebookResult.next || null;
       listLoaded = true;
-      if (filtering() && hasMore() && !scanning && !filterScan) { clearTimeout(filterTimer); filterTimer = setTimeout(() => void scanMore(), 250); }
+      if (filtering() && !bulkMode && hasMore() && !scanning && !filterScan) { clearTimeout(filterTimer); filterTimer = setTimeout(() => void scanMore(), 250); }
       const listVersion = JSON.stringify([...conversations.values()].map(conversationVersion).sort());
       if (!more) { unchangedRounds = listVersion === lastListVersion ? unchangedRounds + 1 : 0; lastListVersion = listVersion; }
       showConversations();
@@ -643,7 +736,7 @@ export function createLineInbox() {
       }
       if (refreshError) report(refreshError); else status("");
     } catch (error) { report(error); }
-    finally { if (currentEpoch === epoch) { refreshing = false; $("line-refresh").disabled = false; } }
+    finally { if (currentEpoch === epoch) { refreshing = false; renderBulk(); } }
   }
   async function start() {
     const currentEpoch = epoch;
@@ -895,6 +988,7 @@ export function createLineInbox() {
       const nextActive = !!nextUser && !!nextMode;
       if (user?.uid === nextUser?.uid && active === nextActive && pageMode === nextMode) { user = nextUser; return; }
       clearAudio(); epoch++; controller?.abort(); clearTimeout(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
+      bulkMode = false; bulkBusy = false; bulkIds.clear(); clearBulkResult();
       messageRequest++; messageLoading = false; messageArea.removeAttribute("aria-busy");
       messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; pageMode = nextMode; channel = null; facebookAccount = null, instagramAccount = null; selected = null; refreshing = false; saving = false;
