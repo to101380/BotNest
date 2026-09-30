@@ -6,6 +6,7 @@ import { createHash, createHmac, timingSafeEqual, randomBytes, randomUUID, creat
 import { MEDIA_ORIGIN, mediaSignature, validMediaSignature, validateUpload } from "./media.js";
 import { handleAiApi } from "./ai-api.js";
 import { AiError, normalizeAiSettings, validateAiSettings } from "./ai-policy.js";
+import { LoginSecurityError } from "./login-security.js";
 
 export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -77,7 +78,7 @@ function cleanCustomer(input) {
   return result;
 }
 
-export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () => "", openAiConfigured = () => !!getOpenAiKey(), getZernioKey = () => "", media, fetchAudio, fetchLine = fetch, fetchZernio = fetch, fetchOpenAi = fetch, now = Date.now }) {
+export function createHandler({ store, verifyToken, authorizeSession = async () => { throw new LoginSecurityError(503, "登入安全服務尚未設定。"); }, getKey, getOpenAiKey = () => "", openAiConfigured = () => !!getOpenAiKey(), getZernioKey = () => "", media, fetchAudio, fetchLine = fetch, fetchZernio = fetch, fetchOpenAi = fetch, now = Date.now }) {
   const zernioWebhookUrl = "https://planning-with-ai-52d58.web.app/zernio-webhook";
   const zernioWebhookToken = () => createHmac("sha256", Buffer.from(getKey(), "base64")).update("botnest-zernio-webhook-v1").digest("hex");
   let zernioWebhookReady = false, zernioWebhookSetup;
@@ -94,6 +95,7 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
     if (!user.uid || !["google.com", "password"].includes(user.firebase?.sign_in_provider)) throw new HttpError(403, "請使用正式帳號登入。");
     if (user.firebase.sign_in_provider === "password" && user.email_verified !== true) throw new HttpError(403, "請先完成 Email 驗證，再重新登入。");
     req.securityUid = user.uid;
+    await authorizeSession(req, user);
     await store.aiAttempt(user.uid, "api", now(), 120);
     return user;
   }
@@ -515,7 +517,7 @@ export function createHandler({ store, verifyToken, getKey, getOpenAiKey = () =>
       throw new HttpError(404, "找不到頁面。");
     } catch (error) {
       // Never log headers, credentials, LINE payloads, or message bodies.
-      const expected = error instanceof HttpError || error instanceof AiError;
+      const expected = error instanceof HttpError || error instanceof AiError || error instanceof LoginSecurityError;
       if (!expected) console.error("BotNest request failed", { code: String(error.code || error.name || "unknown").slice(0, 80) });
       return res.status(expected ? error.status : 503).json({ error: expected ? error.message : "服務暫時無法使用，請稍後重試。" });
     }

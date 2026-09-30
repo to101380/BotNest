@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/customer-manager.css?v=20260918-1">
   <link rel="stylesheet" href="/channel-settings.css?v=20260918-1">
   <link rel="stylesheet" href="/ai-settings.css?v=20260918-2">
+  <link rel="stylesheet" href="/login-security.css">
   <script type="module" src="/app.js"></script>
 <link rel="stylesheet" href="/minimal-ui.css?v=20260926-1"><link rel="stylesheet" href="/ui-motion.css?v=20260926-1"><script type="module" src="/ui-motion.js"></script><link rel="stylesheet" href="/brand-ui.css?v=20260926-1"></head>
 <body class="auth-pending">
@@ -67,6 +68,18 @@
           <p class="note">此 Email 尚未驗證。請開啟驗證信完成驗證，再回來更新狀態。</p>
           <button id="send-verification" type="button" class="retry">重新寄送驗證信</button>
           <button id="refresh-verification" type="button" class="retry">我已驗證，更新狀態</button>
+        </section>
+        <section id="login-security" aria-labelledby="login-security-title" hidden="">
+          <div class="login-security-heading"><div><h2 id="login-security-title">帳號安全</h2><p>登入紀錄、裝置管理與 Email 登入核准。</p></div><button id="login-security-refresh" type="button">更新狀態</button></div>
+          <p id="login-security-status" role="status" aria-live="polite">正在確認裝置…</p>
+          <button id="login-security-retry" type="button" hidden="">寄送驗證信／重試</button>
+          <div id="login-revoke-confirm" class="login-revoke-confirm" role="group" aria-label="確認登出裝置" hidden=""><p id="login-revoke-message"></p><button id="login-revoke-yes" type="button">確認登出／拒絕</button> <button id="login-revoke-cancel" type="button">取消</button></div>
+          <div id="login-security-content" hidden="">
+            <div class="login-security-actions"><h3>登入裝置</h3><button id="login-revoke-others" type="button">登出所有其他裝置</button></div>
+            <ul id="login-devices" aria-label="登入裝置"></ul>
+            <h3>最近登入紀錄</h3><div class="login-events-wrap"><table><thead><tr><th scope="col">時間</th><th scope="col">事件</th><th scope="col">裝置與網路</th></tr></thead><tbody id="login-events"></tbody></table></div>
+          </div>
+          <p class="note">顯示最近 100 筆且 90 天內的登入安全事件。裝置依此瀏覽器辨識，清除 Cookie 或無痕模式需重新核准。網路資訊已部分隱藏，不代表精確位置。紀錄不包含 Firebase 直接處理的密碼輸錯嘗試。</p>
         </section>
         <details class="quiet-details"><summary>帳號識別資訊</summary><div class="identity-field"><label for="uid">Firebase UID</label><div class="uid-row"><input id="uid" readonly=""><button id="copy" aria-label="複製 Firebase UID">複製</button></div><p>這是你在本專案中的使用者識別碼。</p></div></details>
         <h2>登入來源</h2><ul id="provider-list"></ul>

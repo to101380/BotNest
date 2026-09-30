@@ -1,5 +1,9 @@
 # Google + Meta 登入起始專案
 
+## 登入安全功能（本機完成，待設定寄信及部署）
+
+個人資訊新增登入紀錄、登入裝置及新裝置 Email 核准。後端會阻擋未核准或已撤銷的裝置；首次啟用時既有使用者也須完成驗證。上線前必須先設定 `BOTNEST_LOGIN_MAIL` 寄信 Secret，並一起發布後端與 Hosting。詳細範圍、限制及驗收方式見 [LOGIN_SECURITY.md](LOGIN_SECURITY.md)。
+
 ## LINE OA 收件匣（已部署，待綁定 OA）
 
 現在支援从網頁傳送文字回覆、傳送狀態與斷線後安全重試。先前已綁定的 OA 需更新一次連線憑證，以加密保存回覆所需的 Access Token。按 Enter 或點「傳送回覆」送出，Shift＋Enter 換行；中文選字時按 Enter 不會送出。
@@ -45,7 +49,7 @@ Firebase Authentication → Sign-in method 啟用 Google，填寫支援電子郵
 - Facebook 執行同樣流程；email 可能未提供，畫面有替代文字。
 - 關閉彈窗、阻擋彈窗、未授權網域、登入供應商未啟用時顯示可理解的錯誤。
 - 已由另一個供應商註冊的 email 發生衝突時，提示使用原方式登入；**這一版不會自動合併帳號**。
-- 使用 session persistence：目前分頁工作階段內保存登入狀態。應用程式不顯示或記錄 ID/access token。
+- 使用 Firebase local persistence：同一瀏覽器關閉分頁或視窗後仍保存登入；手動登出會清除登入。既有裝置核准、撤銷及後端 7 天登入期限仍適用；無痕模式或清除網站資料後須重新登入。應用程式不顯示或記錄 ID/access token。
 
 `npm run check` 驗證語法，`npm test` 驗證設定與錯誤處理。沒有真實專案時，無法完成 Google/Meta 的端對端登入驗證。
 
@@ -82,3 +86,17 @@ Firebase Authentication → Sign-in method 啟用 Google，填寫支援電子郵
 附件使用專用私人 GCS bucket `planning-with-ai-52d58-botnest-media`，不開放 bucket 公開讀取。後端簽發 30 天有效的持有者連結（取得連結者即可讀取），31 天自動清理檔案。下載文件強制 attachment 與 sandbox。每 OA 每 24 小時限制 100 次上傳及 100 MB；失敗嘗試也計入預留額度。附件須屬於目前 OA 及對話；重試沿用已保存的 LINE 訊息內容和 retry key。LINE API 查閱：[支援的訊息](https://developers.line.biz/en/docs/messaging-api/sending-messages)、[圖片格式](https://developers.line.biz/en/reference/messaging-api/nojs/#image-message)。
 
 收到的 LINE JPEG/PNG 圖片會在開啟對話時自動讀取並快取（每輪最多 3 張、單張上限 10 MB），不再只顯示 [圖片]。暫時失敗 1 分鐘後重試；LINE 已刪除的舊圖片無法恢復，顯示重新傳送提示。使用者收回圖片後不再顯示，既有媒體連結亦停止提供。Emoji 選單使用可縮放欄位，避免按鈕溢出。
+
+## AI 客服設定
+
+登入後使用左側「AI 客服設定」（`#assistant`），依序設定身分與語氣、知識庫、回覆規則，再到測試對話確認。設定需按「儲存設定」；知識內容獨立儲存。既有的客服指示詞與總開關會保留。
+
+- 知識庫支援文字、PDF、Word `.docx`、TXT、Markdown、HTTPS 公開網頁。每筆 5 MB / 40,000 字，每帳號最多 40 筆 / 80 萬字。文件只保留擷取文字，不保存原始檔。匯入先存為草稿，確認後再啟用。掃描 PDF 沒有 OCR；網址是當次文字快照，不會自動爬取整站、登入頁或執行網頁 JavaScript。
+- LINE 與 Messenger 的新文字訊息使用同一套設定與知識檢索。回覆時段可指定時區、營業日及跨日時間。片段透過文字關鍵字排序，答案記錄實際引用的來源；來源不足、無效引用、退款、客訴或要求真人會轉交真人。這是依據檢查，並非保證模型永不出錯。
+- 訊息中心每段對話可選「交回 AI」「真人接手」「關閉 AI」。轉真人後持續暫停，直到手動交回 AI。從 BotNest 手動回覆會先暫停 AI，預設 30 分鐘，可設 1～1440 分鐘；直接在 LINE OA / Facebook 官方介面回覆不包含在這個偵測範圍。
+- 回覆前重新檢查總開關、渠道、時段及對話控制，避免 AI 生成期間真人接手後仍送出。已交給外部渠道的請求無法撤銷。失敗會留下紀錄供真人接手，不自動無限重試；每渠道既有 20 次/分鐘、500 次/24 小時額度仍有效。
+- 測試區使用正式設定與同一模型，只忽略自動回覆總開關；仍遵守渠道與時段限制，不傳送訊息、不改變真正顧客的接手狀態。測試使用 OpenAI API 額度，每帳號限 10 次/分鐘。
+
+AI 設定位於既有 Firestore `(default)` 的 `botnest/state/accounts/{uid}`，知識、逐段控制及紀錄分別在 `aiKnowledge`、`aiConversations`、`aiLogs` 子集合。瀏覽器只經過驗證 Firebase ID token 的 API，不能指定其他帳號 UID。OpenAI Key 仍留在 Secret Manager。知識文字、近期對話及商家設定會傳給 OpenAI 產生回覆，API 使用 `store: false`。記錄保留當次引用文字快照；刪除知識會停止未來檢索，不會抹除舊回覆紀錄。
+
+`npm test` 包含匯入、租戶隔離、時段、引用及接手測試；`npm run check` 檢查全部 JS 語法。`node scripts/preview-inbox.mjs` 提供虛構資料預覽，不發送渠道訊息。選擇性執行 `node scripts/check-ai-live.mjs` 可驗證真正模型，須透過環境變數 `BOTNEST_CHECK_OPENAI_KEY` 提供金鑰；只使用虛構商家資料。

@@ -4,7 +4,7 @@ node_modules/
 .sites-runtime/
 .env*
 *.local
-.deploy*/
+.deploy-cost/
 
 # Local deployment copies and security audit baselines
 .deploy-*/

@@ -27,6 +27,10 @@ async function refresh() {
   loading = true; const version = generation; $("refresh").disabled = true;
   try {
     const token = await auth.currentUser.getIdToken();
+    const sessionResponse = await fetch("/api/login-security/session", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}", credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(20000) });
+    const session = await sessionResponse.json(); if (version !== generation) return;
+    if (!sessionResponse.ok) throw new Error(session.error || "裝置驗證暫時無法完成。");
+    if (!session.access) throw new Error(session.mailState === "failed" ? "安全驗證信寄送失敗，請稍後重新整理重試。" : "此裝置尚未核准。請完成 Email 登入核准，再按重新整理。若已拒絕或過期，請先登出再登入。");
     const response = await fetch("/api/security-monitor", { headers: { Authorization: `Bearer ${token}` }, cache:"no-store", signal:AbortSignal.timeout(15000) });
     const data = await response.json(); if (version !== generation) return;
     if (!response.ok) throw new Error(data.error || "無法讀取監控資料。");

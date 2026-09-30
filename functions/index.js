@@ -8,30 +8,42 @@ import { getStorage } from "firebase-admin/storage";
 import { createHandler } from "./core.js";
 import { createStore } from "./store.js";
 import { createAiResponder, createZernioAiResponder } from "./ai.js";
+import { createLoginSecurity, createLoginSecurityStore, createLoginMailer } from "./login-security.js";
 
 initializeApp();
 const encryptionKey = defineSecret("BOTNEST_ENCRYPTION_KEY");
 const openAiKey = defineSecret("OPENAI_API_KEY");
 const zernioApiKey = defineSecret("ZERNIO_API_KEY");
+const loginMail = defineSecret("BOTNEST_LOGIN_MAIL");
+function loginMailConfig() {
+  try { return JSON.parse(loginMail.value()); } catch { return {}; }
+}
+const loginSecurity = createLoginSecurity({
+  store: createLoginSecurityStore(getFirestore()), verifyToken: token => getAuth().verifyIdToken(token, true),
+  mailReady: () => !!(loginMailConfig().apiKey && loginMailConfig().from),
+  sendMail: createLoginMailer({ config: loginMailConfig }),
+});
 import { createMonitor, canMonitor, requestMetrics, readPermissionAudit } from "./security-monitor.js";
 const monitor = createMonitor(getFirestore());
 let handler;
 export const botnestApi = onRequest({
   region: "us-central1", maxInstances: 3, minInstances: 0, concurrency: 20,
   timeoutSeconds: 60, memory: "512MiB", cors: false, invoker: "public",
-  secrets: [encryptionKey, openAiKey, zernioApiKey],
+  secrets: [encryptionKey, openAiKey, zernioApiKey, loginMail],
 }, async (req, res) => {
   const path = new URL(req.originalUrl || req.url, "https://botnest.invalid").pathname;
+  if (path.startsWith("/api/login-security/")) return loginSecurity.handle(req, res);
   if (path === "/api/security-monitor") {
     res.set("Cache-Control", "private, no-store");
     res.set("X-Content-Type-Options", "nosniff");
     let user;
     try { const token = /^Bearer (\S+)$/.exec(req.get("authorization") || "")?.[1]; if (token) user = await getAuth().verifyIdToken(token, true); } catch {}
     if (!canMonitor(user)) { await monitor.record(["monitorDenied"]); return res.status(403).json({ error: "僅限指定的 Google 帳號，請透過 Google 重新登入。" }); }
+    try { await loginSecurity.authorize(req, user); } catch { return res.status(403).json({ error: "請先在網站個人資訊完成此裝置的 Email 登入驗證。" }); }
     if (req.method !== "GET") return res.status(405).json({ error: "僅提供唯讀監控。" });
     try { const [snapshot, permissions] = await Promise.all([monitor.snapshot(), readPermissionAudit(() => applicationDefault().getAccessToken())]); return res.json({ ...snapshot, permissions }); } catch { return res.status(503).json({ error: "監控資料暫時無法讀取，不能判定系統正常。" }); }
   }
-  handler ||= createHandler({ store: createStore(getFirestore()), verifyToken: token => getAuth().verifyIdToken(token, true), getKey: () => encryptionKey.value(),
+  handler ||= createHandler({ store: createStore(getFirestore()), verifyToken: token => getAuth().verifyIdToken(token, true), authorizeSession: loginSecurity.authorize, getKey: () => encryptionKey.value(),
     getOpenAiKey: () => openAiKey.value(), openAiConfigured: () => !!openAiKey.value(), getZernioKey: () => zernioApiKey.value(),
     media: {
       save: (path, bytes, contentType) => getStorage().bucket("planning-with-ai-52d58-botnest-media").file(path).save(bytes, { resumable: false, metadata: { contentType, cacheControl: "private, no-store" } }),

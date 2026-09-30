@@ -1,0 +1,10 @@
+{
+  "score": 5,
+  "summary": "Local Firestore rule source only, evaluated as of 2026-09-19: BotNest client reads/writes are denied; the legacy non-BotNest exception expired on 2026-09-18. This score does not assess deployed rules, IAM, Admin SDK API authorization, Storage, or overall application security.",
+  "findings": [],
+  "limitations": [
+    "No live cloud rules or IAM inspection performed in this review.",
+    "Admin SDK authorization must be enforced in the application backend.",
+    "The historical broad authenticated-user exception requires historical access review; expiration does not undo previous access."
+  ]
+}

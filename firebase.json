@@ -21,66 +21,77 @@
   "hosting": {
     "site": "planning-with-ai-52d58",
     "public": "public",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
     "rewrites": [
       {
+        "source": "/api/login-security/**",
+        "function": {
+          "functionId": "botnestApi",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "/api/security-monitor",
-        "run": {
-          "serviceId": "botnestapi",
+        "function": {
+          "functionId": "botnestApi",
           "region": "us-central1"
         }
       },
       {
         "source": "/api/ai/**",
-        "run": {
-          "serviceId": "botnestapi",
+        "function": {
+          "functionId": "botnestApi",
           "region": "us-central1"
         }
       },
       {
         "source": "/api/zernio/**",
-        "run": {
-          "serviceId": "botnestapi",
+        "function": {
+          "functionId": "botnestApi",
           "region": "us-central1"
         }
       },
       {
         "source": "/zernio-webhook",
-        "run": {
-          "serviceId": "botnestapi",
+        "function": {
+          "functionId": "botnestApi",
           "region": "us-central1"
         }
       },
       {
         "source": "/zernio-callback",
-        "run": {
-          "serviceId": "botnestapi",
+        "function": {
+          "functionId": "botnestApi",
           "region": "us-central1"
         }
       },
       {
         "source": "/api/line/**",
-        "run": {
-          "serviceId": "botnestapi",
+        "function": {
+          "functionId": "botnestApi",
           "region": "us-central1"
         }
       },
       {
         "source": "/line-webhook/**",
-        "run": {
-          "serviceId": "botnestapi",
+        "function": {
+          "functionId": "botnestApi",
           "region": "us-central1"
         }
       }
+    ],
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
     ],
     "headers": [
       {
         "source": "**",
         "headers": [
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
           {
             "key": "X-Frame-Options",
             "value": "DENY"
@@ -100,10 +111,6 @@
           {
             "key": "Cache-Control",
             "value": "no-cache"
-          },
-          {
-            "key": "X-Content-Type-Options",
-            "value": "nosniff"
           },
           {
             "key": "Strict-Transport-Security",

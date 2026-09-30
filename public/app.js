@@ -1,4 +1,5 @@
 import { createAiUsage } from "./ai-usage.js";
+import { createLoginSecurityPanel } from "./login-security.js";
 import { hasFirebaseConfig, providerName, authErrorMessage, linkProviderAccount, reauthenticateForLink, validateEmailRegistration, reauthenticatePasswordForLink, linkEmailPassword } from "./auth-helpers.js";
 import { createLineInbox } from "./line-inbox.js";
 import { createCustomerManager } from "./customer-manager.js";
@@ -8,6 +9,7 @@ const lineInbox = createLineInbox();
 const customerManager = createCustomerManager();
 const aiSettings = createAiSettings();
 const aiUsage = createAiUsage();
+const loginSecurity = createLoginSecurityPanel({ onAccessChange: () => { renderPage(); controls(); }, onSignOut: () => sdk.signOut(auth) });
 let auth;
 let sdk;
 let busy = false;
@@ -21,11 +23,12 @@ function finishAuthLoading() {
 }
 function renderPage(moveFocus = false) {
   const signedIn = !!auth?.currentUser;
-  const aiPage = signedIn && location.hash === "#ai-robot";
-  const customersPage = signedIn && location.hash === "#customers";
-  const channelsPage = signedIn && location.hash === "#channels";
-  const assistantPage = signedIn && location.hash === "#assistant";
-  const usagePage = signedIn && location.hash === "#usage";
+  const permittedUser = loginSecurity.allowed ? auth?.currentUser || null : null;
+  const aiPage = !!permittedUser && location.hash === "#ai-robot";
+  const customersPage = !!permittedUser && location.hash === "#customers";
+  const channelsPage = !!permittedUser && location.hash === "#channels";
+  const assistantPage = !!permittedUser && location.hash === "#assistant";
+  const usagePage = !!permittedUser && location.hash === "#usage";
   $("app-nav").hidden = !signedIn;
   document.body.classList.toggle("authenticated", signedIn);
   $("account-page").hidden = aiPage || customersPage || channelsPage || assistantPage || usagePage;
@@ -41,10 +44,10 @@ function renderPage(moveFocus = false) {
   document.body.classList.toggle("assistant-open", assistantPage || usagePage);
   document.body.classList.toggle("customers-open", customersPage);
   document.body.classList.toggle("channels-open", channelsPage);
-  lineInbox.setSession(auth?.currentUser || null, aiPage ? "inbox" : channelsPage ? "settings" : null);
-  customerManager.setSession(auth?.currentUser || null, customersPage);
-  aiSettings.setSession(auth?.currentUser || null, assistantPage);
-  aiUsage.setSession(auth?.currentUser || null, usagePage);
+  lineInbox.setSession(permittedUser, aiPage ? "inbox" : channelsPage ? "settings" : null);
+  customerManager.setSession(permittedUser, customersPage);
+  aiSettings.setSession(permittedUser, assistantPage);
+  aiUsage.setSession(permittedUser, usagePage);
   for (const [id, active] of [["nav-usage", usagePage], ["nav-account", !aiPage && !customersPage && !channelsPage && !assistantPage && !usagePage], ["nav-ai", aiPage], ["nav-customers", customersPage], ["nav-channels", channelsPage], ["nav-assistant", assistantPage]]) {
     if (signedIn && active) $(id).setAttribute("aria-current", "page");
     else $(id).removeAttribute("aria-current");
@@ -62,11 +65,15 @@ const setStatus = (text, error = false) => { $("status").textContent = text; $("
 function controls() {
   $("google").disabled = !auth || busy;
   $("logout").disabled = busy;
-  $("add-password-fields").disabled = busy || !auth?.currentUser?.emailVerified;
+  $("add-password-fields").disabled = busy || !auth?.currentUser?.emailVerified || !loginSecurity.allowed;
   $("email-fields").disabled = !auth || busy;
   $("mode-login").disabled = $("mode-register").disabled = busy;
   $("send-verification").disabled = $("refresh-verification").disabled = !auth?.currentUser || busy;
-  $("link-google").disabled = !auth?.currentUser || busy;
+  $("link-google").disabled = !auth?.currentUser || busy || !loginSecurity.allowed;
+  if (auth?.currentUser) {
+    $("state").textContent = loginSecurity.allowed ? "已登入" : "等待裝置驗證";
+    $("state").classList.toggle("active", loginSecurity.allowed);
+  }
 }
 function renderAvatar(user) {
   const avatar = $("avatar");
@@ -98,6 +105,7 @@ function render(user) {
   $("account-password").value = $("confirm-password").value = $("reauth-password").value = $("new-password").value = $("new-password-confirm").value = "";
   $("signed-out").hidden = !!user;
   $("signed-in").hidden = !user;
+  loginSecurity.setSession(user);
   renderPage();
   $("state").textContent = user ? "已登入" : "尚未登入";
   $("state").classList.toggle("active", !!user);
@@ -150,6 +158,8 @@ async function initialize() {
     sdk = authSdk;
     const candidate = sdk.getAuth(appSdk.getApps()[0] || appSdk.initializeApp(config));
     candidate.languageCode = "zh-TW";
+    // Restore this browser's login after tabs or the browser are closed.
+    // Server-side device approval, expiry and explicit sign-out still apply.
     await sdk.setPersistence(candidate, sdk.browserLocalPersistence);
     auth = candidate;
     $("setup").hidden = true;
@@ -174,7 +184,7 @@ function makeProvider(kind) {
   return provider;
 }
 async function linkAccount(kind) {
-  if (!auth?.currentUser || busy) return;
+  if (!auth?.currentUser || busy || !loginSecurity.allowed) return;
   busy = true;
   controls();
   try {
@@ -192,6 +202,9 @@ async function linkAccount(kind) {
       const original = makeProvider("google");
       linkProof = await reauthenticateForLink(auth, sdk, original, target.providerId);
       }
+      // Reauthentication changes auth_time; renew the device session without
+      // subscribing to hourly ID-token refreshes that would clear form drafts.
+      loginSecurity.setSession(auth.currentUser);
       $("link-google").textContent = "確認連結 Google";
       setStatus("身分已重新驗證。請在 60 秒內點「確認連結」，再授權要新增的帳號。");
       proofTimeout = setTimeout(() => { clearLinkProof(); if (!busy) setStatus("連結驗證已逾時，請重新開始。"); }, 60000);
@@ -222,7 +235,12 @@ $("logout").addEventListener("click", async () => {
   if (!auth || busy) return;
   busy = true;
   controls();
-  try { await sdk.signOut(auth); }
+  try {
+    let revokeFailed = false;
+    try { await loginSecurity.logout(); } catch { revokeFailed = true; }
+    await sdk.signOut(auth);
+    if (revokeFailed) setStatus("此瀏覽器已登出，但無法確認伺服器撤銷結果，請從其他裝置檢查登入清單。", true);
+  }
   catch (error) { setStatus(authErrorMessage(error), true); }
   finally { busy = false; controls(); }
 });
@@ -271,7 +289,6 @@ $("email-form").addEventListener("submit", async event => {
       const policy = await sdk.validatePassword(auth, password);
       if (!policy.isValid) throw {code:"auth/password-does-not-meet-requirements"};
       const result = await sdk.createUserWithEmailAndPassword(auth, email, password);
-      render(result.user);
       try {
         mailReadyAt = Date.now() + 60000;
         await sdk.sendEmailVerification(result.user, emailActionSettings);
@@ -283,7 +300,6 @@ $("email-form").addEventListener("submit", async event => {
       setStatus("若此 Email 可重設密碼，你將收到操作指引。請檢查收件匣與垃圾郵件。");
     } else {
       const result = await sdk.signInWithEmailAndPassword(auth, email, password);
-      render(result.user);
       if (!result.user.emailVerified) setStatus("登入成功，請先完成 Email 驗證。");
     }
   } catch (error) {
@@ -323,7 +339,7 @@ $("refresh-verification").addEventListener("click", async () => {
 $("add-password-form").addEventListener("submit", async event => {
   event.preventDefault();
   const user = auth?.currentUser;
-  if (!user || busy) return;
+  if (!user || busy || !loginSecurity.allowed) return;
   const email = user.email;
   const password = $("new-password").value;
   const confirmation = $("new-password-confirm").value;
