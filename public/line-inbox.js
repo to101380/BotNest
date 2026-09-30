@@ -483,10 +483,9 @@ export function createLineInbox() {
             link.addEventListener("click", event => { event.preventDefault(); openImageViewer(item.id); });
             bubble.classList.add("image-message");
             if (item.text === "[圖片]") text.hidden = true;
-            imageMeta = document.createElement("div"); const sender = document.createElement("strong");
-            const actor = item.direction === "outgoing" ? { displayName: "你" } : conversations.get(selected) || { displayName: "LINE 使用者" };
-            imageMeta.className = "image-message-meta"; sender.textContent = item.direction === "outgoing" ? "你" : label(actor);
-            imageMeta.append(avatar(actor), sender, time);
+            imageMeta = document.createElement("div");
+            imageMeta.className = "image-message-meta";
+            imageMeta.append(time);
           }
           bubble.prepend(link);
           if (imageMeta) bubble.prepend(imageMeta);
