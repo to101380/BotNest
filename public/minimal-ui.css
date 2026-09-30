@@ -263,3 +263,5 @@ body.inbox-open .image-message.outgoing time,body.inbox-open .image-message.outg
 body.inbox-open .message-bubble.audio-message,
 body.inbox-open .message-bubble.audio-message.outgoing { width: min(320px, 100%); max-width: 100%; min-width: 0; background: transparent; border: 0; box-shadow: none; padding: 0; border-radius: 0; color: var(--ink); }
 body.inbox-open .audio-message time { color: var(--muted); padding: 0 8px; }
+#line-connect-fields > legend{float:left;width:100%;padding:0;margin:0 0 12px;box-sizing:border-box}
+#line-connect-fields > legend + *{clear:both}
