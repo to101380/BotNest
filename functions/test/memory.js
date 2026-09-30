@@ -19,7 +19,7 @@ export function memoryDb() {
       async get() {
         let docs = [...data.keys()].filter(key => key.startsWith(`${path}/`) && key.split("/").length === path.split("/").length + 1).map(snap);
         docs = docs.filter(doc => filters.every(filter => filter.operator === "==" && fieldValue(doc.data(), filter.field) === filter.value));
-        if (field) docs.sort((a, b) => (fieldValue(a.data(), field) - fieldValue(b.data(), field) || a.id.localeCompare(b.id)) * (direction === "desc" ? -1 : 1));
+        if (field) docs = docs.filter(doc => fieldValue(doc.data(), field) !== undefined).sort((a, b) => (fieldValue(a.data(), field) - fieldValue(b.data(), field) || a.id.localeCompare(b.id)) * (direction === "desc" ? -1 : 1));
         if (cursor) docs = docs.slice(docs.findIndex(doc => doc.id === cursor.id) + 1);
         const selected = docs.slice(0, count);
         return { docs: selected, empty: selected.length === 0 };

@@ -114,6 +114,80 @@ async function fixture(overrides = {}) {
   return { db, store, request, webhook };
 }
 
+async function imageReplyFixture() {
+  let clock = 1800000000000;
+  const sent = [], objects = new Map();
+  const f = await fixture({ now: () => clock, media: { save: async (path, bytes) => objects.set(path, bytes), read: async path => objects.get(path) }, fetchLine: async (url, options) => {
+    sent.push({ body: JSON.parse(options.body), key: options.headers["X-Line-Retry-Key"] });
+    return { ok: sent.length > 1, status: sent.length === 1 ? 500 : 200 };
+  } });
+  const first = event(), second = { ...event("second"), source: { type: "user", userId: `U${"d".repeat(32)}` } };
+  await f.webhook([first, second]);
+  const cid = normalizeEvent(first).conversationId, other = normalizeEvent(second).conversationId;
+  const uploaded = await f.request(`/api/line/conversations/${cid}/attachments`, { method: "POST", body: { kind: "image", name: "sample.png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY9sAAAAASUVORK5CYII=" } });
+  assert.equal(uploaded.code, 200);
+  return { ...f, sent, cid, other, attachment: uploaded.body.attachment, tick: delta => { clock += delta; } };
+}
+
+test("LINE image cards preserve complete payload and retry key; changed card cannot reuse an operation", async () => {
+  const f = await imageReplyFixture();
+  const body = { text: "這款提供給您參考", operationId: randomUUID(), attachmentId: f.attachment.id, imageCard: { title: "黑色小包", description: "可查看完整圖片" } };
+  const first = await f.request(`/api/line/conversations/${f.cid}/messages`, { method: "POST", body });
+  assert.equal(first.body.message.status, "uncertain");
+  assert.deepEqual(first.body.message.imageCard, body.imageCard);
+  assert.equal(f.sent[0].body.messages[0].type, "flex");
+  assert.equal(f.sent[0].body.messages[0].contents.hero.aspectMode, "fit");
+  assert.equal(f.sent[0].body.messages[0].contents.hero.url, f.attachment.url);
+  assert.equal(f.sent[0].body.messages[0].contents.footer.contents[0].action.uri, f.attachment.url);
+  assert.equal(f.sent[0].body.messages[1].text, body.text);
+  assert.equal((await f.request(`/api/line/conversations/${f.cid}/messages`, { method: "POST", body: { ...body, imageCard: { ...body.imageCard, title: "changed" } } })).code, 409);
+  f.tick(21000);
+  const retried = await f.request(`/api/line/conversations/${f.cid}/messages`, { method: "POST", body });
+  assert.equal(retried.body.message.status, "sent"); assert.deepEqual(f.sent[0], f.sent[1]);
+  await f.request(`/api/line/conversations/${f.cid}/messages`, { method: "POST", body });
+  assert.equal(f.sent.length, 2);
+});
+
+test("only explicitly collected outbound images are reusable, isolated by OA and removable without revoking sent links", async () => {
+  const f = await imageReplyFixture(), route = `/api/line/image-library/${f.attachment.id}`;
+  const send = () => f.request(`/api/line/conversations/${f.other}/messages`, { method: "POST", body: { text: "", operationId: randomUUID(), attachmentId: f.attachment.id, imageCard: { title: "", description: "" } } });
+  assert.equal((await send()).code, 400);
+  assert.deepEqual((await f.request("/api/line/image-library")).body.items, []);
+  assert.equal((await f.request(route, { method: "PUT", token: "bob" })).code, 400);
+  assert.equal((await f.request(route, { method: "PUT", headers: { origin: "https://evil.example" } })).code, 403);
+  assert.equal((await f.request(route, { method: "PUT" })).code, 200);
+  const library = (await f.request("/api/line/image-library")).body.items;
+  assert.equal(library.length, 1); assert.equal(library[0].id, f.attachment.id);
+  assert.equal(library[0].storagePath, undefined); assert.equal(library[0].conversationId, undefined);
+  assert.deepEqual((await f.request("/api/line/image-library", { token: "bob" })).body.items, []);
+  assert.equal((await send()).code, 202); assert.equal(f.sent[0].body.messages[0].contents.body.contents[0].text, "sample.png");
+  assert.equal((await f.request(route, { method: "DELETE" })).code, 200);
+  assert.deepEqual((await f.request("/api/line/image-library")).body.items, []);
+  assert.equal((await send()).code, 400);
+  assert.equal((await f.request(f.attachment.url, { token: null })).code, 200);
+});
+
+test("cards reject malformed inputs and files before sending; library hides expiring images", async () => {
+  const f = await imageReplyFixture();
+  for (const imageCard of [[], "card", {}, { title: "x".repeat(81), description: "" }, { title: "", description: "x".repeat(501) }]) {
+    assert.equal((await f.request(`/api/line/conversations/${f.cid}/messages`, { method: "POST", body: { text: "", attachmentId: f.attachment.id, operationId: randomUUID(), imageCard } })).code, 400);
+  }
+  const file = await f.request(`/api/line/conversations/${f.cid}/attachments`, { method: "POST", body: { kind: "file", name: "test.txt", data: Buffer.from("hello").toString("base64") } });
+  assert.equal((await f.request(`/api/line/conversations/${f.cid}/messages`, { method: "POST", body: { text: "", attachmentId: file.body.attachment.id, operationId: randomUUID(), imageCard: { title: "", description: "" } } })).code, 400);
+  assert.equal((await f.request(`/api/line/image-library/${file.body.attachment.id}`, { method: "PUT" })).code, 400);
+  await f.request(`/api/line/image-library/${f.attachment.id}`, { method: "PUT" });
+  f.tick(29 * 86400000);
+  assert.deepEqual((await f.request("/api/line/image-library")).body.items, []);
+  assert.equal((await f.request(`/api/line/conversations/${f.cid}/messages`, { method: "POST", body: { text: "", attachmentId: f.attachment.id, operationId: randomUUID(), imageCard: { title: "", description: "" } } })).code, 400);
+  assert.equal(f.sent.length, 0);
+});
+
+test("received customer images cannot be promoted into shared material", async () => {
+  const f = await imageReplyFixture();
+  await f.store.saveAttachment("1234567890", f.attachment.id, { ...f.attachment, messageId: "incoming", conversationId: f.cid });
+  assert.equal((await f.request(`/api/line/image-library/${f.attachment.id}`, { method: "PUT" })).code, 400);
+});
+
 test("OA secrets are authenticated ciphertext bound to their channel", () => {
   const value = seal(secret, key, "1234567890");
   assert.equal(unseal(value, key, "1234567890"), secret);

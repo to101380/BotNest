@@ -3,6 +3,7 @@ import { HttpError } from "./core.js";
 import { createHash, randomUUID } from "node:crypto";
 import { normalizeAiSettings } from "./ai-policy.js";
 import { createUsageStore } from "./ai-usage.js";
+import { normalizeImageCard, imageCardMessage } from "./image-card.js";
 
 const digestId = value => createHash("sha256").update(String(value)).digest("hex");
 
@@ -260,6 +261,17 @@ export function createStore(db) {
     },
     async saveAttachment(id, attachmentId, value) { await channels.doc(id).collection("attachments").doc(attachmentId).set(value); },
     async getAttachment(id, attachmentId) { return (await channels.doc(id).collection("attachments").doc(attachmentId).get()).data(); },
+    async imageLibrary(id, before) {
+      return page(channels.doc(id).collection("attachments"), "librarySavedAt", before, 40);
+    },
+    async updateLibraryImage(id, attachmentId, enabled, at) {
+      const ref = channels.doc(id).collection("attachments").doc(attachmentId);
+      await db.runTransaction(async tx => {
+        const item = (await tx.get(ref)).data();
+        if (!item || item.kind !== "image" || item.messageId || item.expiresAt <= at + 86400000) throw new HttpError(400, "只能收藏自己上傳且尚未到期的圖片。");
+        tx.set(ref, { library: enabled, librarySavedAt: item.librarySavedAt || at }, { merge: true });
+      });
+    },
     async getMessage(id, conversationId, messageId) { return (await channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId).get()).data(); },
     async saveAiSettings(id, settings, at) {
       await channels.doc(id).set({ ai: { ...settings, updatedAt: at } }, { merge: true });
@@ -342,7 +354,8 @@ export function createStore(db) {
         return customer;
       });
     },
-    async prepareReply(id, conversationId, operationId, text, at, attachmentId = null, textParts = null, replyToMessageId = null) {
+    async prepareReply(id, conversationId, operationId, text, at, attachmentId = null, textParts = null, replyToMessageId = null, imageCard = null) {
+      imageCard = normalizeImageCard(imageCard, attachmentId);
       if (textParts && (!Array.isArray(textParts) || !textParts.length || textParts.length > 3 || textParts.some(part => typeof part !== "string" || !part.trim() || part.length > 5000) || textParts.join("").replace(/\s/g, "") !== text.replace(/\s/g, ""))) throw new HttpError(400, "分段內容無效。");
       const channel = channels.doc(id), conversation = channel.collection("conversations").doc(conversationId);
       const outbox = channel.collection("outbox").doc(operationId);
@@ -353,7 +366,7 @@ export function createStore(db) {
         const [old, target, limits] = await tx.getAll(outbox, conversation, limitRef);
         if (!target.exists) throw new HttpError(404, "找不到這段對話。");
         const previous = old.data();
-        if (previous && (previous.conversationId !== conversationId || previous.text !== text || (previous.attachmentId || null) !== attachmentId)) throw new HttpError(409, "不可用同一筆傳送編號更改內容或收件對象。");
+        if (previous && (previous.conversationId !== conversationId || previous.text !== text || (previous.attachmentId || null) !== attachmentId || JSON.stringify(previous.imageCard || null) !== JSON.stringify(imageCard))) throw new HttpError(409, "不可用同一筆傳送編號更改內容或收件對象。");
         if (previous && ["sent", "failed"].includes(previous.status)) { result = { ...previous, claimed: false }; return; }
         // Reply has no retry key: after reserving an attempt, never retry it or switch to Push.
         // A crash or timeout may have happened after LINE accepted the message.
@@ -366,16 +379,17 @@ export function createStore(db) {
           ? (await tx.get(conversation.collection("messages").doc(replyToMessageId))).data() : null;
         const replyToken = incoming?.direction === "incoming" && !incoming.unsent && incoming.replyExpiresAt > at ? incoming.replyToken : null;
         let attachment;
-        if (attachmentId) {
+        if (previous?.message?.attachment) attachment = previous.message.attachment;
+        else if (attachmentId) {
           const stored = (await tx.get(channel.collection("attachments").doc(attachmentId))).data();
-          if (!stored || stored.conversationId !== conversationId || stored.expiresAt <= at + 86400000) throw new HttpError(400, "附件無效、已過期或不屬於這段對話，請重新上傳。");
+          if (!stored || (stored.conversationId !== conversationId && !(stored.library === true && stored.kind === "image" && !stored.messageId)) || stored.expiresAt <= at + 86400000) throw new HttpError(400, "附件無效、已過期或不屬於這段對話，請重新上傳。");
           attachment = { id: attachmentId, name: stored.name, kind: stored.kind, url: stored.url, size: stored.size, expiresAt: stored.expiresAt };
         }
         const lineMessages = [];
-        if (attachment) lineMessages.push(attachment.kind === "image" ? { type: "image", originalContentUrl: attachment.url, previewImageUrl: attachment.url } : { type: "text", text: `📎 ${attachment.name}\n${attachment.url}\n（下載連結 30 天內有效）` });
+        if (attachment) lineMessages.push(imageCard ? imageCardMessage(attachment, imageCard) : attachment.kind === "image" ? { type: "image", originalContentUrl: attachment.url, previewImageUrl: attachment.url } : { type: "text", text: `📎 ${attachment.name}\n${attachment.url}\n（下載連結 30 天內有效）` });
         if (text.trim()) lineMessages.push(...(textParts || [text]).map(part => ({ type: "text", text: part })));
-        const message = { id: `out-${operationId}`, operationId, direction: "outgoing", type: attachment?.kind || "text", text, ...(attachment ? { attachment } : {}), sentAt: previous?.createdAt ?? at, status: "pending", note: "正在確認傳送結果", unsent: false };
-        const operation = { conversationId, text, attachmentId, lineMessages: previous?.lineMessages || lineMessages, to: target.data().sourceId, retryKey: previous?.retryKey ?? randomUUID(), createdAt: previous?.createdAt ?? at, leaseUntil: at + 20000, status: "pending", message,
+        const message = { id: `out-${operationId}`, operationId, direction: "outgoing", type: attachment?.kind || "text", text, ...(attachment ? { attachment } : {}), ...(imageCard ? { imageCard } : {}), sentAt: previous?.createdAt ?? at, status: "pending", note: "正在確認傳送結果", unsent: false };
+        const operation = { conversationId, text, attachmentId, imageCard, lineMessages: previous?.lineMessages || lineMessages, to: target.data().sourceId, retryKey: previous?.retryKey ?? randomUUID(), createdAt: previous?.createdAt ?? at, leaseUntil: at + 20000, status: "pending", message,
           deliveryMode: previous?.deliveryMode || (replyToken ? "reply" : "push") };
         tx.set(outbox, operation); tx.set(messageRef, message);
         tx.set(limitRef, { since: active ? rate.since : at, count: active ? rate.count + 1 : 1 });

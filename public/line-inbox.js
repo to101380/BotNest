@@ -3,6 +3,7 @@ import { filterConversations, inboxMode } from "./inbox-filters.js";
 import { showAiModel } from "./ai-model.js";
 import { watchHistoryScroll } from "./history-scroll.js";
 import { pollDelay, conversationVersion, needsMessageRefresh } from "./inbox-polling.js";
+import { createImageReply } from "./image-reply.js";
 const $ = id => document.getElementById(id);
 const isSocial = item => ["facebook", "instagram"].includes(item?.provider);
 const channelName = item => item?.provider === "instagram" ? "Instagram" : item?.provider === "facebook" ? "Facebook Messenger" : "LINE";
@@ -153,10 +154,15 @@ export function createLineInbox() {
     $("line-reply-hint").textContent = !selected ? "先選擇一段對話。" : !canReply ? "請先到渠道設定完成連線。" : facebook ? `${channelName(current)} 文字回覆 · 最多 5000 字` : "最多 5000 字";
     $("reply-channel-note").textContent = facebook ? `Enter 傳送，Shift＋Enter 換行。回覆會透過 ${channelName(current)} 傳送。` : "Enter 傳送，Shift＋Enter 換行。回覆會使用 OA 的 LINE 訊息額度。";
     $("reply-attachment-note").hidden = !!facebook;
+    imageReply.sync(enabled && !facebook);
   }
   const status = (text, error = false) => {
     for (const id of ["line-status", "channel-status"]) { $(id).textContent = text; $(id).classList.toggle("error", error); }
   };
+  const imageReply = createImageReply({ api, trustedUrl: attachment => trustedMediaUrl(attachment), report: error => report(error),
+    context: () => ({ conversationId: selected, attachment: attachments.get(selected), enabled: active && !!selected && !!channel?.canReply && !isSocial(conversations.get(selected)) && !sending && !uploading && !saving }),
+    setAttachment: value => { if (value) attachments.set(selected, value); else attachments.delete(selected); replyControls(); },
+  });
   const clearSecrets = () => { $("line-channel-secret").value = $("line-access-token").value = ""; };
   function historyMode(value) {
     browsingHistory = value;
@@ -490,6 +496,14 @@ export function createLineInbox() {
           }
           bubble.prepend(link);
           if (imageMeta) bubble.prepend(imageMeta);
+          if (item.imageCard) {
+            const details = document.createElement("div"), title = document.createElement("strong"), description = document.createElement("p"), action = document.createElement("a");
+            details.className = "sent-image-card"; title.textContent = item.imageCard.title || item.attachment.name;
+            description.textContent = item.imageCard.description; description.hidden = !item.imageCard.description;
+            action.textContent = item.attachment.expiresAt > Date.now() ? "查看圖片" : "圖片連結已過期";
+            if (item.attachment.expiresAt > Date.now()) { action.href = url.href; action.target = "_blank"; action.rel = "noopener noreferrer"; }
+            details.append(title, description, action); bubble.append(details);
+          }
         }
       }
       if (item.direction === "outgoing" && ["failed", "uncertain"].includes(item.status)) {
@@ -501,7 +515,7 @@ export function createLineInbox() {
           const retry = document.createElement("button"); retry.type = "button"; retry.className = "retry";
           const selectedProvider = conversations.get(selected)?.provider;
           retry.textContent = "重試確認"; retry.disabled = sending || (["facebook", "instagram"].includes(selectedProvider) ? !(selectedProvider === "instagram" ? instagramAccount : facebookAccount) : !channel?.canReply) || Date.now() - item.sentAt >= 23 * 60 * 60 * 1000;
-          retry.addEventListener("click", () => void sendReply(selected, item.text, item.operationId, item.attachment)); bubble.append(retry);
+          retry.addEventListener("click", () => void sendReply(selected, item.text, item.operationId, item.attachment, item.imageCard)); bubble.append(retry);
         }
         if (item.status !== "sent" && item.note) { const note = document.createElement("p"); note.className = "note"; note.textContent = item.note; bubble.append(note); }
       }
@@ -639,7 +653,7 @@ export function createLineInbox() {
       if (currentEpoch === epoch && pageMode === "inbox") scheduleRefresh();
     } catch (error) { report(error); }
   }
-  async function sendReply(conversationId, text, operationId, attachment) {
+  async function sendReply(conversationId, text, operationId, attachment, imageCard = attachment?.imageCard || null) {
     const currentConversation = conversations.get(conversationId), facebook = isSocial(currentConversation);
     const canReply = facebook ? !!(currentConversation?.provider === "instagram" ? instagramAccount : facebookAccount) : !!channel?.canReply;
     if (sending || !active || !canReply || !conversationId || (!text.trim() && !attachment) || (facebook && attachment)) return;
@@ -647,13 +661,13 @@ export function createLineInbox() {
     operationId ||= crypto.randomUUID();
     const currentEpoch = epoch;
     sending = true; replyControls(); showMessages();
-    const initial = { id: `out-${operationId}`, operationId, text, ...(attachment ? { attachment } : {}), direction: "outgoing", type: attachment?.kind || "text", status: "pending", sentAt: localReplies.get(operationId)?.message.sentAt || messages.get(`out-${operationId}`)?.sentAt || Date.now() };
+    const initial = { id: `out-${operationId}`, operationId, text, ...(attachment ? { attachment } : {}), ...(imageCard ? { imageCard } : {}), direction: "outgoing", type: attachment?.kind || "text", status: "pending", sentAt: localReplies.get(operationId)?.message.sentAt || messages.get(`out-${operationId}`)?.sentAt || Date.now() };
     localReplies.set(operationId, { conversationId, message: initial });
     if (selected === conversationId) { historyMode(false); messages.set(initial.id, initial); showMessages("bottom"); }
     try {
       const data = facebook
         ? await zernioApi(`messages?platform=${currentConversation.provider}`, { method: "POST", body: JSON.stringify({ conversationId: currentConversation.remoteId, text, operationId }) })
-        : await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId, attachmentId: attachment?.id || null }) });
+        : await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId, attachmentId: attachment?.id || null, imageCard }) });
       localReplies.set(operationId, { conversationId, message: data.message });
       if (selected === conversationId) void loadAiControl().catch(report);
       if (selected === conversationId) { messages.set(data.message.id, data.message); showMessages(); }
@@ -698,7 +712,8 @@ export function createLineInbox() {
       for (let offset = 0; offset < bytes.length; offset += 32768) binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
       if (currentEpoch !== epoch) return;
       const data = await api(`conversations/${conversationId}/attachments`, { method: "POST", body: JSON.stringify({ name, kind, data: btoa(binary) }) });
-      attachments.set(conversationId, data.attachment);
+      if (currentEpoch !== epoch) return;
+      attachments.set(conversationId, { ...data.attachment, ...(kind === "image" ? { imageCard: { title: "", description: "" } } : {}) });
       status("附件已準備好，按傳送後才會送給對方。");
     } catch (error) { if (currentEpoch === epoch) report(error); }
     finally { if (currentEpoch === epoch) { uploading = false; replyControls(); } }
@@ -856,7 +871,7 @@ export function createLineInbox() {
     setSession(nextUser, nextMode) {
       const nextActive = !!nextUser && !!nextMode;
       if (user?.uid === nextUser?.uid && active === nextActive && pageMode === nextMode) { user = nextUser; return; }
-      clearAudio(); epoch++; controller?.abort(); clearTimeout(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
+      clearAudio(); imageReply.reset(); epoch++; controller?.abort(); clearTimeout(timer); clearTimeout(customerSaveTimer); customerSaveTimer = null; pendingCustomerSave = null; controller = new AbortController();
       messageRequest++; messageLoading = false; messageArea.removeAttribute("aria-busy");
       messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; pageMode = nextMode; channel = null; facebookAccount = null, instagramAccount = null; selected = null; refreshing = false; saving = false;
