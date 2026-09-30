@@ -14,6 +14,12 @@ Messenger 對話可用原有工具列上傳圖片或文件；Instagram 僅顯示
 
 本機預覽：`node scripts/preview-social-attachments.mjs`，預設 http://127.0.0.1:5193 ，只有虛構帳號與模擬平台傳送。
 
+## 回覆期限拒絕的診斷
+
+2026-09-30 透過唯讀 Zernio 活動紀錄確認當次 Messenger 圖片、文件與 Instagram 圖片均被上游明確拒絕為超過允許回覆期間；附件下載端點正常回應 200，圖片 MIME 與長度正確。沒有重送客戶訊息。平台紀錄查詢規格：https://docs.zernio.com/logs/list-logs 。
+
+現在只依供應商明確的中英文期限錯誤辨識，顯示「已超過平台允許的回覆期限」，引導對方先傳新訊息，再重新選取附件。不能單憑 HTTP 403 或 Meta code 10 判定過期。其他未知拒絕保留 HTTP 狀態供診斷，介面不輸出原始供應商資料。舊操作保持原結果，不自動重送。新增回歸測試後完整 245 項通過，61 個 JavaScript 檔案語法檢查通過。
+
 ## 正式發布 2026-09-30
 
 已發布至 https://planning-with-ai-52d58.web.app ，Hosting 版本 `51e7d8742303d565`（前版 `9c05fb62ad5b05a0`）。從最新正式快照隔離套用變更，後端僅更新 botnestApi 的 core/store，前端僅更新 line-inbox.js；保留正式入口、登入流程、其他函式與 Hosting 設定。部署後核對全部 36 個網站檔案、後端原始碼與 ACTIVE 狀態，未登入的附件 API 存取回應 401。正式平台收件端尚未以真實客戶訊息驗收。

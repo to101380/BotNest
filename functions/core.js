@@ -111,7 +111,12 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       const message = response.status === 402 ? "Zernio 方案已達可連接帳號上限。" : response.status === 401 || response.status === 403 ? "Zernio API Key 權限不足或已失效。" : response.status === 429 ? "Zernio 請求過於頻繁，請稍後再試。" : "Zernio 暫時無法完成連接。";
-      throw new HttpError(response.status >= 500 ? 503 : response.status, message);
+      // Classify only explicit provider reasons; never expose raw error payloads or signed media URLs.
+      const reasons = [data?.message, data?.error, data?.error?.message, data?.platformError?.message, data?.error?.platformError?.message, data?.data?.platformError?.message].filter(value => typeof value === "string").join(" ");
+      const windowClosed = /outside (?:of )?(?:the )?(?:allowed|permitted|messaging|24.hour|7.day).*window|(?:不在|超過).{0,12}(?:允許|允许).{0,8}(?:期間|期间)|outside.{0,30}messaging window/i.test(reasons);
+      const error = new HttpError(response.status >= 500 ? 503 : response.status, windowClosed ? "已超過平台允許的回覆期限。請讓對方先傳一則新訊息，再重新選擇附件傳送。" : message);
+      error.sendNote = windowClosed ? error.message : `平台拒絕傳送（HTTP ${response.status}）。請稍後重試；若持續失敗，請聯絡管理員查詢平台紀錄。`;
+      throw error;
     }
     return data;
   }
@@ -387,7 +392,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
                 message = { ...message, note: result.partialFailure ? "附件或文字僅部分傳送成功，請到原平台確認；不會自動重送。" : "平台未確認完整傳送結果，請到原平台查看；不會自動重送。" };
               } else message = { ...message, id: `${platform}-${digest(`${social.accountId}:${remoteId}`)}`, remoteId: String(remoteId), status: "sent", note: "已交給平台傳送。" };
             } catch (error) {
-              if (error instanceof HttpError && error.status < 500 && error.status !== 409) message = { ...message, status: "failed", note: "平台拒絕傳送，請確認對話的回覆期限、帳號權限與檔案格式。" };
+              if (error instanceof HttpError && error.status < 500 && error.status !== 409) message = { ...message, status: "failed", note: error.sendNote || error.message };
             }
             await store.finishSocialAttachmentReply(user.uid, operationId, message);
             return res.status(message.status === "uncertain" ? 202 : 200).json({ message });

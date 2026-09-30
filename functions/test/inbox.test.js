@@ -196,6 +196,35 @@ test("concurrent attachment sends claim a single upstream operation and upstream
   assert.equal(f.calls.filter(call => call.options.method === "POST").length, 1);
 });
 
+test("Meta reply-window rejections explain recovery without exposing provider payloads or resending", async () => {
+  for (const [platform, status, payload] of [
+    ["instagram", 403, { error: "This message is sent outside of allowed window." }],
+    ["facebook", 400, { error: { message: "(#10) 這則訊息傳送的時間不在允許期間內。 https://private.example/?token=secret" } }],
+    ["instagram", 403, { platformError: { message: "This message is sent outside of allowed window." } }],
+  ]) {
+    const f = await socialAttachmentFixture(async () => new Response(JSON.stringify(payload), { status }));
+    const attachment = (await f.upload(platform)).body.attachment;
+    const body = { conversationId: "thread-1", attachmentId: attachment.id, operationId: randomUUID() };
+    const first = await f.request(`/api/zernio/messages?platform=${platform}`, { method: "POST", body });
+    assert.equal(first.body.message.status, "failed");
+    assert.match(first.body.message.note, /已超過平台允許的回覆期限/);
+    assert.match(first.body.message.note, /對方先傳一則新訊息/);
+    assert.doesNotMatch(JSON.stringify(first.body), /private\.example|token=secret/);
+    const retry = await f.request(`/api/zernio/messages?platform=${platform}`, { method: "POST", body });
+    assert.deepEqual(retry.body, first.body);
+    assert.equal(f.calls.filter(call => call.options.method === "POST").length, 1);
+  }
+});
+
+test("permission error code 10 alone is not misreported as an expired reply window", async () => {
+  const f = await socialAttachmentFixture(async () => new Response(JSON.stringify({ error: { code: 10, message: "Missing permission private-token" } }), { status: 403 }));
+  const attachment = (await f.upload("facebook")).body.attachment;
+  const result = await f.request("/api/zernio/messages", { method: "POST", body: { conversationId: "thread-1", attachmentId: attachment.id, operationId: randomUUID() } });
+  assert.equal(result.body.message.status, "failed");
+  assert.match(result.body.message.note, /HTTP 403/);
+  assert.doesNotMatch(result.body.message.note, /回覆期限|private-token/);
+});
+
 test("OA secrets are authenticated ciphertext bound to their channel", () => {
   const value = seal(secret, key, "1234567890");
   assert.equal(unseal(value, key, "1234567890"), secret);
