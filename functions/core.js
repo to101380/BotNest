@@ -2,6 +2,7 @@ import { audioTicket, socialAudio, lineAudio } from "./audio-playback.js";
 import { audioAttachments } from "./audio-input.js";
 import { imageAttachments } from "./image-input.js";
 import { attachInboxAi } from "./inbox-ai.js";
+import { createMetadataCache } from "./metadata-cache.js";
 import { createHash, createHmac, timingSafeEqual, randomBytes, randomUUID, createCipheriv, createDecipheriv } from "node:crypto";
 import { MEDIA_ORIGIN, mediaSignature, validMediaSignature, validateUpload } from "./media.js";
 import { handleAiApi } from "./ai-api.js";
@@ -82,6 +83,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
   const zernioWebhookUrl = "https://planning-with-ai-52d58.web.app/zernio-webhook";
   const zernioWebhookToken = () => createHmac("sha256", Buffer.from(getKey(), "base64")).update("botnest-zernio-webhook-v1").digest("hex");
   let zernioWebhookReady = false, zernioWebhookSetup;
+  const contactMetadata = createMetadataCache({ now });
   async function lineRequest(path, options) {
     const response = await fetchLine(`https://api.line.me${path}`, { ...options, signal: AbortSignal.timeout(12000) });
     if (!response.ok) throw new HttpError(response.status >= 500 || response.status === 429 ? 503 : 400, "LINE 憑證驗證失敗，請確認 Channel ID 與長期 Access Token。");
@@ -137,7 +139,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
     webhookUrl: `https://planning-with-ai-52d58.web.app/line-webhook/${channel.channelId}`,
     verifiedAt: channel.verifiedAt || null, lastReceivedAt: channel.lastReceivedAt || null, canReply: !!channel.accessToken }) : null;
 
-  return async (req, res) => {
+  const handle = async (req, res) => {
     res.set("Cache-Control", "no-store");
     res.set("Referrer-Policy", "no-referrer");
     res.set("X-Content-Type-Options", "nosniff");
@@ -339,7 +341,12 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
           const data = await zernioRequest(`/inbox/conversations?accountId=${encodeURIComponent(social.accountId)}&platform=${platform}&limit=30${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
           let contacts = [];
           if ((data.data || []).some(item => !item.participantPicture)) {
-            try { contacts = (await zernioRequest(`/contacts?accountId=${encodeURIComponent(social.accountId)}&platform=${platform}&limit=200`)).contacts || []; }
+            try { contacts = await contactMetadata(JSON.stringify([user.uid, social.accountId, platform]), async () => {
+              const result = await zernioRequest(`/contacts?accountId=${encodeURIComponent(social.accountId)}&platform=${platform}&limit=200`);
+              return (Array.isArray(result.contacts) ? result.contacts : []).slice(0, 200).map(item => ({
+                platformIdentifier: String(item.platformIdentifier || "").slice(0, 512), avatarUrl: String(item.avatarUrl || "").slice(0, 2048),
+              }));
+            }); }
             catch { /* Contact avatars are an optional fallback and must not block the inbox. */ }
           }
           const contactByParticipant = new Map(contacts.map(item => [String(item.platformIdentifier || ""), item]));
@@ -348,8 +355,11 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
             displayName: String(item.participantName || `${platform === "instagram" ? "Instagram" : "Messenger"} 使用者`).slice(0, 100), pictureUrl: String(item.participantPicture || contactByParticipant.get(String(item.participantId || ""))?.avatarUrl || (platform === "facebook" && /^\d{5,30}$/.test(String(item.participantId || "")) ? `https://graph.facebook.com/${item.participantId}/picture?type=large` : "")).slice(0, 2048),
             lastText: String(item.lastMessage || "").slice(0, 10000), updatedAt: Number.isFinite(Date.parse(item.updatedTime)) ? Date.parse(item.updatedTime) : now(), unreadCount: Number(item.unreadCount || 0),
           }));
-          await Promise.all(items.map(async item => { item.customer = await store.zernioCustomer(user.uid, digest(`${social.accountId}:${item.remoteId}`)); }));
-          await attachInboxAi(store, user.uid, items, platform, now());
+          const [customers] = await Promise.all([
+            store.zernioCustomers(user.uid, items.map(item => digest(`${social.accountId}:${item.remoteId}`))),
+            query.get("includeAi") === "false" ? null : attachInboxAi(store, user.uid, items, platform, now()),
+          ]);
+          for (const item of items) item.customer = customers.get(digest(`${social.accountId}:${item.remoteId}`));
           return res.json({ items, next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
         }
         if (path === "/api/zernio/messages" && req.method === "GET") {
@@ -487,7 +497,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
           await store.saveProfile(account.channelId, item.id, profile);
           Object.assign(item, profile);
         }));
-        await attachInboxAi(store, user.uid, page.items, "line", now());
+        if (query.get("includeAi") !== "false") await attachInboxAi(store, user.uid, page.items, "line", now());
         return res.json(page);
       }
       const customer = /^\/api\/line\/conversations\/([a-f0-9]{64})\/customer$/.exec(path);
@@ -581,5 +591,10 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
       if (!expected) console.error("BotNest request failed", { code: String(error.code || error.name || "unknown").slice(0, 80) });
       return res.status(expected ? error.status : 503).json({ error: expected ? error.message : "服務暫時無法使用，請稍後重試。" });
     }
+  };
+  return (req, res) => {
+    const path = new URL(req.originalUrl || req.url, "https://botnest.invalid").pathname;
+    const readOnly = req.method === "GET" && ["/api/ai/settings", "/api/ai/conversation", "/api/line/conversations", "/api/zernio/conversations"].includes(path);
+    return readOnly && store.withReadSnapshot ? store.withReadSnapshot(() => handle(req, res)) : handle(req, res);
   };
 }

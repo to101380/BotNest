@@ -42,7 +42,7 @@ export async function handleAiApi({ user, path, req, res, store, getOpenAiKey, o
   }
   const knowledgeId = /^\/api\/ai\/knowledge\/([a-f0-9-]{36})$/.exec(path)?.[1];
   if (knowledgeId) {
-    if (!(await store.aiKnowledge(uid)).some(item => item.id === knowledgeId)) throw aiError(404, "找不到這筆知識。");
+    if (!await store.aiKnowledgeItem(uid, knowledgeId)) throw aiError(404, "找不到這筆知識。");
     if (req.method === "PUT") return res.json({ item: await store.saveAiKnowledge(uid, knowledgeId, cleanKnowledge(req.body), now()) });
     if (req.method === "DELETE") { await store.deleteAiKnowledge(uid, knowledgeId, now()); return res.json({ ok: true }); }
   }

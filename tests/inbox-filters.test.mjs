@@ -20,9 +20,9 @@ test("filters combine names with actual AI state and do not guess missing state"
   assert.equal(inboxMode(), "unknown");
 });
 test("list enrichment uses tenant and provider-scoped control IDs", async () => {
-  const seen = [], store = { accountAiSettings: async uid => { assert.equal(uid, "alice"); return { enabled: true }; }, aiControl: async (...args) => { seen.push(args); return { mode: args[1] === "facebook" ? "human" : "auto" }; } };
+  const seen = [], store = { accountAiSettings: async uid => { assert.equal(uid, "alice"); return { enabled: true }; }, aiControls: async (uid, provider, ids) => { seen.push([uid, provider, ids]); return new Map(ids.map(id => [id, { mode: provider === "facebook" ? "human" : "auto" }])); } };
   const line = [{ id: "linehash" }], social = [{ id: "facebook-socialhash" }];
   await attachInboxAi(store, "alice", line, "line", 1); await attachInboxAi(store, "alice", social, "facebook", 1);
-  assert.deepEqual(seen, [["alice", "line", "linehash"], ["alice", "facebook", "socialhash"]]);
+  assert.deepEqual(seen, [["alice", "line", ["linehash"]], ["alice", "facebook", ["socialhash"]]]);
   assert.equal(inboxMode(line[0].ai), "auto"); assert.equal(inboxMode(social[0].ai), "human");
 });

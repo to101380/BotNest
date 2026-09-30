@@ -3,6 +3,8 @@ import { HttpError } from "./core.js";
 import { createHash, randomUUID } from "node:crypto";
 import { normalizeAiSettings } from "./ai-policy.js";
 import { createUsageStore } from "./ai-usage.js";
+import { FieldPath } from "firebase-admin/firestore";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const digestId = value => createHash("sha256").update(String(value)).digest("hex");
 
@@ -11,7 +13,23 @@ export function createStore(db) {
   const state = db.collection("botnest").doc("state");
   const channels = state.collection("channels");
   const accounts = state.collection("accounts");
+  const readScope = new AsyncLocalStorage();
+  function accountRead(ref) {
+    const pending = readScope.getStore();
+    if (!pending) return ref.get();
+    if (!pending.has(ref.path)) pending.set(ref.path, ref.get());
+    return pending.get(ref.path);
+  }
   const rows = snapshot => snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  // Query only existing overrides. Individual gets also bill for missing docs.
+  async function sparseRows(collection, ids) {
+    const unique = [...new Set(ids)], found = new Map();
+    await Promise.all(Array.from({ length: Math.ceil(unique.length / 30) }, async (_, index) => {
+      const result = await collection.where(FieldPath.documentId(), "in", unique.slice(index * 30, index * 30 + 30)).get();
+      for (const doc of result.docs) found.set(doc.id, doc.data());
+    }));
+    return found;
+  }
   async function page(collection, order, before, limit) {
     let query = collection.orderBy(order, "desc");
     if (before) {
@@ -23,9 +41,15 @@ export function createStore(db) {
     return { items: result.slice(0, limit), next: result.length > limit ? result[limit - 1].id : null };
   }
   return {
+    // A snapshot lives for one read-only endpoint invocation, never across users/requests.
+    withReadSnapshot(run) { return readScope.run(new Map(), run); },
     ...createUsageStore(db),
     async aiKnowledge(uid) {
       return rows(await accounts.doc(uid).collection("aiKnowledge").where("deleted", "==", false).limit(40).get()).sort((a, b) => b.updatedAt - a.updatedAt);
+    },
+    async aiKnowledgeItem(uid, id) {
+      const item = (await accounts.doc(uid).collection("aiKnowledge").doc(id).get()).data();
+      return item && !item.deleted ? { id, ...item } : null;
     },
     async saveAiKnowledge(uid, id, item, at, { createOnly = false } = {}) {
       const account = accounts.doc(uid), ref = account.collection("aiKnowledge").doc(id), meter = account.collection("limits").doc("knowledge");
@@ -51,6 +75,10 @@ export function createStore(db) {
     },
     async aiControl(uid, provider, conversationId) {
       return (await accounts.doc(uid).collection("aiConversations").doc(`${provider}-${conversationId}`).get()).data() || { mode: "auto", pausedUntil: 0, revision: 0 };
+    },
+    async aiControls(uid, provider, ids) {
+      const found = await sparseRows(accounts.doc(uid).collection("aiConversations"), ids.map(id => `${provider}-${id}`));
+      return new Map(ids.map(id => [id, found.get(`${provider}-${id}`) || { mode: "auto", pausedUntil: 0, revision: 0 }]));
     },
     async setAiControl(uid, provider, conversationId, patch, at, expectedRevision) {
       const ref = accounts.doc(uid).collection("aiConversations").doc(`${provider}-${conversationId}`);
@@ -81,7 +109,7 @@ export function createStore(db) {
     async saveAiLog(uid, id, value) { await accounts.doc(uid).collection("aiLogs").doc(id).set(value, { merge: true }); await monitor.record(aiMetrics(value)); },
     aiLogs(uid, before) { return page(accounts.doc(uid).collection("aiLogs"), "createdAt", before, 30); },
     async zernioAccount(uid) {
-      const value = (await accounts.doc(uid).get()).data();
+      const value = (await accountRead(accounts.doc(uid))).data();
       return value?.zernio || null;
     },
     async saveZernioProfile(uid, profileId, at) {
@@ -177,6 +205,10 @@ export function createStore(db) {
     async zernioCustomer(uid, conversationId) {
       return (await accounts.doc(uid).collection("zernioCustomers").doc(conversationId).get()).data()?.customer || {};
     },
+    async zernioCustomers(uid, ids) {
+      const found = await sparseRows(accounts.doc(uid).collection("zernioCustomers"), ids);
+      return new Map(ids.map(id => [id, found.get(id)?.customer || {}]));
+    },
     async saveZernioCustomer(uid, conversationId, profile, at) {
       const ref = accounts.doc(uid).collection("zernioCustomers").doc(conversationId);
       return db.runTransaction(async tx => {
@@ -208,10 +240,10 @@ export function createStore(db) {
       });
     },
     async accountAiSettings(uid) {
-      const value = (await accounts.doc(uid).get()).data() || {};
+      const value = (await accountRead(accounts.doc(uid))).data() || {};
       if (value.ai) return value.ai;
       if (!value.channelId) return {};
-      return (await channels.doc(value.channelId).get()).data()?.ai || {};
+      return (await accountRead(channels.doc(value.channelId))).data()?.ai || {};
     },
     async saveAccountAiSettings(uid, settings, at) {
       const ref = accounts.doc(uid), value = { ...settings, updatedAt: at };
@@ -438,9 +470,9 @@ export function createStore(db) {
     async getChannel(id) { return (await channels.doc(id).get()).data() || null; },
     async getConversation(id, conversationId) { return (await channels.doc(id).collection("conversations").doc(conversationId).get()).data() || null; },
     async account(uid) {
-      const account = (await accounts.doc(uid).get()).data();
+      const account = (await accountRead(accounts.doc(uid))).data();
       if (!account?.channelId) return null;
-      const channel = (await channels.doc(account.channelId).get()).data();
+      const channel = (await accountRead(channels.doc(account.channelId))).data();
       if (channel?.ownerUid !== uid) throw new HttpError(403, "無權查看此 OA。");
       return channel;
     },

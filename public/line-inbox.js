@@ -181,12 +181,16 @@ export function createLineInbox() {
     const badge = document.createElement("span"); badge.className = item.provider === "instagram" ? "instagram-avatar-badge" : isSocial(item) ? "facebook-avatar-badge" : "line-avatar-badge"; badge.title = channelName(item); frame.append(badge);
     return frame;
   }
+  let headerAvatarVersion = "";
   function showConversationHeader() {
     const item = conversations.get(selected);
     $("line-chat-empty").hidden = !!item;
     $("line-chat-empty").parentElement.classList.toggle("has-conversation", !!item);
     $("line-conversation-title").textContent = item ? label(item) : "選擇一段對話";
-    $("line-chat-avatar").replaceChildren(...(item ? [avatar(item)] : []));
+    const avatarVersion = JSON.stringify([item?.id, item?.pictureUrl, item?.displayName, item?.provider, item?.sourceType]);
+    if (headerAvatarVersion !== avatarVersion) {
+      $("line-chat-avatar").replaceChildren(...(item ? [avatar(item)] : [])); headerAvatarVersion = avatarVersion;
+    }
     $("line-chat-source").textContent = item ? `來自 ${channelName(item)}` : "在左側選擇聊天者，開始回覆";
     renderAiControl();
   }
@@ -371,13 +375,24 @@ export function createLineInbox() {
       if (currentEpoch === epoch) channelAiFeedback(`切換未確認：${error.message} 請重新整理確認狀態。`, true);
     } finally { if (currentEpoch === epoch) { channelAiSaving = false; renderChannelAiToggle(); } }
   });
+  const conversationRows = new Map();
   function showConversations() {
-    $("line-conversations").replaceChildren();
+    const list = $("line-conversations");
     const visible = filterConversations([...conversations.values()], searchQuery, filterMode);
     $("line-empty").hidden = visible.length > 0;
     $("line-empty").textContent = filtering() ? scanning || hasMore() ? "正在尋找符合條件的對話；可載入更多繼續搜尋。" : "沒有符合條件的對話，請試試其他名字或狀態。" : "還沒有對話。完成連線後，傳一則訊息給你的帳號。";
     $("inbox-filter-summary").textContent = filtering() ? `${visible.length} 段符合 · 已搜尋 ${conversations.size} 段${scanning ? " · 搜尋其他對話中…" : hasMore() ? " · 尚有更多對話" : ""}` : "";
+    const visibleIds = new Set(visible.map(item => item.id));
+    for (const [id, row] of conversationRows) if (!visibleIds.has(id)) { row.button.remove(); conversationRows.delete(id); }
+    let position = 0;
     for (const item of visible.sort((a, b) => b.updatedAt - a.updatedAt)) {
+      const version = JSON.stringify([label(item), item.displayName, item.pictureUrl, item.provider, item.sourceType,
+        item.lastText, item.updatedAt, inboxMode(item.ai), item.ai?.state.reason, selected === item.id, dayKey(Date.now())]);
+      const prior = conversationRows.get(item.id);
+      if (prior?.version === version) {
+        if (list.children[position] !== prior.button) list.insertBefore(prior.button, list.children[position] || null);
+        position++; continue;
+      }
       const button = document.createElement("button");
       button.type = "button"; button.className = "conversation-item";
       button.setAttribute("aria-pressed", String(selected === item.id));
@@ -393,7 +408,11 @@ export function createLineInbox() {
       aiLabel.title = item.ai?.state.reason || "重新整理以取得狀態";
       details.append(heading, preview, aiLabel); button.append(avatar(item), details);
       button.addEventListener("click", () => selectConversation(item.id));
-      $("line-conversations").append(button);
+      const focused = prior?.button === document.activeElement;
+      prior?.button.remove();
+      list.insertBefore(button, list.children[position] || null);
+      if (focused) button.focus({ preventScroll: true });
+      conversationRows.set(item.id, { version, button }); position++;
     }
     $("line-more-conversations").hidden = !conversationNext && !zernioConversationNext && !instagramNext;
     showConversationHeader();
@@ -572,7 +591,7 @@ export function createLineInbox() {
   }
   async function refresh(more = false, force = true, filterScan = false) {
     if (refreshing || (!channel && !facebookAccount && !instagramAccount) || !active || saving) return;
-    const currentEpoch = epoch;
+    const currentEpoch = epoch, currentAiRequest = aiRequest;
     const resetPages = !more && (force || !filtering() || !listLoaded);
     refreshing = true; $("line-refresh").disabled = true;
     try {
@@ -616,7 +635,12 @@ export function createLineInbox() {
       if (more && !filterScan) historyMode(true);
       if (!more && needsMessageRefresh(messageSnapshot, conversations.get(selected), Date.now(), force)) await loadMessages();
       if (currentEpoch !== epoch) return;
-      if (!changingAi) await loadAiControl();
+      if (!changingAi && currentAiRequest === aiRequest) {
+        const fresh = [data, facebookResult, instagramResult].flatMap(result => result?.items || []).find(item => item.id === selected)?.ai;
+        if (fresh && (selectedAi?.id !== selected || (fresh.control.revision || 0) >= (selectedAi.control.revision || 0))) {
+          selectedAi = { ...fresh, id: selected }; renderAiControl();
+        } else await loadAiControl();
+      }
       if (refreshError) report(refreshError); else status("");
     } catch (error) { report(error); }
     finally { if (currentEpoch === epoch) { refreshing = false; $("line-refresh").disabled = false; } }
@@ -624,14 +648,19 @@ export function createLineInbox() {
   async function start() {
     const currentEpoch = epoch;
     status("正在讀取 OA 連線狀態…");
+    // The settings card must not delay the conversation list.
+    const settingsReady = aiApi("settings").then(data => {
+      if (currentEpoch === epoch) showAiSettings(data.settings);
+    }).catch(error => {
+      if (currentEpoch !== epoch || error.name === "AbortError") return;
+      $("ai-card-state").textContent = "讀取失敗"; $("ai-key-state").textContent = "暫時無法讀取 AI 設定，請稍後再試。"; showAiModel($("ai-model-name"), null, "暫時無法讀取模型");
+    });
     try {
       const [lineResult, zernioResult] = await Promise.allSettled([api("account"), zernioApi("account")]);
       if (currentEpoch !== epoch) return;
       if (lineResult.status === "fulfilled") channel = lineResult.value.channel;
       if (zernioResult.status === "fulfilled") showZernioAccount(zernioResult.value);
       showAccount();
-      try { showAiSettings((await aiApi("settings")).settings); }
-      catch (error) { if (error.name === "AbortError") throw error; $("ai-card-state").textContent = "讀取失敗"; $("ai-key-state").textContent = "暫時無法讀取 AI 設定，請稍後再試。"; showAiModel($("ai-model-name"), null, "暫時無法讀取模型"); }
       if (channel || facebookAccount || instagramAccount) {
         if (channel && pageMode !== "inbox") {
           status(channel.verifiedAt ? "LINE 官方帳號已連接，Webhook 運作正常。" : "LINE 官方帳號已連接，等待 Webhook 驗證。");
@@ -641,6 +670,7 @@ export function createLineInbox() {
       if (pageMode === "settings" && zernioResult.status === "rejected") await loadZernioAccount();
       if (currentEpoch === epoch && pageMode === "inbox") scheduleRefresh();
     } catch (error) { report(error); }
+    await settingsReady;
   }
   async function sendReply(conversationId, text, operationId, attachment) {
     const currentConversation = conversations.get(conversationId), facebook = isSocial(currentConversation);

@@ -348,6 +348,11 @@ test("Zernio inbox is tenant scoped and supports listing, reading and replying",
   const conversations = await f.request("/api/zernio/conversations?accountId=attacker-account");
   assert.equal(conversations.code, 200); assert.equal(conversations.body.items[0].provider, "facebook"); assert.equal(conversations.body.items[0].displayName, "王小姐"); assert.match(conversations.body.items[0].pictureUrl, /graph\.facebook\.com/);
   const listed = calls.at(-1); assert.match(listed.url, new RegExp(`accountId=${accountId}`)); assert.doesNotMatch(listed.url, /attacker-account/);
+  const readsBefore = { ...f.db.reads };
+  const customerList = await f.request("/api/zernio/conversations?includeAi=false");
+  assert.equal(customerList.code, 200); assert.equal(customerList.body.items[0].ai, undefined);
+  assert.equal(f.db.reads.queries - readsBefore.queries, 1, "customer page only queries customer overrides");
+  assert.equal(calls.filter(call => call.url.includes("/contacts?")).length, 1, "repeat list requests reuse optional avatars");
   const messages = await f.request(`/api/zernio/messages?conversationId=${conversationId}`);
   assert.equal(messages.body.items[0].text, "您好"); assert.equal(messages.body.items[0].direction, "incoming");
   const operationId = randomUUID();

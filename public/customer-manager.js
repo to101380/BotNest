@@ -9,6 +9,7 @@ const formatDate = value => value ? new Date(value).toLocaleString("zh-TW", { ye
 
 export function createCustomerManager() {
   let user = null, active = false, epoch = 0, controller = new AbortController(), loading = false, lineNext = null, facebookNext = null, instagramNext = null, channelReady = false;
+  let connected = new Set();
   const customers = new Map();
   async function api(path) {
     const currentEpoch = epoch, currentUser = user;
@@ -70,13 +71,19 @@ export function createCustomerManager() {
     try {
       if (!more) {
         const [lineAccount, facebookAccount] = await Promise.allSettled([api("account"), zernioApi("account")]);
+        if (currentEpoch !== epoch) return;
+        connected = new Set([
+          ...(lineAccount.value?.channel ? ["line"] : []),
+          ...(facebookAccount.value?.facebook ? ["facebook"] : []),
+          ...(facebookAccount.value?.instagram ? ["instagram"] : []),
+        ]);
         channelReady = !!lineAccount.value?.channel || !!facebookAccount.value?.facebook || !!facebookAccount.value?.instagram;
         if (!channelReady) { customers.clear(); lineNext = facebookNext = instagramNext = null; status("請先到渠道設定連接 LINE OA、Facebook Messenger 或 Instagram。", true); return; }
       }
       const requests = [];
-      if (!more || lineNext) requests.push(api(`conversations${more && lineNext ? `?before=${encodeURIComponent(lineNext)}` : ""}`).then(data => ({ provider: "line", data })).catch(error => ({ provider: "line", error })));
-      if (!more || facebookNext) requests.push(zernioApi(`conversations${more && facebookNext ? `?cursor=${encodeURIComponent(facebookNext)}` : ""}`).then(data => ({ provider: "facebook", data })).catch(error => ({ provider: "facebook", error })));
-      if (!more || instagramNext) requests.push(zernioApi(`conversations?platform=instagram${more && instagramNext ? `&cursor=${encodeURIComponent(instagramNext)}` : ""}`).then(data => ({ provider: "instagram", data })).catch(error => ({ provider: "instagram", error })));
+      if (connected.has("line") && (!more || lineNext)) requests.push(api(`conversations?includeAi=false${more && lineNext ? `&before=${encodeURIComponent(lineNext)}` : ""}`).then(data => ({ provider: "line", data })).catch(error => ({ provider: "line", error })));
+      if (connected.has("facebook") && (!more || facebookNext)) requests.push(zernioApi(`conversations?includeAi=false${more && facebookNext ? `&cursor=${encodeURIComponent(facebookNext)}` : ""}`).then(data => ({ provider: "facebook", data })).catch(error => ({ provider: "facebook", error })));
+      if (connected.has("instagram") && (!more || instagramNext)) requests.push(zernioApi(`conversations?platform=instagram&includeAi=false${more && instagramNext ? `&cursor=${encodeURIComponent(instagramNext)}` : ""}`).then(data => ({ provider: "instagram", data })).catch(error => ({ provider: "instagram", error })));
       const results = await Promise.all(requests);
       if (currentEpoch !== epoch) return;
       if (!more) customers.clear();
