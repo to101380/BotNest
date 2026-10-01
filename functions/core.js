@@ -97,6 +97,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
     if (!user.uid || !["google.com", "password"].includes(user.firebase?.sign_in_provider)) throw new HttpError(403, "請使用正式帳號登入。");
     if (user.firebase.sign_in_provider === "password" && user.email_verified !== true) throw new HttpError(403, "請先完成 Email 驗證，再重新登入。");
     req.securityUid = user.uid;
+    if (await store.isAccountDisabled?.(user.uid)) throw new HttpError(403, "帳號已由管理者停用，請聯絡管理者。");
     await authorizeSession(req, user);
     await store.aiAttempt(user.uid, "api", now(), 120);
     return user;
@@ -169,6 +170,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
         if ([accountId, remoteConversationId, remoteMessageId].some(value => value.length > 512 || /[\u0000-\u001f]/.test(value))) throw new HttpError(400, "Webhook 識別資料無效。");
         const owner = await store.zernioOwnerByAccount(accountId, platform);
         if (!owner) return res.status(200).json({ ok: true, ignored: true });
+        if (await store.isAccountDisabled?.(owner.uid)) return res.status(200).json({ ok: true, ignored: true });
         const timestamp = Date.parse(message.createdAt || payload.createdAt || body.createdAt || body.timestamp);
         const sender = message.sender || payload.sender || {};
         const saved = await store.ingestZernio(owner.uid, { eventId: String(body.id || body.eventId || `${remoteMessageId}:received`).slice(0, 512), accountId, remoteConversationId, remoteMessageId, provider: platform, type: audio.length ? "audio" : attachments.length ? "image" : text ? "text" : "unsupported", attachments,
@@ -240,6 +242,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
         const channel = await store.getChannel(webhook[1]);
         if (!channel) throw new HttpError(404, "找不到 OA。");
         if (!validSignature(req.rawBody, req.get("x-line-signature"), unseal(channel.secret, getKey(), channel.channelId))) throw new HttpError(401, "Webhook 簽章無效。");
+        if (await store.isAccountDisabled?.(channel.ownerUid)) return res.status(200).json({ ok: true, ignored: true });
         let body;
         try { body = JSON.parse(req.rawBody.toString("utf8")); } catch { throw new HttpError(400, "Webhook 格式錯誤。"); }
         if (body.destination !== channel.botUserId || !Array.isArray(body.events) || body.events.length > 100) throw new HttpError(400, "Webhook 帳號或事件格式不符。");

@@ -241,6 +241,7 @@ export function createStore(db) {
     },
     async accountAiSettings(uid) {
       const value = (await accountRead(accounts.doc(uid))).data() || {};
+      if (value.access?.disabled === true) return { ...value.ai, enabled: false };
       if (value.ai) return value.ai;
       if (!value.channelId) return {};
       return (await accountRead(channels.doc(value.channelId))).data()?.ai || {};
@@ -468,6 +469,7 @@ export function createStore(db) {
       return message;
     },
     async getChannel(id) { return (await channels.doc(id).get()).data() || null; },
+    async isAccountDisabled(uid) { return (await accountRead(accounts.doc(uid))).data()?.access?.disabled === true; },
     async getConversation(id, conversationId) { return (await channels.doc(id).collection("conversations").doc(conversationId).get()).data() || null; },
     async account(uid) {
       const account = (await accountRead(accounts.doc(uid))).data();

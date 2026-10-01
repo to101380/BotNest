@@ -7,6 +7,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { createHandler } from "./core.js";
 import { createStore } from "./store.js";
+import { createAdminUsers, createAdminStore } from "./admin-users.js";
 import { createAiResponder, createZernioAiResponder } from "./ai.js";
 import { createLoginSecurity, createLoginSecurityStore, createLoginMailer } from "./login-security.js";
 
@@ -26,12 +27,17 @@ const loginSecurity = createLoginSecurity({
 import { createMonitor, canMonitor, requestMetrics, readPermissionAudit } from "./security-monitor.js";
 const monitor = createMonitor(getFirestore());
 let handler;
+let adminUsers;
 export const botnestApi = onRequest({
   region: "us-central1", maxInstances: 3, minInstances: 0, concurrency: 20,
   timeoutSeconds: 60, memory: "512MiB", cors: false, invoker: "public",
   secrets: [encryptionKey, openAiKey, zernioApiKey, loginMail],
 }, async (req, res) => {
   const path = new URL(req.originalUrl || req.url, "https://botnest.invalid").pathname;
+  if (path.startsWith("/api/ai/admin/")) {
+    adminUsers ||= createAdminUsers({ auth: getAuth(), store: createAdminStore(getFirestore()), authorizeSession: loginSecurity.authorize });
+    return adminUsers(req, res);
+  }
   if (path.startsWith("/api/login-security/")) return loginSecurity.handle(req, res);
   if (path === "/api/security-monitor") {
     res.set("Cache-Control", "private, no-store");

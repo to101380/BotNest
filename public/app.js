@@ -1,4 +1,5 @@
 import { createAiUsage } from "./ai-usage.js";
+import { showAdminEntry } from "./admin-entry.js";
 import { createLoginSecurityPanel } from "./login-security.js";
 import { hasFirebaseConfig, providerName, authErrorMessage, linkProviderAccount, reauthenticateForLink, validateEmailRegistration, reauthenticatePasswordForLink, linkEmailPassword } from "./auth-helpers.js";
 import { createLineInbox } from "./line-inbox.js";
@@ -23,6 +24,7 @@ function finishAuthLoading() {
 }
 function renderPage(moveFocus = false) {
   const signedIn = !!auth?.currentUser;
+  void showAdminEntry(auth?.currentUser);
   const permittedUser = loginSecurity.allowed ? auth?.currentUser || null : null;
   const aiPage = !!permittedUser && location.hash === "#ai-robot";
   const customersPage = !!permittedUser && location.hash === "#customers";
