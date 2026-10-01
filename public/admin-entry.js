@@ -1,7 +1,7 @@
 let link, version = 0;
 export async function showAdminEntry(user) {
   if (!link) {
-    link = document.createElement("a"); link.href = "/admin.html"; link.textContent = "管理者"; link.hidden = true;
+    link = document.createElement("a"); link.href = "/admin.html"; link.textContent = "管理中心"; link.hidden = true;
     document.getElementById("app-nav").append(link);
   }
   const current = ++version; link.hidden = true;
