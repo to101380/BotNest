@@ -8,6 +8,7 @@ import { getStorage } from "firebase-admin/storage";
 import { createHandler } from "./core.js";
 import { createStore } from "./store.js";
 import { createAdminUsers, createAdminStore } from "./admin-users.js";
+import { createProfileHandler, createProfileStore } from "./account-profile.js";
 import { createAiResponder, createZernioAiResponder } from "./ai.js";
 import { createLoginSecurity, createLoginSecurityStore, createLoginMailer } from "./login-security.js";
 
@@ -28,12 +29,17 @@ import { createMonitor, canMonitor, requestMetrics, readPermissionAudit } from "
 const monitor = createMonitor(getFirestore());
 let handler;
 let adminUsers;
+let accountProfile;
 export const botnestApi = onRequest({
   region: "us-central1", maxInstances: 3, minInstances: 0, concurrency: 20,
   timeoutSeconds: 60, memory: "512MiB", cors: false, invoker: "public",
   secrets: [encryptionKey, openAiKey, zernioApiKey, loginMail],
 }, async (req, res) => {
   const path = new URL(req.originalUrl || req.url, "https://botnest.invalid").pathname;
+  if (path === "/api/ai/profile") {
+    accountProfile ||= createProfileHandler({ verifyToken: token => getAuth().verifyIdToken(token, true), store: createProfileStore(getFirestore()), accountStore: createStore(getFirestore()), authorizeSession: loginSecurity.authorize });
+    return accountProfile(req, res);
+  }
   if (path.startsWith("/api/ai/admin/")) {
     adminUsers ||= createAdminUsers({ auth: getAuth(), store: createAdminStore(getFirestore()), authorizeSession: loginSecurity.authorize });
     return adminUsers(req, res);

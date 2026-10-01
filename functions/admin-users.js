@@ -7,7 +7,7 @@ const totalFields = ["requests", "completed", "failed", "pending", "images", "au
 export function publicAdminUser(user, data = {}) {
   const totals = Object.fromEntries(totalFields.map(key => [key, Object.values(data.usage?.buckets || {}).reduce((sum, bucket) => sum + (Number(bucket[key]) || 0), 0)]));
   const access = data.account?.access || {};
-  return { uid: user.uid, email: user.email || "", name: user.displayName || "未命名用戶", emailVerified: !!user.emailVerified,
+  return { uid: user.uid, email: user.email || "", name: data.account?.profileName || user.displayName || "未命名用戶", emailVerified: !!user.emailVerified,
     providers: (user.providerData || []).map(p => p.providerId), registrationMethod: null,
     createdAt: user.metadata?.creationTime || null, lastSignInAt: user.metadata?.lastSignInTime || null,
     disabled: !!user.disabled || access.disabled === true, authDisabled: !!user.disabled, revision: access.revision || 0,

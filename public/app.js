@@ -1,4 +1,5 @@
 import { createAiUsage } from "./ai-usage.js";
+import { createAccountProfile } from "./account-profile.js";
 import { showAdminEntry } from "./admin-entry.js";
 import { createLoginSecurityPanel } from "./login-security.js";
 import { hasFirebaseConfig, providerName, authErrorMessage, linkProviderAccount, reauthenticateForLink, validateEmailRegistration, reauthenticatePasswordForLink, linkEmailPassword } from "./auth-helpers.js";
@@ -10,6 +11,7 @@ const lineInbox = createLineInbox();
 const customerManager = createCustomerManager();
 const aiSettings = createAiSettings();
 const aiUsage = createAiUsage();
+const accountProfile = createAccountProfile();
 const loginSecurity = createLoginSecurityPanel({ onAccessChange: () => { renderPage(); controls(); }, onSignOut: () => sdk.signOut(auth) });
 let auth;
 let sdk;
@@ -94,7 +96,7 @@ function renderAvatar(user) {
     const photo = document.createElement("img");
     photo.alt = "你的大頭照";
     photo.referrerPolicy = "no-referrer";
-    photo.onload = () => { if (avatar.dataset.uid === user.uid) avatar.replaceChildren(photo); };
+    photo.onload = () => { if (avatar.dataset.uid === user.uid && avatar.dataset.customPhoto !== user.uid) avatar.replaceChildren(photo); };
     photo.onerror = () => { if (avatar.dataset.uid === user.uid) loadNext(); };
     photo.src = photos.shift();
   };
@@ -111,9 +113,10 @@ function render(user) {
   renderPage();
   $("state").textContent = user ? "已登入" : "尚未登入";
   $("state").classList.toggle("active", !!user);
-  $("welcome").textContent = user?.displayName ? `你好，${user.displayName}` : "登入成功";
+  $("welcome").textContent = user?.displayName || "我的帳號";
   $("email").textContent = user ? (user.email || "此登入方式未提供電子郵件") : "";
   renderAvatar(user);
+  accountProfile.setUser(user);
   $("uid").value = user?.uid || "";
   $("provider-list").replaceChildren();
   const linked = new Set(user?.providerData.map(provider => provider.providerId) || []);
@@ -131,7 +134,7 @@ function render(user) {
     item.append(id);
     $("provider-list").append(item);
   }
-  setStatus(user ? "登入成功。你的帳號身分由 Firebase Authentication 管理。" : "請選擇登入方式。");
+  setStatus(user ? "" : "請選擇登入方式。");
   controls();
 }
 async function initialize() {
