@@ -981,6 +981,7 @@ export function createLineInbox() {
   });
   $("line-settings-toggle").addEventListener("click", () => {
     $("line-connect-form").hidden = !$("line-connect-form").hidden;
+    $("line-step5-guide").hidden = $("line-connect-form").hidden;
     $("line-settings-toggle").setAttribute("aria-expanded", String(!$("line-connect-form").hidden)); clearSecrets();
   });
   $("line-refresh").addEventListener("click", () => { historyMode(false); void refresh(); });
@@ -991,7 +992,11 @@ export function createLineInbox() {
   $("line-image-viewer").addEventListener("click", event => { if (event.target === $("line-image-viewer")) $("line-image-viewer").close(); });
   $("line-image-viewer").addEventListener("close", () => { $("line-image-full").removeAttribute("src"); viewerItems = []; });
   $("line-connection-details").addEventListener("toggle", () => {
-    $("line-step5-guide").hidden = !!channel && !$("line-connection-details").open;
+    if (channel && !$("line-connection-details").open) {
+      $("line-connect-form").hidden = $("line-step5-guide").hidden = true;
+      $("line-settings-toggle").setAttribute("aria-expanded", "false");
+      clearSecrets();
+    }
   });
   $("line-step5-copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("line-step5-webhook-url").value); $("line-step5-copy-status").textContent = "已複製 Webhook URL。"; }
