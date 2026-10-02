@@ -15,7 +15,15 @@ export function createUiMotion(root = document) {
   const schedule = () => { if (!frame && !stopped) frame = view.requestAnimationFrame(update); };
   const resize = new view.ResizeObserver(() => { resizePending = true; schedule(); });
   const onResize = () => { resizePending = true; schedule(); };
-  const observer = new view.MutationObserver(schedule);
+  const observer = new view.MutationObserver(records => {
+    // Message/history updates do not change navigation or selection indicators.
+    // Avoid scanning every animated panel for each chat row mutation.
+    if (records.some(record => {
+      const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+      const history = target?.closest('#line-messages, #line-conversations');
+      return !history || (target === history && record.type === 'attributes');
+    })) schedule();
+  });
 
   function attach(group) {
     const indicator = root.createElement ? root.createElement("i") : root.ownerDocument.createElement("i");

@@ -23,3 +23,9 @@ Browser clock verification: three hidden minutes produced zero summary requests;
 ## Validation and scope
 
 300 existing tests passed; 85 JavaScript files passed syntax checks. Browser fixtures verified conversation actions, desktop/mobile layout, and account data management. Deploy only line-inbox.js and data-retention.js over a fresh production snapshot. Large LINE guide images already use lazy loading; their original screenshots are preserved. No backend, data retention policy, or design changes.
+
+## Chat rendering follow-up
+
+The animation observer previously scheduled a global navigation/panel geometry scan for every mutation in message history and conversation rows. It now skips these content-only mutations, while retaining changes to the history container's own visibility/classes and all mutations outside history. ResizeObserver still reacts to actual control size changes.
+
+Controlled browser verification: 50 successive chat updates caused 50 global animation scans before, and zero afterward. This measures avoided work, not a claimed FPS increase. Navigation pill movement, page switching, drawer inert state and focus restoration passed in both versions. Desktop/mobile conversation actions remain covered by the existing browser fixture.
