@@ -5,6 +5,13 @@ import { createStore } from "../store.js";
 import { publicAdminUser } from "../admin-users.js";
 import { memoryDb } from "./memory.js";
 const avatar = Buffer.from([255,216,255,224,0,1,255,217]).toString("base64");
+test("extended contact fields persist, validate, and allow removing a photo", async () => {
+  const store = createProfileStore(memoryDb());
+  await store.save("alice", validateProfile({ name: "王小明", revision: 0, avatar, lastName: "王", firstName: "小明", contactEmail: "alice@example.com", phone: "0912345678", company: "測試公司", timezone: "Asia/Taipei" }), 1);
+  const next = await store.save("alice", validateProfile({ name: "王小明", revision: 1, avatar: null }), 2);
+  assert.equal(next.company, "測試公司"); assert.equal(next.lastName, "王"); assert.equal(next.avatar, null);
+  for (const extra of [{ contactEmail: "bad" }, { phone: "x".repeat(41) }, { timezone: "invalid-zone" }, { company: 42 }]) assert.throws(() => validateProfile({ name: "Alice", revision: 0, ...extra }));
+});
 test("profile input rejects extra identity, empty names, SVG and oversized avatars", () => {
   for (const value of [{ name:"",revision:0 },{name:"x",revision:0,uid:"other"},{name:"x",revision:0,avatar:Buffer.from('<svg></svg>').toString('base64')},{name:"x",revision:0,avatar:Buffer.alloc(140000,1).toString('base64')},{name:'x'.repeat(81),revision:0}]) assert.throws(()=>validateProfile(value));
   assert.equal(validateProfile({name:" Alice ",revision:0,avatar}).name,"Alice");

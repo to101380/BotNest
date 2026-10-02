@@ -18,58 +18,71 @@ export function createAccountProfile({ request = async (user, options) => {
 } } = {}) {
   const style = document.createElement("link"); style.rel = "stylesheet"; style.href = "/account-profile.css"; document.head.append(style);
   const root = document.createElement("section"); root.className = "profile-editor"; root.hidden = true;
-  root.innerHTML = '<button type="button" class="profile-edit">編輯個人資料</button><form hidden><label>顯示名字<input name="name" autocomplete="nickname" maxlength="80" required></label><div class="profile-photo-row"><img class="profile-preview" alt="新大頭貼預覽" hidden><label class="profile-file">更換大頭貼<input name="avatar" type="file" accept="image/jpeg,image/png,image/webp"></label></div><p class="profile-note">JPG、PNG 或 WebP，最大 8 MB。照片會置中裁成正方形並壓縮。</p><div class="profile-actions"><button type="submit">儲存變更</button><button type="button" class="profile-cancel">取消</button></div></form><p class="profile-feedback" role="status" aria-live="polite"></p>';
-  document.getElementById("email").after(root);
-  const form = root.querySelector("form"), name = form.elements.name, file = form.elements.avatar, preview = root.querySelector(".profile-preview"), feedback = root.querySelector(".profile-feedback"), edit = root.querySelector(".profile-edit");
-  let user = null, profile = null, generation = 0, pendingAvatar = null, busy = false, fileVersion = 0;
+  const fields = [
+    ["lastName", "姓氏", "family-name", 40, true], ["firstName", "名字", "given-name", 40, true],
+    ["registrationEmail", "註冊信箱", "off", 254, false], ["contactEmail", "電子信箱", "email", 254, false],
+    ["language", "語言"], ["phone", "聯絡電話", "tel", 40, true],
+    ["taxId", "稅務編號", "off", 30, false], ["company", "公司名稱", "organization", 120, false],
+    ["location", "所在地", "address-level2", 120, false], ["timezone", "時區", "off", 80, false],
+    ["department", "部門"], ["jobTitle", "職稱"]
+  ];
+  const choices = { language: [["zh-TW", "繁體中文"], ["zh-CN", "简体中文"], ["en", "English"]], department: ["", "業務", "行銷", "客服", "營運", "技術", "財務", "其他"], jobTitle: ["", "創辦人", "負責人", "主管", "專員", "其他"] };
+  root.innerHTML = `<form class="account-settings-form"><header class="profile-heading"><h1>帳戶設定</h1><button type="submit" class="profile-save">儲存</button></header><div class="profile-layout"><aside class="profile-sidebar"><div class="profile-avatar-slot"></div><div class="profile-photo-actions"><label class="profile-file">上傳一張照片<input name="avatar" type="file" accept="image/jpeg,image/png,image/webp"></label><button type="button" class="profile-remove">移除目前照片</button></div><p class="profile-note">JPG、PNG 或 WebP，最大 8 MB。照片會置中裁成正方形。</p><div class="profile-login-sources"></div></aside><div class="profile-grid">${fields.map(([key, label, autocomplete, max, required]) => `<label for="profile-${key}">${label}${required ? '<span class="profile-required">*</span>' : ""}${choices[key] ? `<select id="profile-${key}" name="${key}">${choices[key].map(item => { const [value, text] = Array.isArray(item) ? item : [item, item || "請選擇"]; return `<option value="${value}">${text}</option>`; }).join("")}</select>` : `<input id="profile-${key}" name="${key}" type="${key === "contactEmail" ? "email" : key === "phone" ? "tel" : "text"}" autocomplete="${autocomplete}" maxlength="${max}" ${required ? "required" : ""} ${["registrationEmail", "timezone"].includes(key) ? "readonly" : ""}>`}</label>`).join("")}</div></div><p class="profile-feedback" role="status" aria-live="polite"></p></form>`;
+  const account = document.getElementById("account-page"); account.prepend(root);
+  root.querySelector(".profile-avatar-slot").append(document.getElementById("avatar"));
+  document.getElementById("welcome").hidden = document.getElementById("email").hidden = true;
+  const sources = document.getElementById("provider-list"), heading = sources.previousElementSibling;
+  root.querySelector(".profile-login-sources").append(heading, sources, document.getElementById("link-panel"));
+  const form = root.querySelector("form"), file = form.elements.avatar, feedback = root.querySelector(".profile-feedback");
+  let user = null, profile = null, generation = 0, pendingAvatar, busy = false, fileVersion = 0;
   function message(text, error = false) { feedback.textContent = text; feedback.classList.toggle("error", error); }
-  function controls(value) { busy = value; for (const control of form.querySelectorAll("input,button")) control.disabled = value; edit.disabled = value; }
+  function controls(value) { busy = value; for (const control of form.querySelectorAll("input,select,button")) control.disabled = value; }
   function paint() {
     if (!user) return;
-    const avatar = document.getElementById("avatar");
-    document.getElementById("welcome").textContent = profile?.name || user.displayName || "我的帳號";
-    if (profile?.avatar) {
-      avatar.dataset.customPhoto = user.uid;
-      const img = document.createElement("img"); img.alt = "你的大頭貼"; img.src = profile.avatar; avatar.replaceChildren(img);
-    } else if (profile?.name && !avatar.querySelector("img")) avatar.textContent = Array.from(profile.name)[0];
+    const avatar = document.getElementById("avatar"); avatar.dataset.customPhoto = user.uid;
+    const photo = pendingAvatar !== undefined ? pendingAvatar : profile?.avatar;
+    if (photo) { const img = document.createElement("img"); img.alt = "你的大頭貼"; img.src = photo; avatar.replaceChildren(img); }
+    else if (photo === null) avatar.textContent = Array.from(profile?.name || user.displayName || "帳")[0];
+    else if (user.photoURL) { const img = document.createElement("img"); img.alt = "你的大頭貼"; img.src = user.photoURL; avatar.replaceChildren(img); }
+    else avatar.textContent = Array.from(profile?.name || user.displayName || "帳")[0];
   }
   function resetForm() {
-    name.value = profile?.name || user?.displayName || ""; file.value = ""; pendingAvatar = null; fileVersion++;
-    preview.hidden = true; preview.removeAttribute("src");
+    for (const [key] of fields) {
+      const input = form.elements[key];
+      const fallback = key === "firstName" ? profile?.name || user?.displayName || "" : key === "contactEmail" || key === "registrationEmail" ? user?.email || "" : key === "language" ? "zh-TW" : key === "timezone" ? "Asia/Taipei" : "";
+      const value = key === "registrationEmail" ? user?.email || "" : profile?.[key] ?? fallback;
+      if (input.tagName === "SELECT" && value && !Array.from(input.options).some(option => option.value === value)) input.add(new Option(value, value));
+      input.value = value;
+    }
+    file.value = ""; pendingAvatar = undefined; fileVersion++; paint();
   }
   async function load() {
     const version = generation, current = user; controls(true);
-    try { const data = await request(current); if (version !== generation) return; profile = data; resetForm(); paint(); message(""); }
+    try { const data = await request(current); if (version !== generation) return; profile = data; resetForm(); message(""); }
     catch (e) { if (version === generation) message(e.message, true); }
     finally { if (version === generation) controls(false); }
   }
-  edit.onclick = async () => {
-    if (!profile) await load(); if (!profile || !user) return;
-    form.hidden = false; edit.hidden = true; resetForm(); name.focus();
-  };
-  root.querySelector(".profile-cancel").onclick = () => { resetForm(); form.hidden = true; edit.hidden = false; message(""); };
+  root.querySelector(".profile-remove").onclick = () => { pendingAvatar = null; file.value = ""; fileVersion++; paint(); message("照片將在儲存後移除。"); };
   file.onchange = async () => {
-    const version = generation, currentFile = ++fileVersion;
-    if (!file.files[0]) return;
+    const version = generation, currentFile = ++fileVersion; if (!file.files[0]) return;
     controls(true); message("正在處理圖片…");
-    try { const data = await prepareAvatar(file.files[0]); if (generation !== version || currentFile !== fileVersion) return; pendingAvatar = data; preview.src = data; preview.hidden = false; message("照片已準備好，按「儲存變更」完成更新。"); }
+    try { const data = await prepareAvatar(file.files[0]); if (generation !== version || currentFile !== fileVersion) return; pendingAvatar = data; paint(); message("照片已準備好，按「儲存」完成更新。"); }
     catch (e) { if (generation === version) { file.value = ""; message(e.message, true); } }
     finally { if (generation === version) controls(false); }
   };
   form.onsubmit = async event => {
     event.preventDefault(); if (busy || !user || !profile) return;
-    const value = name.value.trim(); if (!value) { message("請填寫名字。", true); name.focus(); return; }
+    const values = Object.fromEntries(fields.filter(([key]) => key !== "registrationEmail").map(([key]) => [key, form.elements[key].value.trim()]));
     const version = generation; controls(true); message("正在儲存…");
     try {
-      const data = await request(user, { method: "PUT", body: JSON.stringify({ name: value, revision: profile.revision, ...(pendingAvatar ? { avatar: pendingAvatar.split(",")[1] } : {}) }) });
-      if (version !== generation) return;
-      profile = data; paint(); resetForm(); form.hidden = true; edit.hidden = false; message("個人資料已更新。");
+      const data = await request(user, { method: "PUT", body: JSON.stringify({ ...values, name: `${values.lastName}${values.firstName}`, revision: profile.revision, ...(pendingAvatar !== undefined ? { avatar: pendingAvatar === null ? null : pendingAvatar.split(",")[1] } : {}) }) });
+      if (version !== generation) return; profile = data; resetForm(); message("帳戶資料已儲存。");
     } catch (e) { if (version === generation) message(e.message, true); }
     finally { if (version === generation) controls(false); }
   };
   return { setUser(next) {
     if (user?.uid === next?.uid) { user = next; paint(); return; }
-    generation++; fileVersion++; user = next; profile = null; root.hidden = !next; form.hidden = true; edit.hidden = false; resetForm(); message(""); controls(false);
+    generation++; fileVersion++; user = next; profile = null; root.hidden = !next; resetForm(); message(""); controls(false);
     delete document.getElementById("avatar").dataset.customPhoto;
     if (next) void load();
   } };
