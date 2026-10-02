@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { aiError, normalizeAiSettings, validateAiSettings, aiEligibility } from "./ai-policy.js";
 import { cleanKnowledge, importFile, importUrl } from "./knowledge.js";
 import { generateAnswer } from "./ai-engine.js";
+import { analyzeConversation } from "./conversation-insights.js";
 import { handleUsage, meteredOpenAi } from "./ai-usage.js";
 import { canMonitor } from "./security-monitor.js";
 const hash = value => createHash("sha256").update(value).digest("hex");
@@ -10,10 +11,15 @@ export async function handleAiApi({ user, path, req, res, store, getOpenAiKey, o
   const uid = user.uid, query = new URL(req.originalUrl || req.url, "https://botnest.invalid").searchParams;
   const clientResult = result => { if (!result || canMonitor(user)) return result; const { usage, ...visible } = result; return visible; };
   if (path === "/api/ai/usage") return handleUsage({ user, query, req, res, store, now });
-  fetchOpenAi = meteredOpenAi(store, uid, { provider: "workspace", kind: path === "/api/ai/test" ? "test" : "knowledge" }, fetchOpenAi, now);
+  fetchOpenAi = meteredOpenAi(store, uid, { provider: "workspace", kind: path === "/api/ai/insights" ? "insights" : path === "/api/ai/test" ? "test" : "knowledge" }, fetchOpenAi, now);
   if (!["GET", "HEAD"].includes(req.method)) {
     const origin = req.get("origin");
     if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw aiError(403, "請從正式網站更新 AI 客服。");
+  }
+  if (path === "/api/ai/insights" && req.method === "POST") {
+    if (!openAiConfigured()) throw aiError(409, "AI 尚未設定。");
+    await store.aiAttempt(uid, "insights", now(), 6);
+    return res.json({ result: await analyzeConversation({ messages: req.body?.messages, getOpenAiKey, fetchOpenAi }), updatedAt: now() });
   }
   if (path === "/api/ai/settings") {
     const previous = await store.accountAiSettings(uid);

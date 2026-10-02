@@ -1,4 +1,4 @@
-const labels = { line: "LINE", facebook: "Messenger", instagram: "Instagram", workspace: "後台操作", reply: "文字回覆", image: "讀圖與回覆", audio: "語音辨識", test: "測試對話", knowledge: "知識庫圖片辨識", completed: "已處理", pending: "待確認", uncertain: "結果待確認", failed: "請求失敗" };
+const labels = { line: "LINE", facebook: "Messenger", instagram: "Instagram", workspace: "後台操作", reply: "文字回覆", image: "讀圖與回覆", audio: "語音辨識", test: "測試對話", insights: "對話情緒與摘要", knowledge: "知識庫圖片辨識", completed: "已處理", pending: "待確認", uncertain: "結果待確認", failed: "請求失敗" };
 const number = value => new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2 }).format(value || 0);
 const usd = value => `US$ ${new Intl.NumberFormat("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 6 }).format(value / 1e9)}`;
 const node = (tag, text, className) => { const el = document.createElement(tag); if (text !== undefined) el.textContent = text; if (className) el.className = className; return el; };
