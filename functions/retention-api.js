@@ -11,9 +11,11 @@ export function createRetentionHandler({ service, bucket, verifyToken, accountSt
       if (!['google.com', 'password'].includes(user.firebase?.sign_in_provider) || user.firebase.sign_in_provider === 'password' && !user.email_verified) throw fail(403, '請先驗證帳號。');
       await authorizeSession(req, user);
       if (await accountStore.isAccountDisabled(user.uid)) throw fail(403, '帳號已停用。');
+      await accountStore.aiAttempt(user.uid, 'api', now(), 120);
       const url = new URL(req.originalUrl || req.url, 'https://botnest.invalid'), path = url.pathname;
       if (req.method === 'GET' && path === '/api/ai/retention') return res.json(await service.summary(user.uid));
       if (req.method === 'GET' && path === '/api/ai/retention/download') {
+        await accountStore.aiAttempt(user.uid, 'backupDownload', now(), 20);
         const id = url.searchParams.get('id'), part = Number(url.searchParams.get('part'));
         if (!/^[a-f0-9-]{36}$/.test(id || '') || !Number.isSafeInteger(part) || part < 1) throw fail(400, '下載參數錯誤。');
         const job = (await service.jobs(user.uid).doc(id).get()).data();

@@ -1,0 +1,19 @@
+{
+  "project": "planning-with-ai-52d58",
+  "api": {
+    "serviceAccount": "botnest-api-runtime",
+    "projectRoles": ["roles/datastore.user", "roles/logging.viewer", "projects/planning-with-ai-52d58/roles/botnestRuntimeAuth"],
+    "customAuthPermissions": ["firebaseauth.users.get", "firebaseauth.users.update"]
+  },
+  "worker": {
+    "serviceAccount": "botnest-worker-runtime",
+    "projectRoles": ["roles/datastore.user", "roles/eventarc.eventReceiver", "roles/run.invoker"]
+  },
+  "both": {
+    "secretAccessorResources": ["BOTNEST_ENCRYPTION_KEY", "OPENAI_API_KEY", "ZERNIO_API_KEY"],
+    "storageObjectAdminBucket": "planning-with-ai-52d58-botnest-media",
+    "serviceAccountKeysCreated": false
+  },
+  "verification": {"functionsUpdated": 5, "hostingFilesMatched": 64, "hostingVersion": "94921efdd0db3473", "workerScan": "ready; one attempt; synthetic documents removed"},
+  "limitations": ["Existing project administration and platform/build identities retained", "Run invoker currently project-scoped", "Firestore tenant isolation is enforced by backend authorization; datastore.user can access the database"]
+}

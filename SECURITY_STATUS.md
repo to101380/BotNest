@@ -1,3 +1,5 @@
+最新稽核：[2026-10-03 資安強化](SECURITY_HARDENING_20261003.md)。Firestore 現在全面拒絕用戶端讀寫，後端使用專用執行身分；以下為歷史紀錄。
+
 # 安全處理狀態
 
 ## 新增 LINE 功能（已部署，待真實 OA 驗證）
@@ -47,3 +49,4 @@ Blaze 已啟用；OA 收件匣、接收 API 與 `firestore.botnest.rules` 均已
 `scripts/cloud-security-audit.cjs` 是唯讀稽核，輸出採欄位白名單，不輸出 IDP client secret、password hash signer 或登入 token。
 
 Firestore prototype review note: I've set up prototype Security Rules to keep the data in Firestore safe. They are designed to be secure for this login-only app because no client database access is needed and every read/write is denied. However, you should review and verify them before broadly sharing your app. If you'd like, I can help you harden these rules.
+

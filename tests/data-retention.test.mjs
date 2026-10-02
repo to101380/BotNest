@@ -9,6 +9,21 @@ import { initialPolicy, DAY, validateRetention, trashDeadline } from '../functio
 import { createStore } from '../functions/store.js';
 import { visibleRetainedMessage } from '../functions/retention-policy.js';
 const JSZip = createRequire(new URL('../functions/package.json', import.meta.url))('jszip');
+
+test('backup reads share the API rate budget and downloads have an additional per-account cap', async () => {
+  const f = await fixture(), accountStore = createStore(f.db);
+  const handler = createRetentionHandler({ service: f.service, bucket: f.bucket, now: f.now, accountStore, verifyToken: async uid => ({ uid, firebase: { sign_in_provider: 'google.com' } }) });
+  async function call(uid, url = '/api/ai/retention') {
+    let code = 200;
+    await handler({ method: 'GET', url, get: name => name === 'authorization' ? `Bearer ${uid}` : undefined }, { set() {}, status(n) { code = n; return this; }, json() {}, send() {} });
+    return code;
+  }
+  for (let i = 0; i < 120; i++) assert.equal(await call('alice'), 200);
+  assert.equal(await call('alice'), 429); assert.equal(await call('bob'), 200);
+  f.tick(60000); assert.equal(await call('alice'), 200);
+  for (let i = 0; i < 20; i++) assert.equal(await call('alice', '/api/ai/retention/download?id=invalid&part=1'), 400);
+  assert.equal(await call('alice', '/api/ai/retention/download?id=invalid&part=1'), 429);
+});
 function fakeBucket() {
   const data = new Map(); const file = path => ({ name: path, save: async bytes => data.set(path, Buffer.from(bytes)), getMetadata: async () => { if (!data.has(path)) throw Object.assign(Error('missing'), { code: 404 }); return [{ size: data.get(path).length, generation: '1' }]; }, download: async () => { if (!data.has(path)) throw Object.assign(Error('missing'), { code: 404 }); return [data.get(path)]; }, delete: async options => { assert.equal(options.ifGenerationMatch, '1'); data.delete(path); } });
   return { data, file, getFiles: async ({ prefix, maxResults }) => [[...data.keys()].filter(p => p.startsWith(prefix)).slice(0, maxResults).map(file)] };
@@ -84,7 +99,7 @@ test('large exports paginate without losing messages, sanitize secrets, ZIP HTML
   const id = await f.service.queue('alice', 'export'); await f.service.processJob('alice', id, 5000); const job = (await f.service.jobs('alice').doc(id).get()).data();
   assert.equal(job.status, 'ready'); assert.equal(job.messages, 205); assert.equal(job.parts, 3);
   for (const bytes of f.bucket.data.values()) { const zip = await JSZip.loadAsync(bytes), html = await zip.file('conversation.html').async('string'), json = await zip.file('messages.json').async('string'); assert.ok(!html.includes('<script>')); assert.ok(!json.includes('SECRET_')); }
-  const handler = createRetentionHandler({ service: f.service, bucket: f.bucket, now: f.now, verifyToken: async token => token === 'alice' ? { uid: 'alice', firebase: { sign_in_provider: 'google.com' } } : { uid: 'bob', firebase: { sign_in_provider: 'google.com' } }, accountStore: { isAccountDisabled: async () => false } });
+  const handler = createRetentionHandler({ service: f.service, bucket: f.bucket, now: f.now, verifyToken: async token => token === 'alice' ? { uid: 'alice', firebase: { sign_in_provider: 'google.com' } } : { uid: 'bob', firebase: { sign_in_provider: 'google.com' } }, accountStore: createStore(f.db) });
   async function call(token) { let code = 200, body; await handler({ method: 'GET', url: `/api/ai/retention/download?id=${id}&part=1`, get: () => `Bearer ${token}` }, { set() {}, status(n) { code = n; return this; }, json(v) { body = v; }, send(v) { body = v; } }); return { code, body }; }
   assert.equal((await call('bob')).code, 404); assert.equal((await call('alice')).code, 200); f.tick(7 * DAY); assert.equal((await call('alice')).code, 404);
   await f.service.scheduled(); assert.equal(f.bucket.data.size, 0);

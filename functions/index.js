@@ -1,5 +1,6 @@
 import { createSocialBackupReader, createLineBackupReader } from "./social-backup.js";
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { validateRequestEnvelope, secureResponse } from "./request-security.js";
 import { createRetentionService } from "./data-retention.js";
 import { createRetentionHandler } from "./retention-api.js";
 import { onRequest } from "firebase-functions/v2/https";
@@ -38,14 +39,17 @@ let accountProfile;
 let conversationWorkflow;
 let retentionService, retentionHandler;
 function dataService() { return retentionService ||= createRetentionService({ db: getFirestore(), bucket: getStorage().bucket("planning-with-ai-52d58-botnest-media"), socialReader: createSocialBackupReader(() => zernioApiKey.value()), lineReader: createLineBackupReader(() => encryptionKey.value()) }); }
-export const dataRetentionMaintenance = onSchedule({ schedule: "every 60 minutes", timeZone: "Asia/Taipei", region: "us-central1", timeoutSeconds: 540, memory: "512MiB", maxInstances: 1, secrets: [zernioApiKey, encryptionKey], retryCount: 1 }, () => dataService().scheduled());
-export const dataRetentionJob = onDocumentCreated({ document: "botnest/state/accounts/{uid}/dataJobs/{jobId}", region: "us-central1", timeoutSeconds: 540, memory: "512MiB", maxInstances: 2, secrets: [zernioApiKey, encryptionKey], retry: true }, event => dataService().processJob(event.params.uid, event.params.jobId));
+export const dataRetentionMaintenance = onSchedule({ schedule: "every 60 minutes", timeZone: "Asia/Taipei", serviceAccount: "botnest-worker-runtime@planning-with-ai-52d58.iam.gserviceaccount.com", region: "us-central1", timeoutSeconds: 540, memory: "512MiB", maxInstances: 1, secrets: [zernioApiKey, encryptionKey], retryCount: 1 }, () => dataService().scheduled());
+export const dataRetentionJob = onDocumentCreated({ document: "botnest/state/accounts/{uid}/dataJobs/{jobId}", serviceAccount: "botnest-worker-runtime@planning-with-ai-52d58.iam.gserviceaccount.com", region: "us-central1", timeoutSeconds: 540, memory: "512MiB", maxInstances: 2, secrets: [zernioApiKey, encryptionKey], retry: true }, event => dataService().processJob(event.params.uid, event.params.jobId));
 export const botnestApi = onRequest({
-  region: "us-central1", maxInstances: 3, minInstances: 0, concurrency: 20,
+  serviceAccount: "botnest-api-runtime@planning-with-ai-52d58.iam.gserviceaccount.com", region: "us-central1", maxInstances: 3, minInstances: 0, concurrency: 20,
   timeoutSeconds: 60, memory: "512MiB", cors: false, invoker: "public",
   secrets: [encryptionKey, openAiKey, zernioApiKey, loginMail],
 }, async (req, res) => {
-  const path = new URL(req.originalUrl || req.url, "https://botnest.invalid").pathname;
+  secureResponse(res);
+  let path;
+  try { path = validateRequestEnvelope(req); }
+  catch (error) { return res.status(error.status || 400).json({ error: error.status ? error.message : '請求格式錯誤。' }); }
   if (path.startsWith("/api/ai/retention")) {
     retentionHandler ||= createRetentionHandler({ service: dataService(), bucket: getStorage().bucket("planning-with-ai-52d58-botnest-media"), verifyToken: token => getAuth().verifyIdToken(token, true), authorizeSession: loginSecurity.authorize, accountStore: createStore(getFirestore()) });
     return retentionHandler(req, res);
@@ -100,7 +104,7 @@ export const botnestApi = onRequest({
 let aiResponder;
 export const lineAiAutoReply = onDocumentCreated({
   document: "botnest/state/channels/{channelId}/conversations/{conversationId}/messages/{messageId}",
-  region: "us-central1", timeoutSeconds: 90, memory: "256MiB", maxInstances: 5,
+  serviceAccount: "botnest-worker-runtime@planning-with-ai-52d58.iam.gserviceaccount.com", region: "us-central1", timeoutSeconds: 90, memory: "256MiB", maxInstances: 5,
   secrets: [encryptionKey, openAiKey], retry: false,
 }, event => {
   const message = event.data?.data();
@@ -112,7 +116,7 @@ export const lineAiAutoReply = onDocumentCreated({
 let zernioAiResponder;
 export const facebookAiAutoReply = onDocumentCreated({
   document: "botnest/state/accounts/{uid}/zernioConversations/{conversationId}/messages/{messageId}",
-  region: "us-central1", timeoutSeconds: 150, memory: "256MiB", maxInstances: 5,
+  serviceAccount: "botnest-worker-runtime@planning-with-ai-52d58.iam.gserviceaccount.com", region: "us-central1", timeoutSeconds: 150, memory: "256MiB", maxInstances: 5,
   secrets: [openAiKey, zernioApiKey], retry: false,
 }, event => {
   const message = event.data?.data();

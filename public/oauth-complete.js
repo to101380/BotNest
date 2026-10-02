@@ -19,5 +19,5 @@ try {
   if (redirect.origin !== "https://planning-with-ai-52d58.web.app" || redirect.pathname !== "/") throw new Error("回傳網址無效。");
   location.replace(redirect.href);
 } catch (error) {
-  status.textContent = error.name === "TimeoutError" ? "驗證逾時，請返回渠道設定確認連接狀態。" : "連接未完成。請使用原本已核准的登入裝置返回渠道設定重試。";
+  status.textContent = error.name === "TimeoutError" ? "驗證逾時，請返回渠道設定確認連接狀態。" : "連接未完成。請使用開始連接的原登入帳號返回渠道設定重試。";
 }

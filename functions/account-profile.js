@@ -50,6 +50,7 @@ export function createProfileHandler({ verifyToken, store, accountStore, authori
       if (!["google.com", "password"].includes(user.firebase?.sign_in_provider) || user.firebase.sign_in_provider === "password" && !user.email_verified) throw error(403, "請先完成帳號驗證。");
       await authorizeSession(req, user);
       if (await accountStore.isAccountDisabled(user.uid)) throw error(403, "帳號已停用。");
+      await accountStore.aiAttempt(user.uid, "api", now(), 120);
       if (req.method === "GET") return res.json(await store.read(user.uid));
       if (req.method !== "PUT") throw error(405, "不支援此操作。");
       if (!["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(req.get("origin"))) throw error(403, "請從正式網站修改資料。");

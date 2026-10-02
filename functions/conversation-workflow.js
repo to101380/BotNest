@@ -41,6 +41,7 @@ export function createWorkflowHandler({ db, verifyToken, authorizeSession = asyn
       if (!["google.com", "password"].includes(user.firebase?.sign_in_provider) || user.firebase.sign_in_provider === "password" && !user.email_verified) throw fail(403, "請先驗證帳號。");
       await authorizeSession(req, user);
       if (await accountStore.isAccountDisabled(user.uid)) throw fail(403, "帳號已停用。");
+      await accountStore.aiAttempt(user.uid, "api", now(), 120);
       if (req.method === "GET") return res.json({ items: await store.list(user.uid), retention: (await db.collection("botnest").doc("state").collection("accounts").doc(user.uid).collection("retention").doc("settings").get()).data() || null });
       if (req.method !== "PUT") throw fail(405, "不支援此操作。");
       if (!["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(req.get("origin"))) throw fail(403, "請從正式網站操作。");
