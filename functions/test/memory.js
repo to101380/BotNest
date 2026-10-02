@@ -3,10 +3,21 @@ export function memoryDb() {
   const data = new Map();
   const reads = { documents: 0, queries: 0, returned: 0 };
   let queue = Promise.resolve();
+  const mergeMap = (old, value) => {
+    const result = { ...old };
+    for (const [key, next] of Object.entries(value)) {
+      result[key] = next && typeof next === 'object' && !Array.isArray(next) && Object.keys(next).length
+        ? mergeMap(old?.[key], next) : structuredClone(next);
+    }
+    return result;
+  };
+  const write = (path, value, options) => data.set(path, options?.merge
+    ? mergeMap(data.get(path), value)
+    : options?.mergeFields ? { ...data.get(path), ...structuredClone(value) } : structuredClone(value));
   const snap = path => ({ id: path.split("/").at(-1), exists: data.has(path), ref: ref(path), data: () => structuredClone(data.get(path)) });
   const ref = path => ({
     path, id: path.split("/").at(-1), delete: async () => data.delete(path), collection: name => collection(`${path}/${name}`), get: async () => { reads.documents++; return snap(path); },
-    set: async (value, options) => data.set(path, options?.merge ? { ...data.get(path), ...structuredClone(value) } : structuredClone(value)),
+    set: async (value, options) => write(path, value, options),
   });
   const fieldValue = (value, field) => String(field).split(".").reduce((current, key) => current?.[key], value);
   function collection(path) {
@@ -39,7 +50,7 @@ export function memoryDb() {
       const job = queue.then(async () => {
         const writes = [];
         const result = await fn({ get: async r => snap(r.path), getAll: async (...refs) => refs.map(r => snap(r.path)),
-          set: (r, value, options) => writes.push(() => data.set(r.path, options?.merge ? { ...data.get(r.path), ...structuredClone(value) } : structuredClone(value))),
+          set: (r, value, options) => writes.push(() => write(r.path, value, options)),
           delete: r => writes.push(() => data.delete(r.path)),
           update: (r, value) => writes.push(() => data.set(r.path, { ...data.get(r.path), ...structuredClone(value) })),
         });

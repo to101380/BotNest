@@ -31,7 +31,7 @@ export function createDataRetention({ request = async (user, path = '', options 
       title.textContent = `${j.type === 'export' ? '對話備份' : '資料盤點'} · ${({ queued: '排隊中', working: '處理中', ready: '已完成', expired: '已到期', failed: '失敗，請重新執行', cancelled: '設定已變更，請重新盤點' })[j.status] || '處理中'}`;
       detail.textContent = j.type === 'export' ? `${date(j.createdAt)} · ${j.messages || 0} 則訊息 · ${j.parts || 0} 個 ZIP · 下載截止 ${date(j.expiresAt)}${j.warnings ? ` · ${j.warnings} 項附件說明` : ''}` : date(j.createdAt); row.append(title, detail);
       if (j.type === 'export' && j.status === 'ready') {
-        const group = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = j.parts ? '下載備份（請下載所有分卷）' : '沒有可匯出的訊息'; group.append(summary);
+        const group = document.createElement('details'), summary = document.createElement('summary'); group.open = true; summary.textContent = j.parts ? '下載備份（請下載所有分卷）' : '沒有可匯出的訊息'; group.append(summary);
         // Pages of download choices keep very large exports usable.
         const select = document.createElement('select'); select.setAttribute('aria-label', '備份分卷'); for (let i = 1; i <= j.parts; i++) select.add(new Option(`ZIP ${i}`, String(i)));
         if (j.parts) { const button = document.createElement('button'); button.type = 'button'; button.textContent = '下載此 ZIP'; button.onclick = () => void download(j.id, Number(select.value), button); group.append(select, button); } row.append(group);

@@ -21,6 +21,22 @@ async function fixture(enabled = false) {
   const p = { ...initialPolicy(at - 40 * DAY), enabled }; await service.policyRef('alice').set(p);
   return { db, bucket, service, account, channel, now: () => at, tick: n => at += n };
 }
+
+test('exports reuse matching active jobs but allow immediate retry after completion/failure/expiry', async () => {
+  const f = await fixture();
+  const first = await f.service.queue('alice', 'export', 'one');
+  assert.equal(await f.service.queue('alice', 'export', 'one'), first);
+  await assert.rejects(f.service.queue('alice', 'export', 'two'), e => e.status === 429);
+  for (const status of ['ready', 'failed', 'cancelled', 'expired']) {
+    await f.service.jobs('alice').doc(first).set({ status }, { merge: true });
+    const retry = await f.service.queue('alice', 'export', 'one');
+    assert.notEqual(retry, first);
+    await f.service.jobs('alice').doc(retry).set({ status: 'ready' }, { merge: true });
+  }
+  const active = await f.service.queue('alice', 'export', 'one');
+  await f.service.jobs('alice').doc(active).set({ expiresAt: f.now() - 1 }, { merge: true });
+  assert.notEqual(await f.service.queue('alice', 'export', 'one'), active);
+});
 test('retention requires current inventory and explicit confirmation, always grants 14 days', () => {
   const at = 100 * DAY, old = initialPolicy(at - 10 * DAY), body = { ...old, enabled: true, confirm: true };
   const input = { textDays: 365, attachmentDays: 90, trashDays: 30, enabled: true, revision: 0, confirm: true };

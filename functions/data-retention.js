@@ -29,12 +29,20 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
   }
   async function queue(uid, type, conversationId = null, remoteId = null) {
     const at = now(), p = await ensurePolicy(uid), ref = jobs(uid).doc(randomUUID());
-    await db.runTransaction(async tx => {
+    return db.runTransaction(async tx => {
       const control = account(uid).collection('retention').doc('queue'), old = (await tx.get(control)).data() || {};
-      if (old[type]?.at > at - (type === 'export' ? 10 * 60000 : 60000)) throw Object.assign(new Error('已有工作正在準備，請稍後再試。'), { status: 429 });
+      if (type !== 'export' && old[type]?.at > at - 60000) throw Object.assign(new Error('已有工作正在準備，請稍後再試。'), { status: 429 });
+      if (old[type]?.id) {
+        const previous = (await tx.get(jobs(uid).doc(old[type].id))).data();
+        if (previous && ['queued', 'working'].includes(previous.status) && previous.expiresAt > at) {
+          if ((previous.conversationId || null) === conversationId && (previous.remoteId || null) === remoteId) return old[type].id;
+          throw Object.assign(new Error('另一份備份仍在處理中，請到「帳號 → 資料與儲存」查看進度，完成後即可再次匯出。'), { status: 429 });
+        }
+      }
       tx.set(control, { [type]: { at, id: ref.id } }, { merge: true });
       tx.set(ref, { type, status: 'queued', createdAt: at, snapshotAt: at, expiresAt: at + 7 * DAY, policyRevision: p.revision, conversationId, remoteId, cursor: {}, parts: 0, messages: 0, bytes: 0, warnings: 0, stats: emptyStats(), attempts: 0 });
-    }); return ref.id;
+      return ref.id;
+    });
   }
   async function summary(uid) {
     const policy = await ensurePolicy(uid), preview = (await previewRef(uid).get()).data() || null;
@@ -319,7 +327,9 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
       while (Date.now() - started < budgetMs && steps++ < 2500) {
         const job = (await ref.get()).data(); if (job.leaseId !== leaseId || job.expiresAt <= now()) break;
         const patch = job.type === 'export' ? await exportStep(uid, jobId, job, ctx) : await scanStep(uid, job, ctx);
-        await ref.set({ ...patch, updatedAt: now() }, { merge: true });
+        // Replace each checkpoint map; recursive merge retains stale pagination fields.
+        const checkpoint = { ...patch, updatedAt: now() };
+        await ref.set(checkpoint, { mergeFields: Object.keys(checkpoint) });
         if (patch.status) break;
       }
       await ref.set({ leaseUntil: 0 }, { merge: true });
