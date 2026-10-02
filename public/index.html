@@ -268,6 +268,18 @@
                     <p class="note">Secret 與 Access Token 會加密保存於後端，用於驗證及傳送你的回覆。綁定前請於 10 分鐘內重新登入。</p>
                     <button class="email-primary" type="submit">驗證並連接 OA</button>
                   </fieldset>
+                  <aside class="line-connect-guide" aria-labelledby="line-guide-title">
+                    <h3 id="line-guide-title">LINE 連線教學</h3>
+                    <p>跟著步驟取得資料，貼到對應欄位。</p>
+                    <ol class="line-guide-steps">
+                      <li><strong>登入 LINE Developers</strong><p>進入 <a href="https://developers.line.biz/en/" target="_blank" rel="noopener noreferrer">LINE Developers ↗</a> 並登入。</p></li>
+                      <li><strong>選擇頻道</strong><p>選擇要連接的 Messaging API 頻道。</p><details><summary>查看操作圖片</summary><a href="/line-guide-channel.png" target="_blank" rel="noopener noreferrer"><img src="/line-guide-channel.png" alt="在 LINE Developers 選擇 Messaging API 頻道，點擊圖片可放大" loading="lazy" width="1746" height="901"></a></details></li>
+                      <li><strong>複製 Channel ID</strong><p>在 Basic settings 複製 Channel ID，貼到對應欄位。</p><details><summary>查看操作圖片</summary><a href="/line-guide-id.png" target="_blank" rel="noopener noreferrer"><img src="/line-guide-id.png" alt="Basic settings 的 Channel ID 與複製按鈕，點擊圖片可放大" loading="lazy" width="1866" height="954"></a></details></li>
+                      <li><strong>複製 Channel secret</strong><p>在 Basic settings 往下滑，複製 Channel secret，貼到對應欄位。</p><div class="line-guide-example"><span>Channel secret</span><code>••••••••••••••••</code><small>複製你的金鑰</small></div></li>
+                      <li><strong>複製 Channel access token</strong><p>選擇 Messaging API 分頁，往下找到 Channel access token（long-lived），複製並貼到對應欄位。</p><div class="line-guide-example"><span>Messaging API → Channel access token</span><code>••••••••••••••••</code><small>複製你的 Token</small></div></li>
+                    </ol>
+                    <p class="line-guide-finish">填寫完成後，按「驗證並連接 OA」。</p>
+                  </aside>
                 </form>
               </div>
             </article>
