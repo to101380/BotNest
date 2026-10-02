@@ -4,6 +4,9 @@ import { DAY, initialPolicy, retentionActive, trashDeadline, attachmentDue, atta
 import { workflowRef } from './conversation-workflow.js';
 import { zipFiles, transcriptFiles } from './backup-zip.js';
 import { downloadSocialBackup } from './social-backup.js';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { downloadPlan, streamBackup } from './backup-download.js';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const emptyStats = () => ({ messages: 0, files: 0, fileBytes: 0, messagesDue: 0, filesDue: 0, trashDue: 0, messagesIn7Days: 0, filesIn7Days: 0, trashIn7Days: 0, deletedMessages: 0, deletedFiles: 0, deletedRecords: 0 });
 const PHASES = ['line', 'social', 'workflow', 'lineAttachments', 'socialAttachments', 'lineOutbox', 'socialOutbox', 'aiLogs', 'lineReceipts', 'socialReceipts'];
@@ -47,7 +50,32 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
   async function summary(uid) {
     const policy = await ensurePolicy(uid), preview = (await previewRef(uid).get()).data() || null;
     const docs = (await jobs(uid).orderBy('createdAt', 'desc').limit(12).get()).docs;
-    return { policy, preview, jobs: docs.map(doc => { const j = doc.data(); return { id: doc.id, type: j.type, status: j.expiresAt <= now() ? 'expired' : j.status, createdAt: j.createdAt, expiresAt: j.expiresAt, parts: j.parts, messages: j.messages, bytes: j.bytes, warnings: j.warnings, error: j.status === 'failed' ? '工作失敗，請重新執行。' : null }; }) };
+    return { policy, preview, jobs: docs.map(doc => { const j = doc.data(); return { id: doc.id, type: j.type, status: j.expiresAt <= now() ? 'expired' : j.status, stage: j.cursor?.phase === 'package' ? 'packaging' : null, sourceJobId: j.sourceJobId || null, scope: j.conversationId ? '指定對話' : '全部對話', conversationId: j.conversationId || null, remoteId: j.remoteId || null, createdAt: j.createdAt, expiresAt: j.expiresAt, parts: j.parts, messages: j.messages, bytes: j.bytes, warnings: j.warnings, downloadFiles: j.downloadFiles || [], error: j.status === 'failed' ? '工作失敗，請重新執行。' : null }; }) };
+  }
+  async function prepareDownload(uid, id) {
+    const ref = jobs(uid).doc(id), fresh = jobs(uid).doc(randomUUID()), at = now();
+    return db.runTransaction(async tx => {
+      const old = (await tx.get(ref)).data();
+      if (!old || old.type !== 'export' || old.status !== 'ready' || old.expiresAt <= at || !old.parts) throw Object.assign(new Error('備份尚未完成或已到期。'), { status: 404 });
+      if (old.downloadFiles?.length) return id;
+      if (old.packagedJobId) {
+        const existing = (await tx.get(jobs(uid).doc(old.packagedJobId))).data();
+        if (existing && ['queued', 'working', 'ready'].includes(existing.status) && existing.expiresAt > at) return old.packagedJobId;
+      }
+      tx.set(fresh, { type: 'export', status: 'queued', sourceJobId: id, createdAt: at, snapshotAt: old.snapshotAt || old.createdAt, expiresAt: old.expiresAt, policyRevision: old.policyRevision, conversationId: old.conversationId || null, remoteId: old.remoteId || null, parts: old.parts, messages: old.messages || 0, bytes: old.bytes || 0, warnings: old.warnings || 0, attempts: 0, cursor: { phase: 'package', volumeIndex: 0 }, downloadFiles: [] });
+      tx.set(ref, { packagedJobId: fresh.id }, { merge: true });
+      return fresh.id;
+    });
+  }
+  async function packageStep(uid, jobId, job) {
+    const prefix = objectPrefix(uid, job.sourceJobId || jobId);
+    if (!job.packagingPlan) return { packagingPlan: await downloadPlan(bucket, prefix, job) };
+    const index = job.cursor.volumeIndex || 0, volume = job.packagingPlan[index];
+    if (!volume) return { status: 'ready', finishedAt: now() };
+    const name = `backup-${String(index + 1).padStart(4, '0')}.zip`, target = bucket.file(objectPrefix(uid, jobId) + name);
+    await pipeline(Readable.from(streamBackup(bucket, prefix, job, volume, index + 1, job.packagingPlan.length)), target.createWriteStream({ resumable: false, metadata: { contentType: 'application/zip', cacheControl: 'private, no-store', contentDisposition: `attachment; filename="BotNest-${jobId}-${index + 1}.zip"` } }));
+    const [metadata] = await target.getMetadata();
+    return { downloadFiles: [...(job.downloadFiles || []), { name, bytes: Number(metadata.size) }], cursor: { phase: 'package', volumeIndex: index + 1 }, ...(index + 1 === job.packagingPlan.length ? { status: 'ready', finishedAt: now() } : {}) };
   }
   function conversationCollection(ctx, phase) { return phase === 'line' ? ctx.channel?.collection('conversations') : ctx.account.collection('zernioConversations'); }
   function workflowId(phase, doc) { return phase === 'line' ? doc.id : `${doc.data().provider || 'facebook'}-${doc.id}`; }
@@ -326,7 +354,11 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
       const ctx = await context(uid); const started = Date.now(); let steps = 0;
       while (Date.now() - started < budgetMs && steps++ < 2500) {
         const job = (await ref.get()).data(); if (job.leaseId !== leaseId || job.expiresAt <= now()) break;
-        const patch = job.type === 'export' ? await exportStep(uid, jobId, job, ctx) : await scanStep(uid, job, ctx);
+        let patch = job.type === 'export' ? job.cursor?.phase === 'package' ? await packageStep(uid, jobId, job) : await exportStep(uid, jobId, job, ctx) : await scanStep(uid, job, ctx);
+        if (job.type === 'export' && job.cursor?.phase !== 'package' && patch.status === 'ready' && (patch.parts ?? job.parts) > 0) {
+          delete patch.status; delete patch.finishedAt;
+          patch.cursor = { phase: 'package', volumeIndex: 0 }; patch.downloadFiles = [];
+        }
         // Replace each checkpoint map; recursive merge retains stale pagination fields.
         const checkpoint = { ...patch, updatedAt: now() };
         await ref.set(checkpoint, { mergeFields: Object.keys(checkpoint) });
@@ -365,5 +397,5 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
       if (docs.length < 30 && Date.now() - started < 390000) await control.set({ after: null }, { merge: true });
     } finally { await control.set({ leaseUntil: 0, lastRunAt: now() }, { merge: true }); }
   }
-  return { ensurePolicy, summary, queue, processJob, scheduled, policyRef, previewRef, jobs, context, scanStep, exportStep, objectPrefix };
+  return { ensurePolicy, summary, queue, prepareDownload, processJob, scheduled, policyRef, previewRef, jobs, context, scanStep, exportStep, objectPrefix };
 }

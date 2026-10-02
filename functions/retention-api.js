@@ -16,7 +16,15 @@ export function createRetentionHandler({ service, bucket, verifyToken, accountSt
       if (req.method === 'GET' && path === '/api/ai/retention') return res.json(await service.summary(user.uid));
       if (req.method === 'GET' && path === '/api/ai/retention/download') {
         await accountStore.aiAttempt(user.uid, 'backupDownload', now(), 20);
-        const id = url.searchParams.get('id'), part = Number(url.searchParams.get('part'));
+        const id = url.searchParams.get('id'), part = Number(url.searchParams.get('part')), volume = Number(url.searchParams.get('volume'));
+        if (url.searchParams.has('volume')) {
+          if (!/^[a-f0-9-]{36}$/.test(id || '') || !Number.isSafeInteger(volume) || volume < 1) throw fail(400, '下載參數錯誤。');
+          const job = (await service.jobs(user.uid).doc(id).get()).data(), item = job?.downloadFiles?.[volume - 1];
+          if (!job || job.type !== 'export' || job.status !== 'ready' || job.expiresAt <= now() || !item || !/^backup-\d{4}\.zip$/.test(item.name)) throw fail(404, '備份尚未完成或已到期。');
+          const expiresAt = Math.min(now() + 5 * 60000, job.expiresAt);
+          const [downloadUrl] = await bucket.file(service.objectPrefix(user.uid, id) + item.name).getSignedUrl({ version: 'v4', action: 'read', expires: expiresAt, responseDisposition: `attachment; filename="BotNest-${id}-${volume}.zip"` });
+          return res.json({ downloadUrl, expiresAt });
+        }
         if (!/^[a-f0-9-]{36}$/.test(id || '') || !Number.isSafeInteger(part) || part < 1) throw fail(400, '下載參數錯誤。');
         const job = (await service.jobs(user.uid).doc(id).get()).data();
         if (!job || job.type !== 'export' || job.status !== 'ready' || job.expiresAt <= now() || part > job.parts) throw fail(404, '備份尚未完成或已到期。');
@@ -26,6 +34,11 @@ export function createRetentionHandler({ service, bucket, verifyToken, accountSt
       if (!['POST', 'PUT'].includes(req.method)) throw fail(405, '不支援此操作。');
       if (!['https://planning-with-ai-52d58.web.app', 'https://planning-with-ai-52d58.firebaseapp.com'].includes(req.get('origin'))) throw fail(403, '請從正式網站操作。');
       await accountStore.aiAttempt(user.uid, 'retention', now(), 6);
+      if (path === '/api/ai/retention/package' && req.method === 'POST') {
+        const id = req.body?.id;
+        if (Object.keys(req.body || {}).some(k => k !== 'id') || !/^[a-f0-9-]{36}$/.test(id || '')) throw fail(400, '備份參數錯誤。');
+        return res.status(202).json({ id: await service.prepareDownload(user.uid, id) });
+      }
       if (path === '/api/ai/retention' && req.method === 'PUT') {
         const previous = await service.ensurePolicy(user.uid), preview = (await service.previewRef(user.uid).get()).data();
         const value = validateRetention(req.body, previous, preview, now());

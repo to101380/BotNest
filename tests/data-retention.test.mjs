@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { Writable } from 'node:stream';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { memoryDb } from '../functions/test/memory.js';
@@ -25,7 +26,7 @@ test('backup reads share the API rate budget and downloads have an additional pe
   assert.equal(await call('alice', '/api/ai/retention/download?id=invalid&part=1'), 429);
 });
 function fakeBucket() {
-  const data = new Map(); const file = path => ({ name: path, save: async bytes => data.set(path, Buffer.from(bytes)), getMetadata: async () => { if (!data.has(path)) throw Object.assign(Error('missing'), { code: 404 }); return [{ size: data.get(path).length, generation: '1' }]; }, download: async () => { if (!data.has(path)) throw Object.assign(Error('missing'), { code: 404 }); return [data.get(path)]; }, delete: async options => { assert.equal(options.ifGenerationMatch, '1'); data.delete(path); } });
+  const data = new Map(); const file = path => ({ name: path, createWriteStream: () => { const chunks = []; return new Writable({ write(chunk, encoding, done) { chunks.push(Buffer.from(chunk)); done(); }, final(done) { data.set(path, Buffer.concat(chunks)); done(); } }); }, getSignedUrl: async () => ['https://storage.googleapis.com/test'], save: async bytes => data.set(path, Buffer.from(bytes)), getMetadata: async () => { if (!data.has(path)) throw Object.assign(Error('missing'), { code: 404 }); return [{ size: data.get(path).length, generation: '1' }]; }, download: async () => { if (!data.has(path)) throw Object.assign(Error('missing'), { code: 404 }); return [data.get(path)]; }, delete: async options => { assert.equal(options.ifGenerationMatch, '1'); data.delete(path); } });
   return { data, file, getFiles: async ({ prefix, maxResults }) => [[...data.keys()].filter(p => p.startsWith(prefix)).slice(0, maxResults).map(file)] };
 }
 async function fixture(enabled = false) {
@@ -98,7 +99,7 @@ test('large exports paginate without losing messages, sanitize secrets, ZIP HTML
   for (let i = 0; i < 205; i++) await conv.collection('messages').doc(String(i).padStart(4, '0')).set({ text: i === 0 ? '=HYPERLINK("bad")<script>' : `m${i}`, sentAt: f.now() - DAY, direction: 'incoming', replyToken: 'SECRET_REPLY_TOKEN', audioTicket: 'SECRET_TICKET' });
   const id = await f.service.queue('alice', 'export'); await f.service.processJob('alice', id, 5000); const job = (await f.service.jobs('alice').doc(id).get()).data();
   assert.equal(job.status, 'ready'); assert.equal(job.messages, 205); assert.equal(job.parts, 3);
-  for (const bytes of f.bucket.data.values()) { const zip = await JSZip.loadAsync(bytes), html = await zip.file('conversation.html').async('string'), json = await zip.file('messages.json').async('string'); assert.ok(!html.includes('<script>')); assert.ok(!json.includes('SECRET_')); }
+  for (const [name, bytes] of f.bucket.data) if (name.includes("/part-")) { const zip = await JSZip.loadAsync(bytes), html = await zip.file('conversation.html').async('string'), json = await zip.file('messages.json').async('string'); assert.ok(!html.includes('<script>')); assert.ok(!json.includes('SECRET_')); }
   const handler = createRetentionHandler({ service: f.service, bucket: f.bucket, now: f.now, verifyToken: async token => token === 'alice' ? { uid: 'alice', firebase: { sign_in_provider: 'google.com' } } : { uid: 'bob', firebase: { sign_in_provider: 'google.com' } }, accountStore: createStore(f.db) });
   async function call(token) { let code = 200, body; await handler({ method: 'GET', url: `/api/ai/retention/download?id=${id}&part=1`, get: () => `Bearer ${token}` }, { set() {}, status(n) { code = n; return this; }, json(v) { body = v; }, send(v) { body = v; } }); return { code, body }; }
   assert.equal((await call('bob')).code, 404); assert.equal((await call('alice')).code, 200); f.tick(7 * DAY); assert.equal((await call('alice')).code, 404);
@@ -142,11 +143,68 @@ test('remote exports filter foreign accounts and include paginated outgoing/inco
     const second = path.includes('&cursor=next'); return { messages: [{ id: second ? 'incoming' : 'outgoing', accountId, conversationId: 'thread', direction: second ? 'incoming' : 'outgoing', message: 'hello', createdAt: new Date(f.now() - DAY).toISOString() }, { id: 'foreign', accountId: 'someone-else', conversationId: 'thread', message: 'SECRET_OTHER_ACCOUNT', createdAt: new Date(f.now() - DAY).toISOString() }], pagination: { hasMore: !second, nextCursor: second ? null : 'next' } };
   } });
   const id = await service.queue('alice', 'export'); await service.processJob('alice', id, 5000); const job = (await service.jobs('alice').doc(id).get()).data(); assert.equal(job.messages, 2); assert.equal(job.parts, 2);
-  for (const bytes of f.bucket.data.values()) { const zip = await JSZip.loadAsync(bytes); assert.ok(!(await zip.file('messages.json').async('string')).includes('SECRET_OTHER_ACCOUNT')); }
+  for (const [name, bytes] of f.bucket.data) if (name.includes("/part-")) { const zip = await JSZip.loadAsync(bytes); assert.ok(!(await zip.file('messages.json').async('string')).includes('SECRET_OTHER_ACCOUNT')); }
 });
 test('repeated crashed workers stop after three failures instead of retrying forever', async () => {
   const f = await fixture(), id = await f.service.queue('alice', 'export'), ref = f.service.jobs('alice').doc(id);
   await ref.set({ status: 'working', leaseUntil: f.now() - 1, failures: 2 }, { merge: true });
   await f.service.processJob('alice', id, 1000);
   assert.equal((await ref.get()).data().status, 'failed'); assert.equal((await ref.get()).data().failures, 3); assert.equal(f.bucket.data.size, 0);
+});
+
+test('complete backup merges batches into one readable archive with intact attachments and CRC', async () => {
+  const f = await fixture(), conv = f.channel.collection('conversations').doc('full');
+  await conv.set({ displayName: '完整對話' });
+  for (let i = 0; i < 205; i++) await conv.collection('messages').doc(String(i).padStart(4, '0')).set({ text: `內容 ${i}`, sentAt: f.now() - DAY });
+  const id = await f.service.queue('alice', 'export'); await f.service.processJob('alice', id, 5000);
+  const job = (await f.service.jobs('alice').doc(id).get()).data(); assert.equal(job.downloadFiles.length, 1);
+  const bytes = f.bucket.data.get(f.service.objectPrefix('alice', id) + job.downloadFiles[0].name);
+  const archive = await JSZip.loadAsync(bytes, { checkCRC32: true });
+  assert.ok(await archive.file('index.html').async('string')); assert.ok(archive.file('README.txt'));
+  let count = 0; for (const name of Object.keys(archive.files).filter(n => n.endsWith('/messages.json'))) count += JSON.parse(await archive.file(name).async('string')).messages.length;
+  assert.equal(count, 205); assert.equal(Object.keys(archive.files).filter(n => n.endsWith('.zip')).length, 0);
+});
+
+test('legacy backups are repackaged once without refetching conversation history or extending expiration', async () => {
+  const f = await fixture(), conv = f.channel.collection('conversations').doc('legacy'); await conv.set({});
+  await conv.collection('messages').doc('m').set({ text: '保留原始內容', sentAt: f.now() - DAY });
+  const id = await f.service.queue('alice', 'export'); await f.service.processJob('alice', id, 5000);
+  const original = (await f.service.jobs('alice').doc(id).get()).data(); await f.service.jobs('alice').doc(id).set({ downloadFiles: [] }, { merge: true });
+  await conv.collection('messages').doc('m').set({ text: '之後變更', sentAt: f.now() });
+  const next = await f.service.prepareDownload('alice', id); assert.equal(await f.service.prepareDownload('alice', id), next);
+  await assert.rejects(f.service.prepareDownload('bob', id), e => e.status === 404);
+  await f.service.processJob('alice', next, 5000); const job = (await f.service.jobs('alice').doc(next).get()).data();
+  assert.equal(job.status, 'ready'); assert.equal(job.expiresAt, original.expiresAt);
+  const archive = await JSZip.loadAsync(f.bucket.data.get(f.service.objectPrefix('alice', next) + job.downloadFiles[0].name), { checkCRC32: true });
+  const text = await archive.file('conversations/000001/messages.json').async('string'); assert.ok(text.includes('保留原始內容')); assert.ok(!text.includes('之後變更'));
+  let code = 200, body;
+  const handler = createRetentionHandler({ service: f.service, bucket: f.bucket, now: f.now, verifyToken: async () => ({ uid: 'alice', firebase: { sign_in_provider: 'google.com' } }), accountStore: createStore(f.db) });
+  await handler({ method: 'GET', url: `/api/ai/retention/download?id=${next}&volume=1`, get: name => name === 'authorization' ? 'Bearer alice' : undefined }, { set() {}, status(n) { code = n; return this; }, json(v) { body = v; } });
+  assert.equal(code, 200); assert.match(body.downloadUrl, /^https:/); assert.equal(body.expiresAt, f.now() + 300000);
+  f.tick(7 * DAY); await assert.rejects(f.service.prepareDownload('alice', id), e => e.status === 404);
+});
+
+import { zipFiles } from '../functions/backup-zip.js';
+import { downloadPlan, streamBackup } from '../functions/backup-download.js';
+test('download packaging splits by bytes, preserves attachments and rejects unsafe archive paths', async () => {
+  const sizes = Array.from({ length: 5 }, (_, i) => ({ name: `p/part-${String(i + 1).padStart(6, '0')}.zip`, metadata: { size: 25 * 1048576 } }));
+  const plan = await downloadPlan({ getFiles: async () => [sizes] }, 'p/', { parts: 5 }); assert.deepEqual(plan.map(v => v.parts.length), [4, 1]);
+  const original = zipFiles([['conversation.html', '<a href="attachments/image.png">圖片</a>'], ['attachments/image.png', Buffer.from([1, 2, 3, 4])]]);
+  const chunks = []; for await (const chunk of streamBackup({ file: () => ({ download: async () => [original] }) }, 'p/', { messages: 1, createdAt: Date.now() }, { parts: [1] }, 1, 1)) chunks.push(chunk);
+  const archive = await JSZip.loadAsync(Buffer.concat(chunks), { checkCRC32: true }); assert.deepEqual(await archive.file('conversations/000001/attachments/image.png').async('nodebuffer'), Buffer.from([1, 2, 3, 4]));
+  const unsafe = zipFiles([['../unsafe.html', 'bad']]);
+  await assert.rejects(async () => { for await (const chunk of streamBackup({ file: () => ({ download: async () => [unsafe] }) }, 'p/', { createdAt: Date.now() }, { parts: [1] }, 1, 1)) {} });
+});
+
+test('signed backup downloads reject other tenants, expiry and unsafe filenames before signing', async () => {
+  const f = await fixture(), id = await f.service.queue('alice', 'export'), ref = f.service.jobs('alice').doc(id);
+  await ref.set({ status: 'ready', downloadFiles: [{ name: 'backup-0001.zip', bytes: 100 }] }, { merge: true });
+  let signatures = 0; const file = f.bucket.file;
+  f.bucket.file = name => ({ ...file(name), getSignedUrl: async () => { signatures++; return ['https://storage.googleapis.com/test']; } });
+  const handler = createRetentionHandler({ service: f.service, bucket: f.bucket, now: f.now, accountStore: createStore(f.db), verifyToken: async uid => ({ uid, firebase: { sign_in_provider: 'google.com' } }) });
+  async function call(uid, volume = '1') { let code = 200; await handler({ method: 'GET', url: `/api/ai/retention/download?id=${id}&volume=${volume}`, get: name => name === 'authorization' ? `Bearer ${uid}` : undefined }, { set() {}, status(n) { code = n; return this; }, json() {} }); return code; }
+  assert.equal(await call('bob'), 404); assert.equal(await call('alice', '0'), 400); assert.equal(await call('alice', '2'), 404); assert.equal(signatures, 0);
+  assert.equal(await call('alice'), 200); assert.equal(signatures, 1);
+  await ref.set({ downloadFiles: [{ name: '../private.zip', bytes: 100 }] }, { merge: true }); assert.equal(await call('alice'), 404); assert.equal(signatures, 1);
+  await ref.set({ downloadFiles: [{ name: 'backup-0001.zip', bytes: 100 }], expiresAt: f.now() }, { merge: true }); assert.equal(await call('alice'), 404); assert.equal(signatures, 1);
 });
