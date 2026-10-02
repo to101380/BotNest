@@ -18,7 +18,7 @@ export function createWorkflowStore(db) {
     },
   };
 }
-export function createWorkflowHandler({ db, verifyToken, authorizeSession, accountStore, now = Date.now }) {
+export function createWorkflowHandler({ db, verifyToken, authorizeSession = async () => {}, accountStore, now = Date.now }) {
   const store = createWorkflowStore(db);
   return async (req, res) => {
     res.set("Cache-Control", "private, no-store");
