@@ -16,7 +16,7 @@ export function createConversationWorkflow({ request, changed, feedback, getUser
   async function load(force = false) {
     if (!force && Date.now() - lastLoad < 30000) return;
     const version = generation; const data = await request(); if (version !== generation) return;
-    states = new Map(data.items.map(item => [item.id, item])); lastLoad = Date.now(); changed();
+    for (const item of data.items) if ((item.revision || 0) >= (states.get(item.id)?.revision || 0)) states.set(item.id, item); lastLoad = Date.now(); changed();
   }
   async function act(id, action) {
     if (action === "link") { const url = new URL(location.href); url.searchParams.set("conversation", id); url.hash = "ai-robot"; try { await navigator.clipboard.writeText(url.href); feedback("已複製對話連結；開啟時需登入原帳號。"); } catch { feedback("無法複製，請確認瀏覽器的剪貼簿權限。"); } return; }
