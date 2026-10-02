@@ -4,6 +4,13 @@ export function cleanWorkflow(body, uid) {
   if (!body || typeof body.id !== "string" || !body.id || body.id.length > 512 || /[\u0000-\u001f]/.test(body.id) || !["follow", "trash", "complete", "assign"].includes(body.action) || typeof body.value !== "boolean" || !Number.isSafeInteger(body.revision) || body.revision < 0 || Object.keys(body).some(k => !["id", "action", "value", "revision"].includes(k))) throw fail(400, "對話操作格式錯誤。");
   return { id: body.id, revision: body.revision, patch: { [({ follow: "followed", trash: "trashed", complete: "completed", assign: "assignee" })[body.action]]: body.action === "assign" ? body.value ? uid : null : body.value } };
 }
+export function workflowRef(account, id) {
+  return account.collection("conversationWorkflow").doc(createHash("sha256").update(id).digest("hex"));
+}
+export function reopenedWorkflow(prior, sentAt, at = Date.now()) {
+  if (!prior?.completed || !Number.isFinite(sentAt) || sentAt <= (prior.completedAt ?? prior.updatedAt)) return null;
+  return { ...prior, completed: false, revision: prior.revision + 1, updatedAt: at };
+}
 export function createWorkflowStore(db) {
   const collection = uid => db.collection("botnest").doc("state").collection("accounts").doc(uid).collection("conversationWorkflow");
   return {
@@ -13,7 +20,7 @@ export function createWorkflowStore(db) {
       return db.runTransaction(async tx => {
         const prior = (await tx.get(ref)).data() || { id: value.id, followed: false, trashed: false, completed: false, assignee: null, revision: 0 };
         if (prior.revision !== value.revision) throw fail(409, "對話狀態已更新，請重新操作。");
-        const result = { ...prior, ...value.patch, revision: prior.revision + 1, updatedAt: at }; tx.set(ref, result); return result;
+        const result = { ...prior, ...value.patch, ...(value.patch.completed === true ? { completedAt: at } : {}), revision: prior.revision + 1, updatedAt: at }; tx.set(ref, result); return result;
       });
     },
   };

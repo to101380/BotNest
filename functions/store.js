@@ -1,3 +1,4 @@
+import { workflowRef, reopenedWorkflow } from "./conversation-workflow.js";
 import { createMonitor, aiMetrics } from "./security-monitor.js";
 import { HttpError } from "./core.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -262,8 +263,11 @@ export function createStore(db) {
       const receipt = account.collection("zernioReceipts").doc(digestId(event.eventId));
       let created = false;
       await db.runTransaction(async tx => {
-        const [seen, prior, priorMessage] = await tx.getAll(receipt, conversation, message);
+        const workflow = workflowRef(account, `${event.provider}-${conversationId}`);
+        const [seen, prior, priorMessage, workflowSnapshot] = await tx.getAll(receipt, conversation, message, workflow);
         if (seen.exists || priorMessage.exists) return;
+        const reopened = reopenedWorkflow(workflowSnapshot.data(), event.sentAt);
+        if (reopened) tx.set(workflow, reopened);
         const old = prior.data(), stored = { ...event, id: messageId, conversationId, direction: "incoming", type: event.type || "text", unsent: false };
         tx.set(message, stored);
         if (!old || event.sentAt >= old.updatedAt) tx.set(conversation, { remoteConversationId: event.remoteConversationId, accountId: event.accountId,
@@ -505,7 +509,9 @@ export function createStore(db) {
       const message = conversation.collection("messages").doc(event.messageId);
       const receipt = channel.collection("receipts").doc(event.eventId);
       await db.runTransaction(async tx => {
-        const [seen, previous, oldMessage] = await tx.getAll(receipt, conversation, message);
+        const owner = (await tx.get(channel)).data()?.ownerUid;
+        const workflow = owner ? workflowRef(accounts.doc(owner), event.conversationId) : null;
+        const [seen, previous, oldMessage, workflowSnapshot] = await tx.getAll(receipt, conversation, message, ...(workflow ? [workflow] : []));
         if (seen.exists) return;
         const old = oldMessage.data();
         const summary = previous.data();
@@ -514,6 +520,8 @@ export function createStore(db) {
           tx.set(message, { type: "unsend", text: "[訊息已收回]", unsent: true, sentAt: old?.sentAt ?? event.sentAt, direction: "incoming" });
           if (summary?.lastMessageId === event.messageId) tx.update(conversation, { lastText: "[訊息已收回]" });
         } else if (!old?.unsent) {
+          const reopened = !old && reopenedWorkflow(workflowSnapshot?.data(), event.sentAt);
+          if (reopened) tx.set(workflow, reopened);
           tx.set(message, { type: event.type, text: event.text, sentAt: event.sentAt, unsent: false, direction: "incoming", ...(!old && reply ? reply : {}) });
           const createdAt = summary?.createdAt == null ? event.sentAt : Math.min(summary.createdAt, event.sentAt);
           if (!summary || event.sentAt >= summary.updatedAt) tx.set(conversation, { sourceType: event.sourceType, sourceId: event.sourceId, lastText: event.text, lastMessageId: event.messageId, updatedAt: event.sentAt, createdAt }, { merge: true });
