@@ -414,6 +414,8 @@ export function createLineInbox() {
   }
   function report(error) { if (error.name !== "AbortError") status(error.message, true); }
   function showAccount() {
+    $("line-connection-details").open = false;
+    $("line-step5-guide").hidden = !!channel;
     $("line-account").hidden = !channel;
     $("line-inbox").hidden = !channel && !facebookAccount && !instagramAccount;
     $("line-connect-form").hidden = !!channel;
@@ -988,6 +990,9 @@ export function createLineInbox() {
   $("line-image-next").addEventListener("click", () => moveImageViewer(1));
   $("line-image-viewer").addEventListener("click", event => { if (event.target === $("line-image-viewer")) $("line-image-viewer").close(); });
   $("line-image-viewer").addEventListener("close", () => { $("line-image-full").removeAttribute("src"); viewerItems = []; });
+  $("line-connection-details").addEventListener("toggle", () => {
+    $("line-step5-guide").hidden = !!channel && !$("line-connection-details").open;
+  });
   $("line-step5-copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("line-step5-webhook-url").value); $("line-step5-copy-status").textContent = "已複製 Webhook URL。"; }
     catch { $("line-step5-webhook-url").select(); $("line-step5-copy-status").textContent = "請手動複製已選取的網址。"; }

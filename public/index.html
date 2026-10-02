@@ -248,7 +248,7 @@
               <div class="line-channel-content">
                 <div id="line-account" hidden="">
                   <div class="line-account-heading"><h2 id="line-oa-name"></h2><span id="line-oa-state" class="state"></span></div>
-                  <details class="connection-details"><summary>LINE 連線設定</summary>
+                  <details id="line-connection-details" class="connection-details"><summary>LINE 連線設定</summary>
                     <label for="line-webhook-url">你的 Webhook URL</label>
                     <div class="webhook-row"><input id="line-webhook-url" readonly=""><button id="line-copy" type="button">複製網址</button></div>
                     <p class="note">先備份 LINE Developers 的原網址，再將此網址填入 Webhook URL，開啟 Use webhook 並按 Verify。然後傳一則新訊息給 OA。</p>
@@ -265,7 +265,7 @@
                     <div class="line-guide-submit"><p class="note">Secret 與 Access Token 會加密保存於後端，用於驗證及傳送你的回覆。綁定前請於 10 分鐘內重新登入。</p><button class="email-primary" type="submit">驗證並連接 OA</button></div>
                   </fieldset>
                 </form>
-                    <section class="line-guide-row line-guide-webhook"><div><span class="line-step-number">步驟 5</span><h3>設定 Webhook</h3><div id="line-step5-webhook" hidden=""><label for="line-step5-webhook-url">Webhook URL</label><div class="webhook-row"><input id="line-step5-webhook-url" readonly=""><button id="line-step5-copy" type="button">複製網址</button></div><p id="line-step5-copy-status" role="status" aria-live="polite"></p></div><p>驗證連接成功後，在這裡複製你的 Webhook URL。</p><p>在 LINE Developers 的 Messaging API 分頁填入 Webhook URL，開啟 Use webhook 並按 Verify，再傳一則新訊息給官方帳號。</p></div><a class="line-guide-picture" href="/line-guide-webhook.png"><img src="/line-guide-webhook.png" alt="Webhook URL 與 Use webhook 設定，點擊圖片可放大" loading="lazy" width="1742" height="903"></a></section>
+                    <section id="line-step5-guide" class="line-guide-row line-guide-webhook"><div><span class="line-step-number">步驟 5</span><h3>設定 Webhook</h3><div id="line-step5-webhook" hidden=""><label for="line-step5-webhook-url">Webhook URL</label><div class="webhook-row"><input id="line-step5-webhook-url" readonly=""><button id="line-step5-copy" type="button">複製網址</button></div><p id="line-step5-copy-status" role="status" aria-live="polite"></p></div><p>驗證連接成功後，在這裡複製你的 Webhook URL。</p><p>在 LINE Developers 的 Messaging API 分頁填入 Webhook URL，開啟 Use webhook 並按 Verify，再傳一則新訊息給官方帳號。</p></div><a class="line-guide-picture" href="/line-guide-webhook.png"><img src="/line-guide-webhook.png" alt="Webhook URL 與 Use webhook 設定，點擊圖片可放大" loading="lazy" width="1742" height="903"></a></section>
               </div>
             </article>
             <article class="channel-card ai-channel-card">
