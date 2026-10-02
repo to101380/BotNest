@@ -483,7 +483,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
         return res.json({ attachment: { id, name: file.name, kind: file.kind, size: file.size, url, expiresAt } });
       }
       if (path === "/api/line/conversations" && req.method === "GET") {
-        const page = await store.conversations(account.channelId, before);
+        const page = await store.conversations(account.channelId, before, query.get("includeAi") === "false");
         if (account.accessToken) await Promise.all(page.items.map(async item => {
           if (!["user", "group"].includes(item.sourceType) || item.profileRefreshAfter > now()) return;
           if (!await store.claimProfile(account.channelId, item.id, now())) return;

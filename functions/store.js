@@ -552,7 +552,7 @@ export function createStore(db) {
         tx.set(receipt, { receivedAt: Date.now() });
       });
     },
-    async conversations(id, before) { const result = await page(channels.doc(id).collection("conversations"), "updatedAt", before, 30); result.items = result.items.filter(item => !item.retentionPurgedAt); return result; },
+    async conversations(id, before, includePurgedCustomers = false) { const result = await page(channels.doc(id).collection("conversations"), "updatedAt", before, 30); if (!includePurgedCustomers) result.items = result.items.filter(item => !item.retentionPurgedAt); return result; },
     async messages(id, conversationId, before) {
       const result = await page(channels.doc(id).collection("conversations").doc(conversationId).collection("messages"), "sentAt", before, 50);
       const owner = (await accountRead(channels.doc(id))).data()?.ownerUid;

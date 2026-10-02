@@ -55,6 +55,8 @@ test('trash purge is account scoped, blocks mid-purge restore, and new incoming 
   await workflow.save('alice', cleanWorkflow({ id: 'c', action: 'trash', value: true, revision: 0 }, 'alice'), f.now() - 31 * DAY);
   const id = await f.service.queue('alice', 'scan'); await f.service.processJob('alice', id, 5000);
   assert.equal((await conv.collection('messages').doc('m').get()).exists, false); assert.equal((await conv.get()).data().customer.name, 'keep');
+  assert.equal((await createStore(f.db).conversations('123')).items.length, 0);
+  assert.equal((await createStore(f.db).conversations('123', null, true)).items[0].customer.name, 'keep');
   const state = (await workflow.list('alice'))[0]; assert.ok(state.purgedAt); assert.equal(state.trashed, false);
   assert.equal(reopenedWorkflow(state, f.now() - DAY), null);
   assert.equal(reopenedWorkflow(state, f.now() + 1).purgedAt, 0);
