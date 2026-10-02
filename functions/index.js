@@ -1,4 +1,5 @@
 import { onRequest } from "firebase-functions/v2/https";
+import { createWorkflowHandler } from "./conversation-workflow.js";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { defineSecret } from "firebase-functions/params";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
@@ -30,12 +31,17 @@ const monitor = createMonitor(getFirestore());
 let handler;
 let adminUsers;
 let accountProfile;
+let conversationWorkflow;
 export const botnestApi = onRequest({
   region: "us-central1", maxInstances: 3, minInstances: 0, concurrency: 20,
   timeoutSeconds: 60, memory: "512MiB", cors: false, invoker: "public",
   secrets: [encryptionKey, openAiKey, zernioApiKey, loginMail],
 }, async (req, res) => {
   const path = new URL(req.originalUrl || req.url, "https://botnest.invalid").pathname;
+  if (path === "/api/ai/workflow") {
+    conversationWorkflow ||= createWorkflowHandler({ db: getFirestore(), verifyToken: token => getAuth().verifyIdToken(token, true), authorizeSession: loginSecurity.authorize, accountStore: createStore(getFirestore()) });
+    return conversationWorkflow(req, res);
+  }
   if (path === "/api/ai/profile") {
     accountProfile ||= createProfileHandler({ verifyToken: token => getAuth().verifyIdToken(token, true), store: createProfileStore(getFirestore()), accountStore: createStore(getFirestore()), authorizeSession: loginSecurity.authorize });
     return accountProfile(req, res);

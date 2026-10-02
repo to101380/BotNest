@@ -1,5 +1,6 @@
 import { createAudioPlayer } from "./audio-player.js";
 import { createConversationInsights } from "./conversation-insights.js";
+import { createConversationWorkflow } from "./conversation-workflow.js";
 import { filterConversations, inboxMode } from "./inbox-filters.js";
 import { showAiModel } from "./ai-model.js";
 import { watchHistoryScroll } from "./history-scroll.js";
@@ -55,6 +56,10 @@ export function createLineInbox() {
     void refresh(false, true).finally(() => { if (resumedEpoch === epoch) scheduleRefresh(); });
   }
   const conversations = new Map(), messages = new Map();
+  const workflow = createConversationWorkflow({ request: options => aiApi("workflow", options), changed: () => { if (active) showConversations(); }, feedback: text => status(text), getUser: () => user });
+  let linkedScanPages = 0;
+  const linkedConversation = new URL(location.href).searchParams.get("conversation");
+  if (linkedConversation && linkedConversation.length <= 512) try { sessionStorage.setItem("botnest-open-conversation", linkedConversation); } catch {}
   const insights = createConversationInsights({ request: items => aiApi("insights", { method: "POST", body: JSON.stringify({ messages: items }) }), jump: id => {
     const bubble = [...messageArea.children].find(el => el.dataset.messageId === id);
     if (bubble) { bubble.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); bubble.focus({ preventScroll: true }); }
@@ -479,9 +484,9 @@ export function createLineInbox() {
   const conversationRows = new Map();
   function showConversations() {
     const list = $("line-conversations");
-    const visible = filterConversations([...conversations.values()], searchQuery, filterMode);
+    const visible = workflow.filter(filterConversations([...conversations.values()], searchQuery, filterMode));
     $("line-empty").hidden = visible.length > 0;
-    $("line-empty").textContent = filtering() ? scanning || hasMore() ? "正在尋找符合條件的對話；可載入更多繼續搜尋。" : "沒有符合條件的對話，請試試其他名字或狀態。" : "還沒有對話。完成連線後，傳一則訊息給你的帳號。";
+    $("line-empty").textContent = filtering() ? scanning || hasMore() ? "正在尋找符合條件的對話；可載入更多繼續搜尋。" : "沒有符合條件的對話，請試試其他名字或狀態。" : (conversations.size ? "此分類目前沒有對話，可切換其他分類。" : "還沒有對話。完成連線後，傳一則訊息給你的帳號。");
     $("inbox-filter-summary").textContent = filtering() ? `${visible.length} 段符合 · 已搜尋 ${conversations.size} 段${scanning ? " · 搜尋其他對話中…" : hasMore() ? " · 尚有更多對話" : ""}` : "";
     const visibleIds = new Set(visible.map(item => item.id));
     if (!visibleIds.has(bulkAnchor)) bulkAnchor = null;
@@ -490,7 +495,7 @@ export function createLineInbox() {
     let position = 0;
     for (const item of visible.sort((a, b) => b.updatedAt - a.updatedAt)) {
       const version = JSON.stringify([label(item), item.displayName, item.pictureUrl, item.provider, item.sourceType,
-        item.lastText, item.updatedAt, inboxMode(item.ai), item.ai?.state.reason, selected === item.id, dayKey(Date.now()), bulkMode, bulkBusy, bulkIds.has(item.id)]);
+        item.lastText, item.updatedAt, inboxMode(item.ai), item.ai?.state.reason, selected === item.id, dayKey(Date.now()), bulkMode, bulkBusy, bulkIds.has(item.id), workflow.state(item.id)]);
       const prior = conversationRows.get(item.id);
       if (prior?.version === version) {
         if (list.children[position] !== prior.button) list.insertBefore(prior.button, list.children[position] || null);
@@ -530,11 +535,13 @@ export function createLineInbox() {
         }
         else void selectConversation(item.id);
       });
-      const focused = prior?.button === document.activeElement;
+      const focused = prior?.button.contains(document.activeElement);
+      const row = document.createElement("div"); row.className = "conversation-workflow-row"; row.dataset.conversationId = item.id; row.append(button);
+      if (!bulkMode) row.append(workflow.toolbar(item.id));
       prior?.button.remove();
-      list.insertBefore(button, list.children[position] || null);
+      list.insertBefore(row, list.children[position] || null);
       if (focused) button.focus({ preventScroll: true });
-      conversationRows.set(item.id, { version, button }); position++;
+      conversationRows.set(item.id, { version, button: row }); position++;
     }
     $("line-more-conversations").hidden = !conversationNext && !zernioConversationNext && !instagramNext;
     renderBulk();
@@ -720,6 +727,7 @@ export function createLineInbox() {
     const resetPages = !more && (force || !filtering() || !listLoaded);
     refreshing = true; renderBulk();
     try {
+      await workflow.load().catch(report);
       const linePromise = channel && (!more || conversationNext) ? api(`conversations${more && conversationNext ? `?before=${encodeURIComponent(conversationNext)}` : ""}`) : null;
       const facebookPromise = facebookAccount && (!more || zernioConversationNext) ? zernioApi(`conversations${more && zernioConversationNext ? `?cursor=${encodeURIComponent(zernioConversationNext)}` : ""}`) : null;
       const instagramPromise = instagramAccount && (!more || instagramNext) ? zernioApi(`conversations?platform=instagram${more && instagramNext ? `&cursor=${encodeURIComponent(instagramNext)}` : ""}`) : null;
@@ -753,7 +761,9 @@ export function createLineInbox() {
       showConversations();
       let pendingConversation = null;
       try { pendingConversation = sessionStorage.getItem("botnest-open-conversation"); } catch { /* Storage may be unavailable. */ }
+      if (pendingConversation && !conversations.has(pendingConversation) && hasMore() && linkedScanPages++ < 30) setTimeout(() => { if (active && epoch === currentEpoch) void refresh(true, false, true).catch(report); }, 0);
       if (pendingConversation && conversations.has(pendingConversation)) {
+        workflow.reveal(pendingConversation); showConversations();
         try { sessionStorage.removeItem("botnest-open-conversation"); } catch { /* Storage may be unavailable. */ }
         await selectConversation(pendingConversation); status(""); return;
       }
@@ -781,7 +791,7 @@ export function createLineInbox() {
       $("ai-card-state").textContent = "讀取失敗"; $("ai-key-state").textContent = "暫時無法讀取 AI 設定，請稍後再試。"; showAiModel($("ai-model-name"), null, "暫時無法讀取模型");
     });
     try {
-      const [lineResult, zernioResult] = await Promise.allSettled([api("account"), zernioApi("account")]);
+      const [lineResult, zernioResult] = await Promise.allSettled([api("account"), zernioApi("account"), workflow.load(true).catch(report)]);
       if (currentEpoch !== epoch) return;
       if (lineResult.status === "fulfilled") channel = lineResult.value.channel;
       if (zernioResult.status === "fulfilled") showZernioAccount(zernioResult.value);
@@ -1045,6 +1055,7 @@ export function createLineInbox() {
       for (const button of filters.querySelectorAll("[data-filter]")) button.setAttribute("aria-pressed", String(button.dataset.filter === "all"));
       conversationNext = zernioConversationNext = instagramNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
       insights.clear();
+      workflow.clear();
       historyMode(false);
       $("line-oa-name").textContent = $("line-webhook-url").value = $("line-channel-id").value = "";
       $("line-step5-webhook").hidden = true;
