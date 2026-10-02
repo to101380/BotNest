@@ -230,11 +230,11 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
     if (next.next) return { cursor: next.next };
     const { doc, phase } = next, workflow = (await workflowRef(ctx.account, workflowId(phase, doc)).get()).data();
     const docs = await page(doc.ref.collection('messages'), job.cursor.messageAfter, 100);
-    const files = [], messages = [], warnings = []; let bytes = 0, last;
+    const files = [], messages = [], warnings = [], partStarted = Date.now(); let bytes = 0, last;
     for (const message of docs) {
       const value = message.data();
       if (value.sentAt > job.snapshotAt || !visibleRetainedMessage(value, policy, workflow, now())) { last = message.id; continue; }
-      if (bytes > 16 * 1024 * 1024) break;
+      if (bytes > 16 * 1024 * 1024 || messages.length && Date.now() - partStarted > 20000) break;
       const safe = safeMessage(message.id, value), filename = await backupAttachment(uid, ctx, phase, { id: message.id, ...value }, files, warnings);
       if (filename) { safe.file = filename; bytes += files.at(-1)[1].length; }
       else if (value.attachment || value.attachments?.length) warnings.push(`${message.id}: 外部或未快取附件不在備份內。`);
@@ -269,9 +269,9 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
     const conversation = pending[0], id = `${platform}-${hash(`${social.accountId}:${conversation.id}`)}`, workflow = (await workflowRef(ctx.account, id).get()).data(), policy = await ensurePolicy(uid);
     const data = await socialReader(`/inbox/conversations/${encodeURIComponent(conversation.id)}/messages?accountId=${encodeURIComponent(social.accountId)}&limit=100&sortOrder=desc${cursor.messageCursor ? `&cursor=${encodeURIComponent(cursor.messageCursor)}` : ''}`);
     const messages = [], files = [], warnings = []; let bytes = 0;
-    const rawMessages = data.messages || []; let offset = cursor.messageOffset || 0;
+    const rawMessages = data.messages || [], partStarted = Date.now(); let offset = cursor.messageOffset || 0;
     for (const raw of rawMessages.slice(offset)) {
-      if (bytes > 16 * 1024 * 1024) break; offset++;
+      if (bytes > 16 * 1024 * 1024 || messages.length && Date.now() - partStarted > 20000) break; offset++;
       if (raw.accountId !== social.accountId || raw.conversationId !== conversation.id) continue;
       const sentAt = Date.parse(raw.createdAt); if (!Number.isFinite(sentAt) || sentAt > job.snapshotAt) continue;
       const value = { direction: raw.direction === 'outgoing' ? 'outgoing' : 'incoming', text: String(raw.message || '').slice(0, 10000), type: raw.attachments?.[0]?.type || 'text', sentAt, unsent: !!raw.isDeleted };
@@ -307,7 +307,12 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
   }
   async function processJob(uid, jobId, budgetMs = 420000) {
     const ref = jobs(uid).doc(jobId), at = now(), leaseId = randomUUID();
-    const claimed = await db.runTransaction(async tx => { const j = (await tx.get(ref)).data(); if (!j || !['queued', 'working'].includes(j.status) || j.leaseUntil > at || j.expiresAt <= at) return false; tx.set(ref, { status: 'working', leaseId, leaseUntil: at + budgetMs + 60000, attempts: (j.attempts || 0) + 1 }, { merge: true }); return true; });
+    const claimed = await db.runTransaction(async tx => {
+      const j = (await tx.get(ref)).data(); if (!j || !['queued', 'working'].includes(j.status) || j.leaseUntil > at || j.expiresAt <= at) return false;
+      const failures = (j.failures || 0) + (j.leaseUntil > 0 && j.leaseUntil <= at ? 1 : 0);
+      if (failures >= 3) { tx.set(ref, { status: 'failed', failures, errorCode: 'PROCESSING_TIMEOUT', leaseUntil: 0, updatedAt: at }, { merge: true }); return false; }
+      tx.set(ref, { status: 'working', leaseId, leaseUntil: at + budgetMs + 60000, attempts: (j.attempts || 0) + 1, failures }, { merge: true }); return true;
+    });
     if (!claimed) return;
     try {
       const ctx = await context(uid); const started = Date.now(); let steps = 0;
@@ -319,7 +324,7 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
       }
       await ref.set({ leaseUntil: 0 }, { merge: true });
     } catch (error) {
-      const j = (await ref.get()).data(); await ref.set({ leaseUntil: 0, status: j.attempts >= 3 ? 'failed' : 'queued', errorCode: 'PROCESSING_FAILED', updatedAt: now() }, { merge: true });
+      const j = (await ref.get()).data(), failures = (j.failures || 0) + 1; await ref.set({ leaseUntil: 0, failures, status: failures >= 3 ? 'failed' : 'queued', errorCode: 'PROCESSING_FAILED', updatedAt: now() }, { merge: true });
       throw error;
     }
   }

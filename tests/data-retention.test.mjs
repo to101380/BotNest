@@ -111,3 +111,9 @@ test('remote exports filter foreign accounts and include paginated outgoing/inco
   const id = await service.queue('alice', 'export'); await service.processJob('alice', id, 5000); const job = (await service.jobs('alice').doc(id).get()).data(); assert.equal(job.messages, 2); assert.equal(job.parts, 2);
   for (const bytes of f.bucket.data.values()) { const zip = await JSZip.loadAsync(bytes); assert.ok(!(await zip.file('messages.json').async('string')).includes('SECRET_OTHER_ACCOUNT')); }
 });
+test('repeated crashed workers stop after three failures instead of retrying forever', async () => {
+  const f = await fixture(), id = await f.service.queue('alice', 'export'), ref = f.service.jobs('alice').doc(id);
+  await ref.set({ status: 'working', leaseUntil: f.now() - 1, failures: 2 }, { merge: true });
+  await f.service.processJob('alice', id, 1000);
+  assert.equal((await ref.get()).data().status, 'failed'); assert.equal((await ref.get()).data().failures, 3); assert.equal(f.bucket.data.size, 0);
+});
