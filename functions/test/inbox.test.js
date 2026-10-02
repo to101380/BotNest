@@ -153,7 +153,7 @@ test("Messenger images and documents and Instagram images send native attachment
     assert.equal(downloaded.code, 200); assert.ok(downloaded.body.length > 0);
     assert.equal((await f.request(attachment.url, { token: null, method: "HEAD" })).body, "");
     assert.equal((await f.request(attachment.url.replace("signature=", "signature=0"), { token: null })).code, 403);
-    f.tick(30 * 86400000);
+    f.tick(90 * 86400000);
     assert.equal((await f.request(attachment.url, { token: null })).code, 403);
   }
 });
@@ -170,7 +170,7 @@ test("social attachments cannot cross tenants, conversations or platforms and In
   assert.equal((await f.request("/api/zernio/attachments", { method: "POST", token: null, body: {} })).code, 401);
   assert.equal((await f.request("/api/zernio/attachments", { method: "POST", headers: { origin: "https://evil.example" }, body: {} })).code, 403);
   assert.equal(f.calls.filter(call => call.options.method === "POST").length, 0);
-  f.tick(29 * 86400000);
+  f.tick(89 * 86400000);
   assert.equal((await f.request("/api/zernio/messages", { method: "POST", body })).code, 400);
 });
 

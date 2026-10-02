@@ -1,3 +1,4 @@
+import { createDataRetention } from "./data-retention.js";
 import { createAiUsage } from "./ai-usage.js";
 import { createAccountProfile } from "./account-profile.js";
 import { showAdminEntry } from "./admin-entry.js";
@@ -12,6 +13,7 @@ const customerManager = createCustomerManager();
 const aiSettings = createAiSettings();
 const aiUsage = createAiUsage();
 const accountProfile = createAccountProfile();
+const dataRetention = createDataRetention();
 const loginSecurity = createLoginSecurityPanel({ onAccessChange: () => { renderPage(); controls(); }, onSignOut: () => sdk.signOut(auth) });
 let auth;
 let sdk;
@@ -52,6 +54,7 @@ function renderPage(moveFocus = false) {
   customerManager.setSession(permittedUser, customersPage);
   aiSettings.setSession(permittedUser, assistantPage);
   aiUsage.setSession(permittedUser, usagePage);
+  dataRetention.setSession(permittedUser, !aiPage && !customersPage && !channelsPage && !assistantPage && !usagePage);
   for (const [id, active] of [["nav-usage", usagePage], ["nav-account", !aiPage && !customersPage && !channelsPage && !assistantPage && !usagePage], ["nav-ai", aiPage], ["nav-customers", customersPage], ["nav-channels", channelsPage], ["nav-assistant", assistantPage]]) {
     if (signedIn && active) $(id).setAttribute("aria-current", "page");
     else $(id).removeAttribute("aria-current");

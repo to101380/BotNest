@@ -57,6 +57,9 @@ export function createLineInbox() {
   }
   const conversations = new Map(), messages = new Map();
   const workflow = createConversationWorkflow({ request: options => aiApi("workflow", options), changed: () => { if (active) showConversations(); }, feedback: text => status(text), getUser: () => user });
+  const exportButton = document.createElement("button"); exportButton.type = "button"; exportButton.className = "conversation-export"; exportButton.textContent = "匯出對話"; exportButton.hidden = true;
+  exportButton.onclick = async () => { if (!selected || !user) return; exportButton.disabled = true; try { await aiApi("retention/export", { method: "POST", body: JSON.stringify({ conversationId: selected, ...(isSocial(conversations.get(selected)) ? { remoteId: conversations.get(selected).remoteId } : {}) }) }); status("備份已在背景產生，可到「帳號 → 資料與儲存」下載。"); } catch (error) { report(error); } finally { exportButton.disabled = false; } };
+  document.querySelector(".chat-heading").insertBefore(exportButton, $("customer-toggle"));
   let linkedScanPages = 0;
   const linkedConversation = new URL(location.href).searchParams.get("conversation");
   if (linkedConversation && linkedConversation.length <= 512) try { sessionStorage.setItem("botnest-open-conversation", linkedConversation); } catch {}
@@ -257,7 +260,7 @@ export function createLineInbox() {
     $("line-reply-hint").textContent = !selected ? "先選擇一段對話。" : !canReply ? "請先到渠道設定完成連線。" : facebook ? `${channelName(current)} · 最多 5000 字` : "最多 5000 字";
     $("reply-channel-note").textContent = facebook ? `Enter 傳送，Shift＋Enter 換行。回覆會透過 ${channelName(current)} 傳送。` : "Enter 傳送，Shift＋Enter 換行。回覆會使用 OA 的 LINE 訊息額度。";
     $("reply-attachment-note").hidden = false;
-    $("reply-attachment-note").textContent = current?.provider === "instagram" ? "圖片會自動壓縮；選取後按傳送才會送出。" : facebook ? "圖片會自動壓縮；文件上限 5 MB，以附件傳送。" : "圖片自動壓縮；文件上限 5 MB，以 30 天有效的下載連結傳送。";
+    $("reply-attachment-note").textContent = current?.provider === "instagram" ? "圖片會自動壓縮；選取後按傳送才會送出。" : facebook ? "圖片會自動壓縮；文件上限 5 MB，以附件傳送。" : "圖片自動壓縮；文件上限 5 MB，以 90 天有效的下載連結傳送。";
   }
   const status = (text, error = false) => {
     for (const id of ["line-status", "channel-status"]) { $(id).textContent = text; $(id).classList.toggle("error", error); }
@@ -286,6 +289,7 @@ export function createLineInbox() {
   function showConversationHeader() {
     const item = conversations.get(selected);
     $("line-chat-empty").hidden = !!item;
+    exportButton.hidden = !item;
     $("line-chat-empty").parentElement.classList.toggle("has-conversation", !!item);
     $("line-conversation-title").textContent = item ? label(item) : "選擇一段對話";
     const avatarVersion = JSON.stringify([item?.id, item?.pictureUrl, item?.displayName, item?.provider, item?.sourceType]);
@@ -612,17 +616,18 @@ export function createLineInbox() {
         label.textContent = formatDay(item.sentAt); divider.append(label); desired.push(divider);
         renderedDay = itemDay;
       }
-      if (item.type === "audio" && !item.unsent) { activeAudio.add(item.id); desired.push(audioRow(item)); continue; }
+      if (item.type === "audio" && !item.unsent && !item.attachmentExpired) { activeAudio.add(item.id); desired.push(audioRow(item)); continue; }
       const bubble = document.createElement("article"), text = document.createElement("p"), time = document.createElement("time");
       bubble.className = `message-bubble${item.unsent ? " unsent" : ""}${item.direction === "outgoing" ? " outgoing" : ""}`;
       bubble.dataset.messageId = item.id; bubble.tabIndex = -1;
       text.textContent = item.text; time.textContent = formatClock(item.sentAt); time.dateTime = new Date(item.sentAt).toISOString();
       bubble.append(text, time);
-      if (item.type === "image" && !item.attachment && !item.unsent) {
+      if (item.type === "image" && !item.attachment && !item.unsent && !item.attachmentExpired) {
         const note = document.createElement("p"); note.className = "note";
         note.textContent = item.imageNote || "正在讀取 LINE 圖片…"; bubble.append(note);
       }
-      if (item.attachment) {
+      if (item.attachmentExpired) { const expired = document.createElement("p"); expired.className = "message-expired"; expired.textContent = `附件已到期${item.attachment?.name ? `：${item.attachment.name}` : ""}`; bubble.append(expired); }
+      if (item.attachment && !item.attachmentExpired) {
         const link = document.createElement("a");
         const url = trustedMediaUrl(item.attachment);
         if (url) {

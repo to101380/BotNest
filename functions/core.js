@@ -308,10 +308,10 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
           await store.reserveSocialUpload(user.uid, file.size, now());
           // Validate access through the connected account before storing any bytes.
           await zernioRequest(`/inbox/conversations/${encodeURIComponent(conversationId)}/messages?accountId=${encodeURIComponent(social.accountId)}&limit=1`);
-          const id = randomUUID(), expiresAt = now() + 30 * 86400000;
+          const id = randomUUID(), expiresAt = now() + 90 * 86400000;
           const mediaPath = `/api/zernio/media/${id}/${encodeURIComponent(file.name)}`;
           const url = `${MEDIA_ORIGIN}${mediaPath}?expires=${expiresAt}&signature=${mediaSignature(mediaPath, String(expiresAt), getKey())}`;
-          const attachment = { id, ownerUid: user.uid, platform, accountId: social.accountId, conversationId, name: file.name, kind: file.kind, mime: file.mime, size: file.size, expiresAt, url, storagePath: `botnest/social/${digest(user.uid)}/${id}` };
+          const attachment = { id, ownerUid: user.uid, platform, accountId: social.accountId, conversationId, name: file.name, kind: file.kind, mime: file.mime, size: file.size, createdAt: now(), expiresAt, url, storagePath: `botnest/social/${digest(user.uid)}/${id}` };
           await media.save(attachment.storagePath, file.bytes, file.mime);
           await store.saveSocialAttachment(id, attachment);
           return res.json({ attachment: { id, name: file.name, kind: file.kind, size: file.size, url, expiresAt } });
@@ -363,7 +363,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
             query.get("includeAi") === "false" ? null : attachInboxAi(store, user.uid, items, platform, now()),
           ]);
           for (const item of items) item.customer = customers.get(digest(`${social.accountId}:${item.remoteId}`));
-          return res.json({ items, next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
+          return res.json({ items: query.get("includeAi") === "false" ? items : await store.retainedConversations(user.uid, items), next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
         }
         if (path === "/api/zernio/messages" && req.method === "GET") {
           const conversationId = query.get("conversationId"), cursor = query.get("cursor");
@@ -385,7 +385,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
             }
             return { id: `${platform}-${digest(`${social.accountId}:${item.id}`)}`, remoteId: String(item.id), direction: item.direction === "outgoing" ? "outgoing" : "incoming", type: kind || "text", text: String(item.message || labels[kind] || "").slice(0, 10000), sentAt, unsent: !!item.isDeleted, status: item.deliveryStatus || (item.direction === "outgoing" ? "sent" : undefined), ...(normalizedAttachment ? { attachment: normalizedAttachment } : {}), ...(kind === "audio" && normalizedAttachment && !item.isDeleted ? { audioTicket: audioTicket({ uid: user.uid, platform, accountId: social.accountId, url: normalizedAttachment.url }, getKey(), now()) } : {}) };
           });
-          return res.json({ items, next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
+          return res.json({ items: await store.retainedMessages(user.uid, `${platform}-${digest(`${social.accountId}:${conversationId}`)}`, items, now()), next: data.pagination?.hasMore && typeof data.pagination.nextCursor === "string" ? data.pagination.nextCursor : null });
         }
         if (path === "/api/zernio/messages" && req.method === "POST") {
           const origin = req.get("origin");
@@ -459,7 +459,8 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
       const voice = /^\/api\/line\/conversations\/([a-f0-9]{64})\/messages\/([A-Za-z0-9_-]{1,128})\/audio$/.exec(path);
       if (voice && req.method === "GET") {
         const message = await store.getMessage(account.channelId, voice[1], voice[2]);
-        if (!message || message.type !== "audio" || message.unsent || !account.accessToken) throw new HttpError(404, "語音不存在或已收回。");
+        if (!message || message.type !== "audio" || message.unsent || message.attachmentExpired || !account.accessToken) throw new HttpError(404, "語音不存在或已收回。");
+        if (!(await store.retainedMessages(user.uid, voice[1], [message], now()))[0] || (await store.retainedMessages(user.uid, voice[1], [message], now()))[0].attachmentExpired) throw new HttpError(404, "語音已到期。");
         try {
           const data = await lineAudio(`https://api-data.line.me/v2/bot/message/${encodeURIComponent(voice[2])}/content`, unseal(account.accessToken, getKey(), `${account.channelId}:access-token`), fetchLine);
           if ((await store.getMessage(account.channelId, voice[1], voice[2]))?.unsent) throw new Error("unsent");
@@ -473,10 +474,10 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
         if (!account.accessToken) throw new HttpError(409, "請先更新 OA 連線憑證。");
         const file = validateUpload(req.body);
         await store.reserveUpload(account.channelId, upload[1], file.size, now());
-        const id = randomUUID(), expiresAt = now() + 30 * 86400000;
+        const id = randomUUID(), expiresAt = now() + 90 * 86400000;
         const mediaPath = `/api/line/media/${account.channelId}/${id}`;
         const url = `${MEDIA_ORIGIN}${mediaPath}?expires=${expiresAt}&signature=${mediaSignature(mediaPath, String(expiresAt), getKey())}`;
-        const attachment = { id, conversationId: upload[1], name: file.name, kind: file.kind, mime: file.mime, size: file.size, expiresAt, url, storagePath: `botnest/${account.channelId}/${id}` };
+        const attachment = { id, conversationId: upload[1], name: file.name, kind: file.kind, mime: file.mime, size: file.size, createdAt: now(), expiresAt, url, storagePath: `botnest/${account.channelId}/${id}` };
         await media.save(attachment.storagePath, file.bytes, file.mime);
         await store.saveAttachment(account.channelId, id, attachment);
         return res.json({ attachment: { id, name: file.name, kind: file.kind, size: file.size, url, expiresAt } });
@@ -527,7 +528,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
       if (messages && req.method === "GET") {
         const page = await store.messages(account.channelId, messages[1], before);
         if (account.accessToken && media) {
-          const pending = page.items.filter(item => item.type === "image" && item.direction === "incoming" && !item.unsent && !item.attachment && !(item.imageRetryAfter > now())).slice(0, 3);
+          const pending = page.items.filter(item => item.type === "image" && item.direction === "incoming" && !item.unsent && !item.attachmentExpired && !item.attachment && !(item.imageRetryAfter > now())).slice(0, 3);
           for (const item of pending) {
             if (!await store.claimIncomingImage(account.channelId, messages[1], item.id, now())) continue;
             let patch;
@@ -545,10 +546,10 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
               const png = bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
               const jpeg = bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
               if (!png && !jpeg) throw new HttpError(415, "圖片格式無法預覽");
-              const id = randomUUID(), expiresAt = now() + 30 * 86400000, name = `LINE-${item.id}.${png ? "png" : "jpg"}`;
+              const id = randomUUID(), expiresAt = now() + 90 * 86400000, name = `LINE-${item.id}.${png ? "png" : "jpg"}`;
               const mediaPath = `/api/line/media/${account.channelId}/${id}`;
               const url = `${MEDIA_ORIGIN}${mediaPath}?expires=${expiresAt}&signature=${mediaSignature(mediaPath, String(expiresAt), getKey())}`;
-              const attachment = { id, conversationId: messages[1], messageId: item.id, name, kind: "image", mime: png ? "image/png" : "image/jpeg", size, expiresAt, url, storagePath: `botnest/${account.channelId}/${id}` };
+              const attachment = { id, conversationId: messages[1], messageId: item.id, name, kind: "image", mime: png ? "image/png" : "image/jpeg", size, createdAt: item.sentAt, expiresAt, url, storagePath: `botnest/${account.channelId}/${id}` };
               await media.save(attachment.storagePath, bytes, attachment.mime);
               await store.saveAttachment(account.channelId, id, attachment);
               patch = { attachment: { id, name, kind: "image", size, expiresAt, url }, imageNote: "", imageRetryAfter: 0 };

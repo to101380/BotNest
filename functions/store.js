@@ -1,4 +1,5 @@
 import { workflowRef, reopenedWorkflow } from "./conversation-workflow.js";
+import { visibleRetainedMessage, retentionActive, messageDue } from "./retention-policy.js";
 import { createMonitor, aiMetrics } from "./security-monitor.js";
 import { HttpError } from "./core.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -42,6 +43,25 @@ export function createStore(db) {
     return { items: result.slice(0, limit), next: result.length > limit ? result[limit - 1].id : null };
   }
   return {
+    async retentionSettings(uid) { return (await accounts.doc(uid).collection("retention").doc("settings").get()).data(); },
+    async retentionSave(uid, value, revision) {
+      const ref = accounts.doc(uid).collection("retention").doc("settings");
+      await db.runTransaction(async tx => { const old = (await tx.get(ref)).data(); if (old?.revision !== revision) throw new HttpError(409, "設定已更新，請重新整理。"); tx.set(ref, value); });
+    },
+    async retainedMessages(uid, id, items, at) {
+      const [policy, workflow] = await Promise.all([this.retentionSettings(uid), workflowRef(accounts.doc(uid), id).get()]);
+      return items.filter(m => visibleRetainedMessage(m, policy, workflow.data(), at)).map(m => {
+        if (!retentionActive(policy, at) || m.sentAt + policy.attachmentDays * 86400000 > at) return m;
+        const value = { ...m, attachmentExpired: ["image", "audio", "file"].includes(m.type) || !!m.attachment, imageNote: "附件已到期" };
+        delete value.audioTicket;
+        if (m.attachment) value.attachment = { name: m.attachment.name, kind: m.attachment.kind, url: "", expiresAt: 0 };
+        return value;
+      });
+    },
+    async retainedConversations(uid, items) {
+      const found = await sparseRows(accounts.doc(uid).collection("conversationWorkflow"), items.map(item => digestId(item.id)));
+      return items.filter(item => !found.get(digestId(item.id))?.purgedAt);
+    },
     // A snapshot lives for one read-only endpoint invocation, never across users/requests.
     withReadSnapshot(run) { return readScope.run(new Map(), run); },
     ...createUsageStore(db),
@@ -194,7 +214,7 @@ export function createStore(db) {
         const { id, name, kind, url, size, expiresAt } = stored;
         const attachment = { id, name, kind, url, size, expiresAt };
         const message = { id: `out-${operationId}`, operationId, direction: "outgoing", type: kind, text: value.text, attachment, sentAt: at, status: "uncertain", note: "傳送結果待確認；請先到原平台查看，勿重複傳送。", unsent: false };
-        const operation = { fingerprint, message, createdAt: at };
+        const operation = { fingerprint, message, platform: value.platform, accountId: value.accountId, conversationId: value.conversationId, createdAt: at };
         tx.set(ref, operation);
         return { ...operation, claimed: true };
       });
@@ -264,15 +284,16 @@ export function createStore(db) {
       let created = false;
       await db.runTransaction(async tx => {
         const workflow = workflowRef(account, `${event.provider}-${conversationId}`);
-        const [seen, prior, priorMessage, workflowSnapshot] = await tx.getAll(receipt, conversation, message, workflow);
+        const [seen, prior, priorMessage, workflowSnapshot, policySnapshot] = await tx.getAll(receipt, conversation, message, workflow, account.collection("retention").doc("settings"));
         if (seen.exists || priorMessage.exists) return;
+        if (retentionActive(policySnapshot.data(), Date.now()) && messageDue(event, policySnapshot.data(), Date.now()) || (workflowSnapshot.data()?.purgedAt || workflowSnapshot.data()?.lastPurgedAt) && event.sentAt <= (workflowSnapshot.data().purgedAt || workflowSnapshot.data().lastPurgedAt)) return;
         const reopened = reopenedWorkflow(workflowSnapshot.data(), event.sentAt);
         if (reopened) tx.set(workflow, reopened);
         const old = prior.data(), stored = { ...event, id: messageId, conversationId, direction: "incoming", type: event.type || "text", unsent: false };
         tx.set(message, stored);
         if (!old || event.sentAt >= old.updatedAt) tx.set(conversation, { remoteConversationId: event.remoteConversationId, accountId: event.accountId,
           displayName: event.displayName, pictureUrl: event.pictureUrl, lastText: event.text, latestIncomingId: messageId, updatedAt: event.sentAt,
-          createdAt: old?.createdAt == null ? event.sentAt : Math.min(old.createdAt, event.sentAt) }, { merge: true });
+          retentionPurgedAt: 0, retentionEmpty: false, createdAt: old?.createdAt == null ? event.sentAt : Math.min(old.createdAt, event.sentAt) }, { merge: true });
         tx.set(receipt, { receivedAt: Date.now() }); created = true;
       });
       return { created, conversationId, messageId };
@@ -307,7 +328,7 @@ export function createStore(db) {
       const ref = channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId);
       return db.runTransaction(async tx => {
         const value = (await tx.get(ref)).data();
-        if (!value || value.unsent || value.type !== "image" || value.direction !== "incoming" || value.attachment || value.imageRetryAfter > at) return false;
+        if (!value || value.unsent || value.attachmentExpired || value.type !== "image" || value.direction !== "incoming" || value.attachment || value.imageRetryAfter > at) return false;
         tx.set(ref, { imageRetryAfter: at + 60000 }, { merge: true }); return true;
       });
     },
@@ -315,7 +336,7 @@ export function createStore(db) {
       const ref = channels.doc(id).collection("conversations").doc(conversationId).collection("messages").doc(messageId);
       return db.runTransaction(async tx => {
         const value = (await tx.get(ref)).data();
-        if (!value || value.unsent) return value ? { id: messageId, ...value } : null;
+        if (!value || value.unsent || value.attachmentExpired) return value ? { id: messageId, ...value } : null;
         tx.set(ref, patch, { merge: true }); return { id: messageId, ...value, ...patch };
       });
     },
@@ -444,7 +465,7 @@ export function createStore(db) {
           attachment = { id: attachmentId, name: stored.name, kind: stored.kind, url: stored.url, size: stored.size, expiresAt: stored.expiresAt };
         }
         const lineMessages = [];
-        if (attachment) lineMessages.push(attachment.kind === "image" ? { type: "image", originalContentUrl: attachment.url, previewImageUrl: attachment.url } : { type: "text", text: `📎 ${attachment.name}\n${attachment.url}\n（下載連結 30 天內有效）` });
+        if (attachment) lineMessages.push(attachment.kind === "image" ? { type: "image", originalContentUrl: attachment.url, previewImageUrl: attachment.url } : { type: "text", text: `📎 ${attachment.name}\n${attachment.url}\n（下載連結 90 天內有效）` });
         if (text.trim()) lineMessages.push(...(textParts || [text]).map(part => ({ type: "text", text: part })));
         const message = { id: `out-${operationId}`, operationId, direction: "outgoing", type: attachment?.kind || "text", text, ...(attachment ? { attachment } : {}), sentAt: previous?.createdAt ?? at, status: "pending", note: "正在確認傳送結果", unsent: false };
         const operation = { conversationId, text, attachmentId, lineMessages: previous?.lineMessages || lineMessages, to: target.data().sourceId, retryKey: previous?.retryKey ?? randomUUID(), createdAt: previous?.createdAt ?? at, leaseUntil: at + 20000, status: "pending", message,
@@ -511,8 +532,9 @@ export function createStore(db) {
       await db.runTransaction(async tx => {
         const owner = (await tx.get(channel)).data()?.ownerUid;
         const workflow = owner ? workflowRef(accounts.doc(owner), event.conversationId) : null;
-        const [seen, previous, oldMessage, workflowSnapshot] = await tx.getAll(receipt, conversation, message, ...(workflow ? [workflow] : []));
+        const [seen, previous, oldMessage, workflowSnapshot, policySnapshot] = await tx.getAll(receipt, conversation, message, ...(workflow ? [workflow, accounts.doc(owner).collection("retention").doc("settings")] : []));
         if (seen.exists) return;
+        if (retentionActive(policySnapshot?.data(), Date.now()) && messageDue(event, policySnapshot.data(), Date.now()) || (workflowSnapshot?.data()?.purgedAt || workflowSnapshot?.data()?.lastPurgedAt) && event.sentAt <= (workflowSnapshot.data().purgedAt || workflowSnapshot.data().lastPurgedAt)) return;
         const old = oldMessage.data();
         const summary = previous.data();
         // Tombstones also cover an unsend event delivered before its original message.
@@ -524,15 +546,17 @@ export function createStore(db) {
           if (reopened) tx.set(workflow, reopened);
           tx.set(message, { type: event.type, text: event.text, sentAt: event.sentAt, unsent: false, direction: "incoming", ...(!old && reply ? reply : {}) });
           const createdAt = summary?.createdAt == null ? event.sentAt : Math.min(summary.createdAt, event.sentAt);
-          if (!summary || event.sentAt >= summary.updatedAt) tx.set(conversation, { sourceType: event.sourceType, sourceId: event.sourceId, lastText: event.text, lastMessageId: event.messageId, updatedAt: event.sentAt, createdAt }, { merge: true });
+          if (!summary || event.sentAt >= summary.updatedAt) tx.set(conversation, { sourceType: event.sourceType, sourceId: event.sourceId, lastText: event.text, lastMessageId: event.messageId, updatedAt: event.sentAt, createdAt, retentionPurgedAt: 0, retentionEmpty: false }, { merge: true });
           else if (createdAt !== summary.createdAt) tx.set(conversation, { createdAt }, { merge: true });
         }
         tx.set(receipt, { receivedAt: Date.now() });
       });
     },
-    conversations(id, before) { return page(channels.doc(id).collection("conversations"), "updatedAt", before, 30); },
+    async conversations(id, before) { const result = await page(channels.doc(id).collection("conversations"), "updatedAt", before, 30); result.items = result.items.filter(item => !item.retentionPurgedAt); return result; },
     async messages(id, conversationId, before) {
       const result = await page(channels.doc(id).collection("conversations").doc(conversationId).collection("messages"), "sentAt", before, 50);
+      const owner = (await accountRead(channels.doc(id))).data()?.ownerUid;
+      if (owner) result.items = await this.retainedMessages(owner, conversationId, result.items, Date.now());
       result.items = result.items.map(({ replyToken, replyExpiresAt, ...message }) => message);
       return result;
     },

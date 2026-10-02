@@ -41,7 +41,7 @@ for(const platform of ['facebook','instagram'])test(`${platform}: audio playback
 });
 
 test('social message lists issue playback tickets only for live audio belonging to the connected account',async()=>{
- const store={aiAttempt:async()=>{},zernioAccount:async()=>({instagram:{accountId:'account'}})};
+ const store={aiAttempt:async()=>{},zernioAccount:async()=>({instagram:{accountId:'account'}}),retainedMessages:async(_uid,_id,items)=>items};
  const messages=[{id:'voice',accountId:'account',conversationId:'thread',attachments:[{type:'audio',url:'https://example.com/voice'}]},{id:'deleted',accountId:'account',conversationId:'thread',isDeleted:true,attachments:[{type:'audio',url:'https://example.com/voice'}]},{id:'foreign',accountId:'other',conversationId:'thread',attachments:[{type:'audio',url:'https://example.com/voice'}]}];
  const handler=createHandler({store,getKey:()=>key,getZernioKey:()=> 'fake',now:()=>now,authorizeSession:async()=>{},verifyToken:async()=>({uid:'alice',firebase:{sign_in_provider:'google.com'}}),fetchZernio:async()=>Response.json({messages})});
  const res={code:200,set(){return this},status(code){this.code=code;return this},json(body){this.body=body;return this}};
