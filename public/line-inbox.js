@@ -732,11 +732,11 @@ export function createLineInbox() {
     const resetPages = !more && (force || !filtering() || !listLoaded);
     refreshing = true; renderBulk();
     try {
-      await workflow.load().catch(report);
+      const workflowPromise = workflow.load().catch(error => { if (currentEpoch === epoch) report(error); });
       const linePromise = channel && (!more || conversationNext) ? api(`conversations${more && conversationNext ? `?before=${encodeURIComponent(conversationNext)}` : ""}`) : null;
       const facebookPromise = facebookAccount && (!more || zernioConversationNext) ? zernioApi(`conversations${more && zernioConversationNext ? `?cursor=${encodeURIComponent(zernioConversationNext)}` : ""}`) : null;
       const instagramPromise = instagramAccount && (!more || instagramNext) ? zernioApi(`conversations?platform=instagram${more && instagramNext ? `&cursor=${encodeURIComponent(instagramNext)}` : ""}`) : null;
-      const [lineState, facebookState, instagramState] = await Promise.allSettled([linePromise, facebookPromise, instagramPromise]);
+      const [lineState, facebookState, instagramState] = await Promise.allSettled([linePromise, facebookPromise, instagramPromise, workflowPromise]);
       if (currentEpoch !== epoch) return;
       const instagramResult = instagramState.status === "fulfilled" ? instagramState.value : null;
       const lineResult = lineState.status === "fulfilled" ? lineState.value : null;

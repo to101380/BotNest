@@ -45,10 +45,10 @@ export function createDataRetention({ request = async (user, path = '', options 
     catch (e) { if (version === generation) message(e.message, true); } finally { if (version === generation) button.disabled = false; }
   }
   async function load() {
-    if (!user) return; const version = generation, current = user;
+    if (!user || root.hidden || document.hidden) return; const version = generation, current = user;
     try { const next = await request(current); if (version !== generation) return; data = next; lastLoad = Date.now(); paint(); }
     catch (e) { if (version === generation) message(e.message, true); }
-    finally { if (version === generation && user && !root.hidden) { clearTimeout(timer); timer = setTimeout(() => void load(), data?.jobs.some(j => ['working', 'queued'].includes(j.status)) ? 10000 : 60000); } }
+    finally { if (version === generation && user && !root.hidden && !document.hidden) { clearTimeout(timer); timer = setTimeout(() => void load(), data?.jobs.some(j => ['working', 'queued'].includes(j.status)) ? 10000 : 60000); } }
   }
   async function operation(action, conversationId = null) {
     if (busy || !user) return; const version = generation; controls(true); message('正在建立工作…');
@@ -70,6 +70,10 @@ export function createDataRetention({ request = async (user, path = '', options 
   dialog.querySelector('input').onchange = event => { dialog.querySelector('[data-action="confirm"]').disabled = !event.target.checked; };
   dialog.querySelector('[data-action="cancel"]').onclick = () => dialog.close(); dialog.querySelector('[data-action="confirm"]').onclick = () => void save(true);
   window.addEventListener('botnest-export-conversation', event => { if (user && event.detail?.id) { void operation('export', event.detail.id); } });
+  document.addEventListener('visibilitychange', () => {
+    clearTimeout(timer);
+    if (!document.hidden && user && !root.hidden) void load();
+  });
   return { setSession(next, active) {
     if (user?.uid !== next?.uid) { generation++; data = null; lastLoad = 0; controls(false); message(''); if (dialog.open) dialog.close(); }
     user = next; root.hidden = !next || !active; clearTimeout(timer);
