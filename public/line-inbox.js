@@ -417,6 +417,9 @@ export function createLineInbox() {
     $("line-account").hidden = !channel;
     $("line-inbox").hidden = !channel && !facebookAccount && !instagramAccount;
     $("line-connect-form").hidden = !!channel;
+    $("line-step5-webhook").hidden = !channel;
+    $("line-step5-webhook-url").value = channel?.webhookUrl || "";
+    $("line-step5-copy-status").textContent = "";
     $("line-not-connected").hidden = !!channel || !!facebookAccount || !!instagramAccount;
     $("line-settings-toggle").setAttribute("aria-expanded", "false");
     $("line-card-state").textContent = channel ? "已連接" : "未連接";
@@ -985,6 +988,10 @@ export function createLineInbox() {
   $("line-image-next").addEventListener("click", () => moveImageViewer(1));
   $("line-image-viewer").addEventListener("click", event => { if (event.target === $("line-image-viewer")) $("line-image-viewer").close(); });
   $("line-image-viewer").addEventListener("close", () => { $("line-image-full").removeAttribute("src"); viewerItems = []; });
+  $("line-step5-copy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText($("line-step5-webhook-url").value); $("line-step5-copy-status").textContent = "已複製 Webhook URL。"; }
+    catch { $("line-step5-webhook-url").select(); $("line-step5-copy-status").textContent = "請手動複製已選取的網址。"; }
+  });
   $("line-copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("line-webhook-url").value); status("已複製 Webhook URL。"); }
     catch { $("line-webhook-url").select(); status("請手動複製已選取的網址。"); }
@@ -1022,6 +1029,8 @@ export function createLineInbox() {
       conversationNext = zernioConversationNext = instagramNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
       historyMode(false);
       $("line-oa-name").textContent = $("line-webhook-url").value = $("line-channel-id").value = "";
+      $("line-step5-webhook").hidden = true;
+      $("line-step5-webhook-url").value = $("line-step5-copy-status").textContent = "";
       $("line-conversation-title").textContent = "選擇一段對話";
       $("customer-panel").hidden = true; $("customer-panel").classList.remove("open"); $("customer-toggle").setAttribute("aria-expanded", "false");
       $("line-channel-id").readOnly = false; $("line-connect-fields").disabled = false; $("line-refresh").disabled = false;
