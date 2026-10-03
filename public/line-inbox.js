@@ -1,5 +1,5 @@
 import { createAudioPlayer } from "./audio-player.js";
-import { createConversationWorkflow } from "./conversation-workflow.js";
+import { createConversationWorkflow, workflowIcons } from "./conversation-workflow.js";
 import { filterConversations, inboxMode } from "./inbox-filters.js";
 import { showAiModel } from "./ai-model.js";
 import { watchHistoryScroll } from "./history-scroll.js";
@@ -67,7 +67,10 @@ export function createLineInbox() {
   document.querySelector(".conversation-toolbar").append(filters);
   const bulkStyle = document.createElement("link"); bulkStyle.rel = "stylesheet"; bulkStyle.href = "/inbox-bulk.css"; document.head.append(bulkStyle);
   const bulkPanel = document.createElement("div"); bulkPanel.id = "inbox-bulk-panel"; bulkPanel.className = "inbox-bulk-panel"; bulkPanel.hidden = true;
-  bulkPanel.innerHTML = '<div class="inbox-bulk-heading"><span class="inbox-bulk-count" role="status" aria-live="polite">已選取 0 段對話</span><button type="button" data-bulk-select="exit" aria-label="取消批量選取">取消</button></div><div class="inbox-bulk-selection"><button type="button" data-bulk-select="all">全選</button><button type="button" data-bulk-select="clear">全不選</button></div><div class="inbox-bulk-actions" role="group" aria-label="批量切換回覆模式"><button type="button" data-bulk-mode="auto">交回 AI</button><button type="button" data-bulk-mode="human">真人接手</button></div><p class="inbox-bulk-hint">只選取目前已載入且符合篩選的對話。</p>';
+  const bulkIcon = action => '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + workflowIcons[action] + '</svg>';
+  bulkPanel.innerHTML = '<input type="checkbox" class="inbox-bulk-all" aria-label="全選目前對話"><span class="inbox-bulk-count" role="status" aria-live="polite">已選擇 (0)</span><div class="inbox-bulk-actions" role="group" aria-label="批量操作">' + [['follow', '標記追蹤'], ['assign', '指派給自己'], ['complete', '完成對話'], ['trash', '移至垃圾匣']].map(([action, title]) => '<button type="button" data-bulk-workflow="' + action + '" title="' + title + '" aria-label="' + title + '">' + bulkIcon(action) + '</button>').join('') + '<button type="button" data-bulk-mode="auto" title="交回 AI" aria-label="交回 AI">AI</button><button type="button" data-bulk-mode="human" title="真人接手" aria-label="真人接手">' + bulkIcon('assign') + '</button></div><button type="button" data-bulk-select="exit" class="inbox-bulk-cancel">取消</button>';
+  const bulkAll = bulkPanel.querySelector('.inbox-bulk-all');
+  bulkAll.onchange = () => { if (bulkBusy) return; bulkAnchor = null; bulkIds.clear(); if (bulkAll.checked) for (const item of workflow.filter(filterConversations([...conversations.values()], searchQuery, filterMode))) bulkIds.add(item.id); clearBulkResult(); showConversations(); };
   const bulkResult = document.createElement("div"); bulkResult.className = "inbox-bulk-result"; bulkResult.hidden = true;
   const bulkSummary = document.createElement("p"); bulkSummary.setAttribute("role", "status"); bulkSummary.setAttribute("aria-live", "polite");
   const bulkErrors = document.createElement("details"); bulkErrors.className = "inbox-bulk-errors"; bulkErrors.hidden = true;
@@ -79,8 +82,12 @@ export function createLineInbox() {
     document.querySelector(".conversation-panel").classList.toggle("bulk-selection-active", bulkMode);
     document.querySelector(".inbox-grid").classList.toggle("bulk-selection-active", bulkMode);
     bulkPanel.hidden = !bulkMode; bulkPanel.setAttribute("aria-busy", String(bulkBusy));
-    bulkPanel.querySelector(".inbox-bulk-count").textContent = `已選取 ${bulkIds.size} 段對話`;
-    for (const button of bulkPanel.querySelectorAll("button")) button.disabled = bulkBusy || (button.dataset.bulkMode ? !bulkIds.size || refreshing || changingAi || sending : button.dataset.bulkSelect === "clear" && !bulkIds.size);
+    bulkPanel.querySelector(".inbox-bulk-count").textContent = `已選擇 (${bulkIds.size})`;
+    for (const button of bulkPanel.querySelectorAll("button")) button.disabled = bulkBusy || (button.dataset.bulkMode || button.dataset.bulkWorkflow ? !bulkIds.size || refreshing || changingAi || sending : button.dataset.bulkSelect === "clear" && !bulkIds.size);
+    const visibleCount = workflow.filter(filterConversations([...conversations.values()], searchQuery, filterMode)).length;
+    bulkAll.checked = visibleCount > 0 && bulkIds.size === visibleCount; bulkAll.indeterminate = bulkIds.size > 0 && bulkIds.size < visibleCount; bulkAll.disabled = bulkBusy || !visibleCount;
+    const view = workflow.view();
+    for (const button of bulkPanel.querySelectorAll('[data-bulk-workflow]')) { const action = button.dataset.bulkWorkflow; const title = action === 'trash' && view === 'trash' ? '還原對話' : action === 'complete' && view === 'completed' ? '重新開啟對話' : ({ follow: '標記追蹤', assign: '指派給自己', complete: '完成對話', trash: '移至垃圾匣' })[action]; button.title = title; button.setAttribute('aria-label', title); }
     $("inbox-name-search").disabled = bulkBusy;
     for (const button of filters.querySelectorAll("[data-filter]")) button.disabled = bulkBusy;
     $("line-refresh").disabled = refreshing || bulkBusy;
@@ -92,17 +99,18 @@ export function createLineInbox() {
     document.querySelector(".conversation-panel").scrollTop = 0;
     scanEpoch++; scanning = false; clearTimeout(filterTimer);
     showConversations();
-    if (id) conversationRows.get(id)?.button.focus({ preventScroll: true });
+    if (id) conversationRows.get(id)?.button.querySelector(".conversation-bulk-check")?.focus({ preventScroll: true });
   }
   const longPress = installConversationLongPress($("line-conversations"), {
     enabled: () => active && pageMode === "inbox" && !bulkMode && !bulkBusy,
     select: id => setBulkSelection(id),
   });
   const selectionHelp = document.createElement("p"); selectionHelp.className = "note";
-  selectionHelp.textContent = "長按對話可批量選取；按住 Shift 點選可選取連續範圍。鍵盤可使用 Shift＋空白鍵進入選取模式。";
+  selectionHelp.textContent = "滑鼠移到對話後勾選可批量操作；手機可長按對話選取。按住 Shift 點選可選取連續範圍。鍵盤可使用 Shift＋空白鍵進入選取模式。";
   document.querySelector(".conversation-toolbar .inbox-help").append(selectionHelp);
   bulkPanel.addEventListener("click", event => {
     const button = event.target.closest("button"); if (!button || button.disabled || bulkBusy) return;
+    if (button.dataset.bulkWorkflow) { void changeBulkWorkflow(button.dataset.bulkWorkflow); return; }
     if (button.dataset.bulkMode) { void changeBulkMode(button.dataset.bulkMode); return; }
     if (button.dataset.bulkSelect === "exit") { setBulkSelection(); return; }
     bulkAnchor = null;
@@ -151,6 +159,26 @@ export function createLineInbox() {
       }
     } catch (error) { if (current()) { bulkSummary.textContent = error.message; bulkResult.classList.add("error"); } }
     finally { if (current()) { bulkBusy = false; showConversations(); renderAiControl(); scheduleRefresh(); } }
+  }
+  async function changeBulkWorkflow(action) {
+    if (bulkBusy || refreshing || changingAi || sending || !bulkIds.size || !active) return;
+    const generation = epoch, current = () => generation === epoch && active, ids = [...bulkIds], failures = [];
+    const value = action === 'trash' ? workflow.view() !== 'trash' : action === 'complete' ? workflow.view() !== 'completed' : true;
+    const title = bulkPanel.querySelector('[data-bulk-workflow="' + action + '"]').title;
+    bulkBusy = true; clearTimeout(timer); scanEpoch++; scanning = false; clearTimeout(filterTimer); clearBulkResult(); bulkResult.hidden = false; bulkResult.classList.remove('error'); showConversations();
+    let done = 0, succeeded = 0;
+    try {
+      for (const id of ids) {
+        if (!current()) return;
+        try { await workflow.act(id, action, value, true); if (!current()) return; succeeded++; bulkIds.delete(id); }
+        catch (error) { failures.push({ id, error: error.message }); if ([401, 403, 429].includes(error.status)) { for (const pending of ids.slice(done + 1)) failures.push({ id: pending, error: '尚未執行，請稍後重試。' }); break; } }
+        done++; bulkSummary.textContent = '正在處理 ' + done + '／' + ids.length + ' 段對話…'; showConversations();
+      }
+      if (!current()) return;
+      bulkSummary.textContent = '已' + title + ' ' + succeeded + ' 段對話。' + (failures.length ? ' ' + failures.length + ' 段未完成，保留選取供重試。' : '');
+      bulkResult.classList.toggle('error', !!failures.length); bulkErrors.hidden = !failures.length;
+      for (const result of failures) { const row = document.createElement('li'); row.textContent = label(conversations.get(result.id)) + '：' + result.error; errorList.append(row); }
+    } finally { if (current()) { bulkBusy = false; showConversations(); scheduleRefresh(); } }
   }
   const hasMore = () => !!(conversationNext || zernioConversationNext || instagramNext);
   function applyFilter() {
@@ -499,10 +527,10 @@ export function createLineInbox() {
       const button = document.createElement("button");
       button.type = "button"; button.className = "conversation-item";
       button.dataset.conversationId = item.id;
-      if (!bulkMode) { button.title = "長按以批量選取"; button.setAttribute("aria-keyshortcuts", "Shift+Space"); }
+      if (!bulkMode) { button.title = "開啟對話；勾選可批量操作"; button.setAttribute("aria-keyshortcuts", "Shift+Space"); }
       if (bulkMode) {
-        button.classList.add("bulk-selectable"); button.setAttribute("role", "checkbox"); button.setAttribute("aria-checked", String(bulkIds.has(item.id))); button.disabled = bulkBusy;
-        const check = document.createElement("span"); check.className = "conversation-bulk-check"; check.textContent = "✓"; check.setAttribute("aria-hidden", "true"); button.append(check);
+        button.classList.add("bulk-selectable"); button.setAttribute("aria-pressed", String(bulkIds.has(item.id))); button.disabled = bulkBusy;
+
       } else button.setAttribute("aria-pressed", String(selected === item.id));
       const name = document.createElement("strong"), preview = document.createElement("span"), time = document.createElement("time");
       name.textContent = label(item); preview.textContent = item.lastText;
@@ -532,6 +560,9 @@ export function createLineInbox() {
       });
       const focused = prior?.button.contains(document.activeElement);
       const row = document.createElement("div"); row.className = "conversation-workflow-row"; row.dataset.conversationId = item.id; row.append(button);
+      const check = document.createElement('input'); check.type = 'checkbox'; check.className = 'conversation-bulk-check'; check.checked = bulkIds.has(item.id); check.disabled = bulkBusy; check.setAttribute('aria-label', '選取 ' + label(item) + ' 以批量操作');
+      check.onclick = event => { event.stopPropagation(); if (!bulkMode) { setBulkSelection(item.id); return; } if (check.checked) bulkIds.add(item.id); else bulkIds.delete(item.id); bulkAnchor = item.id; clearBulkResult(); showConversations(); };
+      row.prepend(check);
       if (!bulkMode) row.append(workflow.toolbar(item.id));
       prior?.button.remove();
       list.insertBefore(row, list.children[position] || null);

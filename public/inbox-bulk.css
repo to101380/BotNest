@@ -1,48 +1,8 @@
-.inbox-bulk-panel { margin-top: 12px; padding: 12px; border: 1px solid #e1e6ed; border-radius: 12px; background: #f5f8fc; }
-.inbox-bulk-panel[hidden], .inbox-bulk-result[hidden] { display: none; }
-.inbox-bulk-count { display: block; margin: 0; color: #1d1d1f; font-size: 13px; font-weight: 600; }
-.inbox-bulk-selection, .inbox-bulk-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.inbox-bulk-selection button { padding: 4px 0; border: 0; background: transparent; color: #0066cc; font: inherit; font-size: 11px; }
-.inbox-bulk-selection button + button { margin-left: auto; }
-.inbox-bulk-actions { margin-top: 9px; }
-.inbox-bulk-actions button { flex: 1 1 70px; padding: 8px 7px; border: 1px solid #d5dce5; border-radius: 8px; background: #fff; color: #1d1d1f; font: inherit; font-size: 12px; white-space: nowrap; }
-.inbox-bulk-actions button[data-bulk-mode=auto] { background: #0071e3; border-color: #0071e3; color: #fff; }
-.inbox-bulk-panel button:disabled { opacity: .45; cursor: default; }
-.inbox-bulk-hint, .inbox-bulk-result { margin: 9px 0 0; color: #66666d; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
-.inbox-bulk-result { padding: 10px 0 0; }
-.inbox-bulk-result.error { color: #a32929; }
-.inbox-bulk-errors { margin-top: 6px; }
-.inbox-bulk-errors ul { padding-left: 18px; margin: 5px 0 0; max-height: 160px; overflow-y: auto; }
-body.inbox-open .conversation-item.bulk-selectable { position: relative; padding-left: 39px; }
-body.inbox-open .conversation-item .conversation-bulk-check { margin: 0; padding: 0; box-sizing: border-box; overflow: visible; position: absolute; left: 12px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 18px; height: 18px; border: 1.5px solid #b7bbc3; border-radius: 5px; background: #fff; color: transparent; font-size: 12px; line-height: 1; }
-body.inbox-open .conversation-item[aria-checked=true] { background: #eaf3ff; }
-body.inbox-open .conversation-item[aria-checked=true] .conversation-bulk-check { background: #0071e3; border-color: #0071e3; color: #fff; }
-.inbox-bulk-panel button:focus-visible, .bulk-selectable:focus-visible { outline: 3px solid #69a9ee; outline-offset: 2px; }
-body.inbox-open .conversation-panel.bulk-selection-active { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
-.bulk-selection-active .conversation-toolbar { position: static; flex: 0 0 auto; max-height: 65%; overflow-y: auto; box-sizing: border-box; }
-.bulk-selection-active .inbox-help { display: none; }
-.bulk-selection-active #line-conversations { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
-.bulk-selection-active #line-more-conversations { flex: 0 0 auto; }
-body.inbox-open .inbox-bulk-panel button { font-size: 12px !important; }
-@media(max-width:600px) {
-  body.inbox-open .inbox-grid.bulk-selection-active { grid-template-columns: minmax(0,1fr); }
-  .inbox-grid.bulk-selection-active > .message-panel, .inbox-grid.bulk-selection-active > #customer-panel { display: none; }
-  .bulk-selection-active .line-toolbar { flex-wrap: nowrap; }
-  #line-inbox .bulk-selection-active .inbox-status-filters { display: flex; }
-  .inbox-bulk-panel { padding: 8px; }
-  .inbox-bulk-selection { flex-direction: row; }
-  body.inbox-open .conversation-item.bulk-selectable { padding-left: 29px; }
-  .conversation-bulk-check { left: 6px; width: 16px; height: 16px; }
-}
-@media(forced-colors:active) {
-  body.inbox-open .conversation-item .conversation-bulk-check { border-color: ButtonText; }
-  body.inbox-open .conversation-item[aria-checked=true] .conversation-bulk-check { background: Highlight; color: HighlightText; border-color: Highlight; }
-}
-
-.inbox-bulk-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-.inbox-bulk-heading button { border: 0; background: transparent; color: #0066cc; padding: 5px; font: inherit; }
-body.inbox-open .conversation-item { touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-
-body.inbox-open .conversation-item .conversation-bulk-check { font-size: 0; }
-.conversation-bulk-check::after { content: ''; width: 4px; height: 8px; border: solid currentColor; border-width: 0 2px 2px 0; transform: translateY(-1px) rotate(45deg); }
-@media(max-width:600px) { body.inbox-open .conversation-item .conversation-bulk-check { left: 6px; width: 16px; height: 16px; } }
+.inbox-bulk-panel{display:flex;align-items:center;gap:7px;margin-top:10px;padding:9px 8px;border:1px solid #e1e6ed;border-radius:9px;background:#eef0f3;color:#526070;min-height:38px;box-sizing:border-box;flex-wrap:wrap}.inbox-bulk-panel[hidden],.inbox-bulk-result[hidden]{display:none}.inbox-bulk-count{font-size:12px;white-space:nowrap}.inbox-bulk-actions{display:flex;align-items:center;gap:1px;margin-left:auto}.inbox-bulk-panel button{display:grid;place-items:center;border:0;background:transparent;color:#798390;border-radius:6px;width:27px;height:28px;padding:0;cursor:pointer;font:inherit;font-size:11px}.inbox-bulk-panel button:hover{background:#e1e7ee;color:#1671c9}.inbox-bulk-panel button:disabled{opacity:.4;cursor:default}.inbox-bulk-panel .inbox-bulk-cancel{width:auto;padding:0 4px;font-size:12px;margin-left:auto;color:#60738a}.inbox-bulk-all{margin:0;width:16px;height:16px;accent-color:#087bed;cursor:pointer;flex-shrink:0}.inbox-bulk-result{padding:8px 0;color:#66666d;font-size:11px;line-height:1.6;overflow-wrap:anywhere}.inbox-bulk-result p{margin:0}.inbox-bulk-result.error{color:#a32929}.inbox-bulk-errors ul{padding-left:18px;max-height:160px;overflow-y:auto}.inbox-bulk-panel :focus-visible,.conversation-bulk-check:focus-visible,.bulk-selectable:focus-visible{outline:3px solid #69a9ee;outline-offset:2px}
+body.inbox-open .conversation-workflow-row{position:relative}body.inbox-open .conversation-workflow-row>.conversation-bulk-check{position:absolute;left:10px;top:31px;width:16px;height:16px;margin:0;z-index:2;opacity:0;pointer-events:none;accent-color:#087bed;cursor:pointer}body.inbox-open .conversation-workflow-row:hover>.conversation-bulk-check,body.inbox-open .conversation-workflow-row:focus-within>.conversation-bulk-check,body.inbox-open .bulk-selection-active .conversation-workflow-row>.conversation-bulk-check{opacity:1;pointer-events:auto}body.inbox-open .conversation-workflow-row:hover>.conversation-item,body.inbox-open .conversation-workflow-row:focus-within>.conversation-item,body.inbox-open .bulk-selection-active .conversation-item{padding-left:36px}body.inbox-open .conversation-item{touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}body.inbox-open .conversation-item[aria-pressed=true]{background:#edf4fc}body.inbox-open .conversation-item .conversation-bulk-check{display:none}
+body.inbox-open .conversation-workflow-row .workflow-actions{position:absolute;right:8px;top:7px;opacity:0;pointer-events:none;background:#f7f9fc;border-radius:7px;padding:2px;gap:0}body.inbox-open .conversation-workflow-row:hover .workflow-actions,body.inbox-open .conversation-workflow-row:focus-within .workflow-actions{opacity:1;pointer-events:auto}body.inbox-open .conversation-workflow-row:has(.workflow-trash-deadline) .workflow-actions{position:static;opacity:1;pointer-events:auto;background:transparent}body.inbox-open .conversation-workflow-row:hover .conversation-title-row time,body.inbox-open .conversation-workflow-row:focus-within .conversation-title-row time{visibility:hidden}
+body.inbox-open .conversation-panel.bulk-selection-active{display:flex;flex-direction:column;overflow:hidden;min-height:0}.bulk-selection-active .conversation-toolbar{position:static;flex:0 0 auto;max-height:65%;overflow-y:auto;box-sizing:border-box}.bulk-selection-active .inbox-help,.bulk-selection-active .workflow-filter,.bulk-selection-active .inbox-filters,.bulk-selection-active .line-toolbar{display:none}.bulk-selection-active #line-conversations{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-width:thin}.bulk-selection-active #line-more-conversations{flex:0 0 auto}
+@media(hover:none){body.inbox-open .conversation-workflow-row>.conversation-bulk-check{opacity:1;pointer-events:auto}body.inbox-open .conversation-workflow-row>.conversation-item{padding-left:36px}}
+@media(max-width:600px){body.inbox-open .inbox-grid.bulk-selection-active{grid-template-columns:minmax(0,1fr)}.inbox-grid.bulk-selection-active>.message-panel,.inbox-grid.bulk-selection-active>#customer-panel{display:none}.inbox-bulk-panel{gap:5px;padding:7px 6px}.inbox-bulk-actions{gap:0}.inbox-bulk-panel button{width:25px}body.inbox-open .conversation-workflow-row .workflow-actions button{width:23px}}
+@media(forced-colors:active){.inbox-bulk-panel{border-color:ButtonText}body.inbox-open .conversation-item[aria-pressed=true]{outline:1px solid Highlight}}
+body.inbox-open .bulk-selection-active .conversation-toolbar{padding:0 8px 8px}body.inbox-open .inbox-bulk-panel{flex-wrap:nowrap;gap:4px;padding:6px 5px;border-radius:7px;margin-top:8px}body.inbox-open .inbox-bulk-count{font-size:11px}body.inbox-open .inbox-bulk-actions{margin-left:auto;gap:0}body.inbox-open .inbox-bulk-panel button{width:21px;height:26px;font-size:11px!important}body.inbox-open .inbox-bulk-panel .inbox-bulk-cancel{width:auto;padding:0 2px;margin-left:2px;font-size:11px!important}.inbox-bulk-actions svg{width:16px;height:16px}
