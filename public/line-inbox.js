@@ -56,9 +56,6 @@ export function createLineInbox() {
   }
   const conversations = new Map(), messages = new Map();
   const workflow = createConversationWorkflow({ request: options => aiApi("workflow", options), changed: () => { if (active) showConversations(); }, feedback: text => status(text), getUser: () => user });
-  const exportButton = document.createElement("button"); exportButton.type = "button"; exportButton.className = "conversation-export"; exportButton.textContent = "匯出對話"; exportButton.hidden = true;
-  exportButton.onclick = async () => { if (!selected || !user) return; exportButton.disabled = true; try { await aiApi("retention/export", { method: "POST", body: JSON.stringify({ conversationId: selected, ...(isSocial(conversations.get(selected)) ? { remoteId: conversations.get(selected).remoteId } : {}) }) }); status("備份已在背景產生，可到「帳號 → 資料與儲存」下載。"); } catch (error) { report(error); } finally { exportButton.disabled = false; } };
-  document.querySelector(".chat-heading").insertBefore(exportButton, $("customer-toggle"));
   let linkedScanPages = 0;
   const linkedConversation = new URL(location.href).searchParams.get("conversation");
   if (linkedConversation && linkedConversation.length <= 512) try { sessionStorage.setItem("botnest-open-conversation", linkedConversation); } catch {}
@@ -284,7 +281,6 @@ export function createLineInbox() {
   function showConversationHeader() {
     const item = conversations.get(selected);
     $("line-chat-empty").hidden = !!item;
-    exportButton.hidden = !item;
     $("line-chat-empty").parentElement.classList.toggle("has-conversation", !!item);
     $("line-conversation-title").textContent = item ? label(item) : "選擇一段對話";
     const avatarVersion = JSON.stringify([item?.id, item?.pictureUrl, item?.displayName, item?.provider, item?.sourceType]);

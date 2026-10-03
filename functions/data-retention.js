@@ -1,16 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { FieldPath } from 'firebase-admin/firestore';
-import { DAY, initialPolicy, retentionActive, trashDeadline, attachmentDue, attachmentCreated, messageDue, safeMessage, safeFilename, visibleRetainedMessage } from './retention-policy.js';
+import { DAY, initialPolicy, retentionActive, trashDeadline, attachmentDue, attachmentCreated, messageDue, safeMessage } from './retention-policy.js';
 import { workflowRef } from './conversation-workflow.js';
-import { zipFiles, transcriptFiles } from './backup-zip.js';
-import { downloadSocialBackup } from './social-backup.js';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import { downloadPlan, streamBackup } from './backup-download.js';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const emptyStats = () => ({ messages: 0, files: 0, fileBytes: 0, messagesDue: 0, filesDue: 0, trashDue: 0, messagesIn7Days: 0, filesIn7Days: 0, trashIn7Days: 0, deletedMessages: 0, deletedFiles: 0, deletedRecords: 0 });
 const PHASES = ['line', 'social', 'workflow', 'lineAttachments', 'socialAttachments', 'lineOutbox', 'socialOutbox', 'aiLogs', 'lineReceipts', 'socialReceipts'];
-export function createRetentionService({ db, bucket, socialReader, lineReader, now = Date.now }) {
+export function createRetentionService({ db, bucket, now = Date.now }) {
   const state = db.collection('botnest').doc('state'), accounts = state.collection('accounts');
   const account = uid => accounts.doc(uid), policyRef = uid => account(uid).collection('retention').doc('settings');
   const previewRef = uid => account(uid).collection('retention').doc('preview'), jobs = uid => account(uid).collection('dataJobs');
@@ -30,71 +25,30 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
     if (a.channelId) { const ref = state.collection('channels').doc(a.channelId), value = (await ref.get()).data(); if (value?.ownerUid === uid) { channel = ref; channelData = value; } }
     return { account: account(uid), channel, channelData, accountData: a };
   }
-  async function queue(uid, type, conversationId = null, remoteId = null) {
+  async function queue(uid, type) {
+    if (type !== 'scan') throw Object.assign(new Error('找不到此功能。'), { status: 404 });
     const at = now(), p = await ensurePolicy(uid), ref = jobs(uid).doc(randomUUID());
     return db.runTransaction(async tx => {
       const control = account(uid).collection('retention').doc('queue'), old = (await tx.get(control)).data() || {};
-      if (type !== 'export' && old[type]?.at > at - 60000) throw Object.assign(new Error('已有工作正在準備，請稍後再試。'), { status: 429 });
+      if (old[type]?.at > at - 60000) throw Object.assign(new Error('已有工作正在準備，請稍後再試。'), { status: 429 });
       if (old[type]?.id) {
         const previous = (await tx.get(jobs(uid).doc(old[type].id))).data();
         if (previous && ['queued', 'working'].includes(previous.status) && previous.expiresAt > at) {
-          if ((previous.conversationId || null) === conversationId && (previous.remoteId || null) === remoteId) return old[type].id;
-          throw Object.assign(new Error('另一份備份仍在處理中，請到「帳號 → 資料與儲存」查看進度，完成後即可再次匯出。'), { status: 429 });
+          return old[type].id;
         }
       }
       tx.set(control, { [type]: { at, id: ref.id } }, { merge: true });
-      tx.set(ref, { type, status: 'queued', createdAt: at, snapshotAt: at, expiresAt: at + 7 * DAY, policyRevision: p.revision, conversationId, remoteId, cursor: {}, parts: 0, messages: 0, bytes: 0, warnings: 0, stats: emptyStats(), attempts: 0 });
+      tx.set(ref, { type, status: 'queued', createdAt: at, snapshotAt: at, expiresAt: at + 7 * DAY, policyRevision: p.revision, cursor: {}, stats: emptyStats(), attempts: 0 });
       return ref.id;
     });
   }
   async function summary(uid) {
     const policy = await ensurePolicy(uid), preview = (await previewRef(uid).get()).data() || null;
     const docs = (await jobs(uid).orderBy('createdAt', 'desc').limit(12).get()).docs;
-    return { policy, preview, jobs: docs.map(doc => { const j = doc.data(); return { id: doc.id, type: j.type, status: j.expiresAt <= now() ? 'expired' : j.status, stage: j.cursor?.phase === 'package' ? 'packaging' : null, sourceJobId: j.sourceJobId || null, scope: j.conversationId ? '指定對話' : '全部對話', conversationId: j.conversationId || null, remoteId: j.remoteId || null, createdAt: j.createdAt, expiresAt: j.expiresAt, parts: j.parts, messages: j.messages, bytes: j.bytes, warnings: j.warnings, downloadFiles: j.downloadFiles || [], error: j.status === 'failed' ? '工作失敗，請重新執行。' : null }; }) };
-  }
-  async function prepareDownload(uid, id) {
-    const ref = jobs(uid).doc(id), fresh = jobs(uid).doc(randomUUID()), at = now();
-    return db.runTransaction(async tx => {
-      const old = (await tx.get(ref)).data();
-      if (!old || old.type !== 'export' || old.status !== 'ready' || old.expiresAt <= at || !old.parts) throw Object.assign(new Error('備份尚未完成或已到期。'), { status: 404 });
-      if (old.downloadFiles?.length) return id;
-      if (old.packagedJobId) {
-        const existing = (await tx.get(jobs(uid).doc(old.packagedJobId))).data();
-        if (existing && ['queued', 'working', 'ready'].includes(existing.status) && existing.expiresAt > at) return old.packagedJobId;
-      }
-      tx.set(fresh, { type: 'export', status: 'queued', sourceJobId: id, createdAt: at, snapshotAt: old.snapshotAt || old.createdAt, expiresAt: old.expiresAt, policyRevision: old.policyRevision, conversationId: old.conversationId || null, remoteId: old.remoteId || null, parts: old.parts, messages: old.messages || 0, bytes: old.bytes || 0, warnings: old.warnings || 0, attempts: 0, cursor: { phase: 'package', volumeIndex: 0 }, downloadFiles: [] });
-      tx.set(ref, { packagedJobId: fresh.id }, { merge: true });
-      return fresh.id;
-    });
-  }
-  async function packageStep(uid, jobId, job) {
-    const prefix = objectPrefix(uid, job.sourceJobId || jobId);
-    if (!job.packagingPlan) return { packagingPlan: await downloadPlan(bucket, prefix, job) };
-    const index = job.cursor.volumeIndex || 0, volume = job.packagingPlan[index];
-    if (!volume) return { status: 'ready', finishedAt: now() };
-    const name = `backup-${String(index + 1).padStart(4, '0')}.zip`, target = bucket.file(objectPrefix(uid, jobId) + name);
-    await pipeline(Readable.from(streamBackup(bucket, prefix, job, volume, index + 1, job.packagingPlan.length)), target.createWriteStream({ resumable: false, metadata: { contentType: 'application/zip', cacheControl: 'private, no-store', contentDisposition: `attachment; filename="BotNest-${jobId}-${index + 1}.zip"` } }));
-    const [metadata] = await target.getMetadata();
-    return { downloadFiles: [...(job.downloadFiles || []), { name, bytes: Number(metadata.size) }], cursor: { phase: 'package', volumeIndex: index + 1 }, ...(index + 1 === job.packagingPlan.length ? { status: 'ready', finishedAt: now() } : {}) };
+    return { policy, preview, jobs: docs.filter(doc => doc.data().type === 'scan').map(doc => { const j = doc.data(); return { id: doc.id, type: j.type, status: j.expiresAt <= now() ? 'expired' : j.status, createdAt: j.createdAt, expiresAt: j.expiresAt, error: j.status === 'failed' ? '工作失敗，請重新執行。' : null }; }) };
   }
   function conversationCollection(ctx, phase) { return phase === 'line' ? ctx.channel?.collection('conversations') : ctx.account.collection('zernioConversations'); }
   function workflowId(phase, doc) { return phase === 'line' ? doc.id : `${doc.data().provider || 'facebook'}-${doc.id}`; }
-  async function nextConversation(ctx, cursor, requested) {
-    const phase = cursor.phase || 'line', collection = conversationCollection(ctx, phase);
-    if (!collection) return phase === 'line' ? { next: { phase: 'social' } } : { done: true };
-    if (requested) {
-      const social = /^(facebook|instagram)-([a-f0-9]{64})$/.exec(requested), line = /^[a-f0-9]{64}$/.test(requested);
-      if (phase === 'line' && !line) return { next: { phase: 'social' } };
-      if (phase === 'social' && !social) return { done: true };
-      if (cursor.finished) return { done: true };
-      const doc = await collection.doc(line ? requested : social[2]).get();
-      if (!doc.exists || social && doc.data().provider !== social[1]) throw Object.assign(new Error('找不到這段對話。'), { status: 404 });
-      return { doc, phase };
-    }
-    const docs = cursor.current ? [await collection.doc(cursor.current).get()] : await page(collection, cursor.after, 1);
-    if (!docs[0]?.exists) return phase === 'line' ? { next: { phase: 'social' } } : { done: true };
-    return { doc: docs[0], phase };
-  }
   async function deleteObject(path, ctx, value, uid) {
     if (!path) return false;
     const allowed = ctx.channel && path.startsWith(`botnest/${ctx.channel.id}/`) || path.startsWith(`botnest/social/${hash(uid)}/`);
@@ -236,115 +190,14 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
     }
     return docs.length === 100 ? { cursor: { phaseIndex: index, after: docs.at(-1).id }, stats } : advance();
   }
-  async function backupAttachment(uid, ctx, phase, message, files, warnings) {
-    if (message.unsent || message.attachmentExpired) return null;
-    const policy = await ensurePolicy(uid);
-    if (retentionActive(policy, now()) && message.sentAt + policy.attachmentDays * DAY <= now()) return null;
-    if (!message.attachment?.id) {
-      if (phase === 'line' && lineReader && message.direction === 'incoming' && ['image', 'audio', 'file'].includes(message.type)) {
-        let result; try { result = await lineReader(ctx.channelData, message.id); } catch { /* Report unavailable attachment, never credentials. */ }
-        if (result) { const name = `attachments/${safeFilename(message.id)}.${result.ext}`; files.push([name, result.bytes]); return name; }
-        warnings.push(`${message.id}: LINE 已無法提供附件。`);
-      } return null;
-    }
-    const ref = phase === 'line' ? ctx.channel.collection('attachments').doc(message.attachment.id) : state.collection('socialAttachments').doc(message.attachment.id);
-    const value = (await ref.get()).data();
-    if (!value || value.retentionDeletedAt || phase === 'social' && value.ownerUid !== uid || !value.storagePath) { warnings.push(`${message.id}: 附件已到期或由外部平台提供，未包含檔案。`); return null; }
-    if (retentionActive(policy, now()) && attachmentDue(value, policy, now())) { warnings.push(`${message.id}: 附件已到期。`); return null; }
-    const prefix = phase === 'line' ? `botnest/${ctx.channel.id}/` : `botnest/social/${hash(uid)}/`;
-    if (!value.storagePath.startsWith(prefix) || value.storagePath.includes('..')) throw Error('Backup attachment path mismatch');
-    const file = bucket.file(value.storagePath); let bytes;
-    try { const [meta] = await file.getMetadata(); if (Number(meta.size) > 10 * 1024 * 1024) { warnings.push(`${message.id}: 附件超過 10 MB，未包含檔案。`); return null; } [bytes] = await file.download(); }
-    catch (e) { if (e.code !== 404) throw e; warnings.push(`${message.id}: 附件不存在。`); return null; }
-    const filename = `attachments/${safeFilename(message.id)}-${safeFilename(value.name)}`; files.push([filename, bytes]); return filename;
-  }
-  async function exportStep(uid, jobId, job, ctx) {
-    if (job.cursor.phase?.startsWith('remote')) return exportRemoteStep(uid, jobId, job, ctx);
-    if (!job.cursor.phase && job.conversationId?.includes('-') && job.remoteId) return { cursor: { phase: job.conversationId.startsWith('instagram-') ? 'remoteInstagram' : 'remoteFacebook' } };
-    const policy = await ensurePolicy(uid), next = await nextConversation(ctx, job.cursor, job.conversationId);
-    if (next.done) return job.conversationId ? { status: 'ready', finishedAt: now() } : { cursor: { phase: 'remoteFacebook' } };
-    if (next.next) return { cursor: next.next };
-    const { doc, phase } = next, workflow = (await workflowRef(ctx.account, workflowId(phase, doc)).get()).data();
-    const docs = await page(doc.ref.collection('messages'), job.cursor.messageAfter, 100);
-    const files = [], messages = [], warnings = [], partStarted = Date.now(); let bytes = 0, last;
-    for (const message of docs) {
-      const value = message.data();
-      if (value.sentAt > job.snapshotAt || !visibleRetainedMessage(value, policy, workflow, now())) { last = message.id; continue; }
-      if (bytes > 16 * 1024 * 1024 || messages.length && Date.now() - partStarted > 20000) break;
-      const safe = safeMessage(message.id, value), filename = await backupAttachment(uid, ctx, phase, { id: message.id, ...value }, files, warnings);
-      if (filename) { safe.file = filename; bytes += files.at(-1)[1].length; }
-      else if (value.attachment || value.attachments?.length) warnings.push(`${message.id}: 外部或未快取附件不在備份內。`);
-      messages.push(safe); last = message.id;
-    }
-    let patch = {};
-    if (messages.length) {
-      const provider = phase === 'line' ? 'LINE' : doc.data().provider || 'facebook', name = doc.data().displayName || doc.data().customer?.name || '顧客';
-      const info = { id: workflowId(phase, doc), provider, name, status: workflow?.trashed ? '垃圾匣' : workflow?.completed ? '已完成' : '處理中', assignee: workflow?.assignee === uid ? '自己' : null, followed: !!workflow?.followed };
-      const data = zipFiles([...transcriptFiles(info, messages, warnings, job.snapshotAt), ...files]);
-      const part = job.parts + 1, filename = `part-${String(part).padStart(6, '0')}.zip`;
-      await bucket.file(objectPrefix(uid, jobId) + filename).save(data, { resumable: false, metadata: { contentType: 'application/zip', cacheControl: 'private, no-store' } });
-      patch = { parts: part, bytes: job.bytes + data.length, messages: job.messages + messages.length, warnings: job.warnings + warnings.length };
-    }
-    const consumedAll = !docs.length || last === docs.at(-1).id && docs.length < 100;
-    return { ...patch, cursor: consumedAll ? job.conversationId ? { phase, finished: true } : { phase, after: doc.id } : { phase, current: doc.id, messageAfter: last } };
-  }
-  async function exportRemoteStep(uid, jobId, job, ctx) {
-    const cursor = job.cursor, platform = cursor.phase === 'remoteInstagram' ? 'instagram' : 'facebook', social = ctx.accountData.zernio?.[platform];
-    const advance = () => job.conversationId || platform === 'instagram' ? { status: 'ready', finishedAt: now() } : { cursor: { phase: 'remoteInstagram' } };
-    if (!social?.accountId || !socialReader) return advance();
-    let pending = cursor.pending || [];
-    if (job.conversationId) pending = [{ id: job.remoteId, name: '顧客' }];
-    else if (!pending.length) {
-      if (cursor.listFinished) return advance();
-      const data = await socialReader(`/inbox/conversations?accountId=${encodeURIComponent(social.accountId)}&platform=${platform}&limit=30${cursor.listCursor ? `&cursor=${encodeURIComponent(cursor.listCursor)}` : ''}`);
-      const items = (data.data || []).filter(c => c.accountId === social.accountId && c.platform === platform).map(c => ({ id: String(c.id), name: String(c.participantName || '顧客').slice(0, 100) }));
-      const listCursor = data.pagination?.hasMore ? data.pagination.nextCursor : null;
-      if (data.pagination?.hasMore && (!listCursor || listCursor === cursor.listCursor)) throw Error('Social export pagination did not advance');
-      return { cursor: { phase: cursor.phase, pending: items, listCursor, listFinished: !listCursor } };
-    }
-    const conversation = pending[0], id = `${platform}-${hash(`${social.accountId}:${conversation.id}`)}`, workflow = (await workflowRef(ctx.account, id).get()).data(), policy = await ensurePolicy(uid);
-    const data = await socialReader(`/inbox/conversations/${encodeURIComponent(conversation.id)}/messages?accountId=${encodeURIComponent(social.accountId)}&limit=100&sortOrder=desc${cursor.messageCursor ? `&cursor=${encodeURIComponent(cursor.messageCursor)}` : ''}`);
-    const messages = [], files = [], warnings = []; let bytes = 0;
-    const rawMessages = data.messages || [], partStarted = Date.now(); let offset = cursor.messageOffset || 0;
-    for (const raw of rawMessages.slice(offset)) {
-      if (bytes > 16 * 1024 * 1024 || messages.length && Date.now() - partStarted > 20000) break; offset++;
-      if (raw.accountId !== social.accountId || raw.conversationId !== conversation.id) continue;
-      const sentAt = Date.parse(raw.createdAt); if (!Number.isFinite(sentAt) || sentAt > job.snapshotAt) continue;
-      const value = { direction: raw.direction === 'outgoing' ? 'outgoing' : 'incoming', text: String(raw.message || '').slice(0, 10000), type: raw.attachments?.[0]?.type || 'text', sentAt, unsent: !!raw.isDeleted };
-      if (!visibleRetainedMessage(value, policy, workflow, now())) continue;
-      const attachment = raw.attachments?.[0], m = safeMessage(String(raw.id), value);
-      if (attachment) {
-        m.attachment = { name: attachment.filename || '附件', kind: value.type };
-        if (!value.unsent && !(retentionActive(policy, now()) && sentAt + policy.attachmentDays * DAY <= now()) && bytes < 20 * 1024 * 1024) {
-          let content;
-          try { const url = new URL(attachment.url), match = /^\/api\/zernio\/media\/([a-f0-9-]{36})\//.exec(url.pathname);
-            if (url.origin === 'https://planning-with-ai-52d58.web.app' && match) {
-              const local = (await state.collection('socialAttachments').doc(match[1]).get()).data();
-              if (local?.ownerUid === uid && !local.retentionDeletedAt && local.storagePath?.startsWith(`botnest/social/${hash(uid)}/`)) { const file = bucket.file(local.storagePath), [meta] = await file.getMetadata(); if (Number(meta.size) <= 10 * 1024 * 1024) [content] = await file.download(); }
-            } else content = await downloadSocialBackup(attachment.url);
-          } catch { /* A missing platform attachment is explicitly reported in the archive. */ }
-          if (content) { m.file = `attachments/${safeFilename(raw.id)}-${safeFilename(m.attachment.name)}`; files.push([m.file, content]); bytes += content.length; }
-        }
-        if (!m.file) warnings.push(`${m.id}: 附件已到期、平台無法提供或超過本分卷容量，未包含檔案。`);
-      }
-      messages.push(m);
-    }
-    let patch = {};
-    if (messages.length) {
-      const archive = zipFiles([...transcriptFiles({ id, provider: platform, name: conversation.name, status: workflow?.trashed ? '垃圾匣' : workflow?.completed ? '已完成' : '處理中', followed: !!workflow?.followed, assignee: workflow?.assignee === uid ? '自己' : null }, messages, warnings, job.snapshotAt), ...files]);
-      const part = job.parts + 1; await bucket.file(objectPrefix(uid, jobId) + `part-${String(part).padStart(6, '0')}.zip`).save(archive, { resumable: false, metadata: { contentType: 'application/zip', cacheControl: 'private, no-store' } });
-      patch = { parts: part, messages: job.messages + messages.length, bytes: job.bytes + archive.length, warnings: job.warnings + warnings.length };
-    }
-    if (offset < rawMessages.length) return { ...patch, cursor: { ...cursor, pending, messageOffset: offset } };
-    const nextCursor = data.pagination?.hasMore ? data.pagination.nextCursor : null;
-    if (data.pagination?.hasMore && (!nextCursor || nextCursor === cursor.messageCursor)) throw Error('Social message pagination did not advance');
-    if (!nextCursor && job.conversationId) return { ...patch, status: 'ready', finishedAt: now() };
-    return { ...patch, cursor: { ...cursor, pending: nextCursor ? pending : pending.slice(1), messageCursor: nextCursor, messageOffset: 0 } };
-  }
   async function processJob(uid, jobId, budgetMs = 420000) {
     const ref = jobs(uid).doc(jobId), at = now(), leaseId = randomUUID();
     const claimed = await db.runTransaction(async tx => {
-      const j = (await tx.get(ref)).data(); if (!j || !['queued', 'working'].includes(j.status) || j.leaseUntil > at || j.expiresAt <= at) return false;
+      const j = (await tx.get(ref)).data(); if (j?.type === 'export') {
+        if (['queued', 'working'].includes(j.status)) tx.set(ref, { status: 'cancelled', leaseUntil: 0, updatedAt: at }, { merge: true });
+        return false;
+      }
+      if (!j || !['queued', 'working'].includes(j.status) || j.leaseUntil > at || j.expiresAt <= at) return false;
       const failures = (j.failures || 0) + (j.leaseUntil > 0 && j.leaseUntil <= at ? 1 : 0);
       if (failures >= 3) { tx.set(ref, { status: 'failed', failures, errorCode: 'PROCESSING_TIMEOUT', leaseUntil: 0, updatedAt: at }, { merge: true }); return false; }
       tx.set(ref, { status: 'working', leaseId, leaseUntil: at + budgetMs + 60000, attempts: (j.attempts || 0) + 1, failures }, { merge: true }); return true;
@@ -354,11 +207,7 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
       const ctx = await context(uid); const started = Date.now(); let steps = 0;
       while (Date.now() - started < budgetMs && steps++ < 2500) {
         const job = (await ref.get()).data(); if (job.leaseId !== leaseId || job.expiresAt <= now()) break;
-        let patch = job.type === 'export' ? job.cursor?.phase === 'package' ? await packageStep(uid, jobId, job) : await exportStep(uid, jobId, job, ctx) : await scanStep(uid, job, ctx);
-        if (job.type === 'export' && job.cursor?.phase !== 'package' && patch.status === 'ready' && (patch.parts ?? job.parts) > 0) {
-          delete patch.status; delete patch.finishedAt;
-          patch.cursor = { phase: 'package', volumeIndex: 0 }; patch.downloadFiles = [];
-        }
+        const patch = await scanStep(uid, job, ctx);
         // Replace each checkpoint map; recursive merge retains stale pagination fields.
         const checkpoint = { ...patch, updatedAt: now() };
         await ref.set(checkpoint, { mergeFields: Object.keys(checkpoint) });
@@ -397,5 +246,5 @@ export function createRetentionService({ db, bucket, socialReader, lineReader, n
       if (docs.length < 30 && Date.now() - started < 390000) await control.set({ after: null }, { merge: true });
     } finally { await control.set({ leaseUntil: 0, lastRunAt: now() }, { merge: true }); }
   }
-  return { ensurePolicy, summary, queue, prepareDownload, processJob, scheduled, policyRef, previewRef, jobs, context, scanStep, exportStep, objectPrefix };
+  return { ensurePolicy, summary, queue, processJob, scheduled, policyRef, previewRef, jobs, context, scanStep, objectPrefix };
 }

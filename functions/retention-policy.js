@@ -1,5 +1,5 @@
 export const DAY = 86400000;
-export const DEFAULT_RETENTION = Object.freeze({ textDays: 365, attachmentDays: 90, trashDays: 30, backupDays: 7 });
+export const DEFAULT_RETENTION = Object.freeze({ textDays: 365, attachmentDays: 90, trashDays: 30 });
 export function initialPolicy(at) {
   return { ...DEFAULT_RETENTION, enabled: false, preparedAt: at, effectiveAt: at + 14 * DAY, revision: 0 };
 }
@@ -26,8 +26,6 @@ export function validateRetention(body, previous, preview, at) {
   return { ...previous, ...(!previous.enabledAt && body.enabled ? { preparedAt: at, enabledAt: at } : {}), textDays: body.textDays, attachmentDays: body.attachmentDays, trashDays: body.trashDays, enabled: body.enabled, revision: previous.revision + 1, effectiveAt: changesDeletion ? Math.max(previous.effectiveAt, at + 14 * DAY) : previous.effectiveAt, updatedAt: at };
 }
 export function safeMessage(id, value) {
-  // Export allowlist: never export access/reply tokens, leases, signed URLs or internal paths.
+  // Keep only message content when clearing expired outbox attachments.
   return { id, direction: value.direction || 'incoming', type: value.type || 'text', text: value.unsent ? '[訊息已收回]' : String(value.text || ''), sentAt: value.sentAt || 0, unsent: !!value.unsent, ...(value.attachment ? { attachment: { name: value.attachment.name || '附件', kind: value.attachment.kind || value.type, expired: !!value.attachmentExpired } } : {}) };
 }
-export function safeFilename(value) { return String(value || 'attachment').replace(/[\\/\x00-\x1f<>:"|?*]/g, '_').slice(0, 100).replace(/^\.+/, '_'); }
-export function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }

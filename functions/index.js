@@ -1,4 +1,3 @@
-import { createSocialBackupReader, createLineBackupReader } from "./social-backup.js";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { validateRequestEnvelope, secureResponse } from "./request-security.js";
 import { createRetentionService } from "./data-retention.js";
@@ -38,7 +37,7 @@ let adminUsers;
 let accountProfile;
 let conversationWorkflow;
 let retentionService, retentionHandler;
-function dataService() { return retentionService ||= createRetentionService({ db: getFirestore(), bucket: getStorage().bucket("planning-with-ai-52d58-botnest-media"), socialReader: createSocialBackupReader(() => zernioApiKey.value()), lineReader: createLineBackupReader(() => encryptionKey.value()) }); }
+function dataService() { return retentionService ||= createRetentionService({ db: getFirestore(), bucket: getStorage().bucket("planning-with-ai-52d58-botnest-media") }); }
 export const dataRetentionMaintenance = onSchedule({ schedule: "every 60 minutes", timeZone: "Asia/Taipei", serviceAccount: "botnest-worker-runtime@planning-with-ai-52d58.iam.gserviceaccount.com", region: "us-central1", timeoutSeconds: 540, memory: "512MiB", maxInstances: 1, secrets: [zernioApiKey, encryptionKey], retryCount: 1 }, () => dataService().scheduled());
 export const dataRetentionJob = onDocumentCreated({ document: "botnest/state/accounts/{uid}/dataJobs/{jobId}", serviceAccount: "botnest-worker-runtime@planning-with-ai-52d58.iam.gserviceaccount.com", region: "us-central1", timeoutSeconds: 540, memory: "512MiB", maxInstances: 2, secrets: [zernioApiKey, encryptionKey], retry: true }, event => dataService().processJob(event.params.uid, event.params.jobId));
 export const botnestApi = onRequest({
