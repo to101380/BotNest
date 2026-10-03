@@ -30,7 +30,18 @@ export function createConversationWorkflow({ request, changed, feedback, getUser
     catch (e) { if (quiet) { if (version === generation && e.status === 409) try { await load(true); } catch {} throw e; } if (version === generation) { feedback(e.message); try { await load(true); } catch {} } }
     finally { if (version === generation) { busy.delete(id); changed(); } }
   }
-  return { load, act, state: id => ({ ...state(id), busy: busy.has(id) }), view: () => filter.value, reveal(id) { const s = state(id); filter.value = s.trashed ? "trash" : s.completed ? "completed" : "active"; }, filter: items => items.filter(item => workflowMatches(state(item.id), filter.value, getUser()?.uid)),
+  async function messageAct(id, action, messageId, value = true) {
+    if (busy.has(id)) return;
+    const version = generation; busy.add(id); changed();
+    try {
+      const data = await request({ method: "PUT", body: JSON.stringify({ id, action, messageId, value, revision: state(id).revision || 0 }) });
+      if (version !== generation) return;
+      states.set(id, data.item); feedback(action === "pin" ? value ? "已釘選訊息。" : "已取消釘選。" : action === "unread" ? "已標記未讀，下次開啟對話會清除標記。" : "");
+      return data.item;
+    } catch (e) { if (version === generation) { feedback(e.message); await load(true).catch(() => {}); } }
+    finally { if (version === generation) { busy.delete(id); changed(); } }
+  }
+  return { load, act, messageAct, state: id => ({ ...state(id), busy: busy.has(id) }), view: () => filter.value, reveal(id) { const s = state(id); filter.value = s.trashed ? "trash" : s.completed ? "completed" : "active"; }, filter: items => items.filter(item => workflowMatches(state(item.id), filter.value, getUser()?.uid)),
     toolbar(id) {
       const row = document.createElement("div"); row.className = "workflow-actions"; row.setAttribute("role", "group"); row.setAttribute("aria-label", "對話操作");
       const s = state(id);

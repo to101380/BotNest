@@ -1,4 +1,5 @@
 import { lineStickerUrl } from "./stickers.js";
+import { messageToolbar, quotedReply } from "./message-actions.js";
 import { createAudioPlayer } from "./audio-player.js";
 import { createConversationWorkflow, workflowIcons } from "./conversation-workflow.js";
 import { filterConversations, inboxMode } from "./inbox-filters.js";
@@ -56,7 +57,43 @@ export function createLineInbox() {
     void refresh(false, true).finally(() => { if (resumedEpoch === epoch) scheduleRefresh(); });
   }
   const conversations = new Map(), messages = new Map();
-  const workflow = createConversationWorkflow({ request: options => aiApi("workflow", options), changed: () => { if (active) showConversations(); }, feedback: text => status(text), getUser: () => user });
+  const workflow = createConversationWorkflow({ request: options => aiApi("workflow", options), changed: () => { if (active) { showConversations(); if (selected) showMessages("keep"); } }, feedback: text => status(text), getUser: () => user });
+  const quoteDrafts = new Map();
+  const actionStyle = document.createElement("link"); actionStyle.rel = "stylesheet"; actionStyle.href = "/message-actions.css"; document.head.append(actionStyle);
+  const quotePanel = document.createElement("div"); quotePanel.className = "message-quote-composer"; quotePanel.hidden = true;
+  const quoteLabel = document.createElement("span"), quoteCancel = document.createElement("button"); quoteCancel.type = "button"; quoteCancel.textContent = "×"; quoteCancel.setAttribute("aria-label", "取消引用回覆"); quotePanel.append(quoteLabel, quoteCancel);
+  $("line-reply-text").before(quotePanel);
+  quoteCancel.onclick = () => { quoteDrafts.delete(selected); renderQuote(); $("line-reply-text").focus(); };
+  const pinsPanel = document.createElement("div"); pinsPanel.className = "message-pins"; pinsPanel.hidden = true; $("line-messages").before(pinsPanel);
+  function renderQuote() { if (messages.get(quoteDrafts.get(selected)?.id)?.unsent) quoteDrafts.delete(selected); const quote = quoteDrafts.get(selected); quotePanel.hidden = !quote; quoteLabel.textContent = quote ? `回覆：${quote.text}` : ""; }
+  function decorateMessage(bubble, item) {
+    bubble.querySelector('.message-actions')?.remove();
+    const state = workflow.state(selected), pinned = (state.pinnedMessages || []).includes(item.id);
+    bubble.classList.toggle('message-pinned', pinned && !item.unsent); bubble.classList.toggle('message-unread', state.unreadMessageId === item.id);
+    if (item.unsent || item.direction === 'outgoing' && item.status && item.status !== 'sent') return;
+    bubble.prepend(messageToolbar({ pinned, unread: state.unreadMessageId === item.id, disabled: state.busy, onAction: action => {
+      if (action === 'reply') { if ($('line-reply-text').disabled) { status('請先完成渠道連線才能回覆。', true); return; } quoteDrafts.set(selected, { id: item.id, text: item.text || '[附件]' }); renderQuote(); $('line-reply-text').focus(); return; }
+      void workflow.messageAct(selected, action, item.id, action === 'pin' ? !pinned : true);
+    } }));
+  }
+  function renderPins() {
+    const state = workflow.state(selected), ids = state.pinnedMessages || [];
+    pinsPanel.hidden = !selected || !ids.length; pinsPanel.replaceChildren();
+    for (const id of ids) {
+      const item = messages.get(id), button = document.createElement('button'); button.type = 'button'; button.className = 'message-pin-link';
+      button.textContent = `📌 ${item?.unsent ? '訊息已收回' : item?.text || '釘選訊息（較早）'}`;
+      button.disabled = !!item?.unsent; button.onclick = async () => {
+        const conversationId = selected; historyMode(true);
+        try { for (let page = 0; !messages.has(id) && messageNext && page < 20 && selected === conversationId; page++) await loadMessages(true, 'older');
+          if (selected !== conversationId) return;
+          const bubble = [...messageArea.children].find(node => node.dataset.messageId === id);
+          if (bubble) { bubble.scrollIntoView({ block: 'center', behavior: 'auto' }); bubble.focus({ preventScroll: true }); } else status('訊息已到期或尚未載入，可載入更早訊息後再試。');
+        } catch (error) { report(error); }
+      };
+      const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '×'; remove.setAttribute('aria-label', '取消釘選'); remove.disabled = state.busy; remove.onclick = () => void workflow.messageAct(selected, 'pin', id, false);
+      const chip = document.createElement('div'); chip.append(button, remove); pinsPanel.append(chip);
+    }
+  }
   let linkedScanPages = 0;
   const linkedConversation = new URL(location.href).searchParams.get("conversation");
   if (linkedConversation && linkedConversation.length <= 512) try { sessionStorage.setItem("botnest-open-conversation", linkedConversation); } catch {}
@@ -527,6 +564,7 @@ export function createLineInbox() {
       }
       const button = document.createElement("button");
       button.type = "button"; button.className = "conversation-item";
+      button.classList.toggle("conversation-unread", !!workflow.state(item.id).unreadMessageId);
       button.dataset.conversationId = item.id;
       if (!bulkMode) { button.title = "開啟對話；勾選可批量操作"; button.setAttribute("aria-keyshortcuts", "Shift+Space"); }
       if (bulkMode) {
@@ -535,6 +573,7 @@ export function createLineInbox() {
       } else button.setAttribute("aria-pressed", String(selected === item.id));
       const name = document.createElement("strong"), preview = document.createElement("span"), time = document.createElement("time");
       name.textContent = label(item); preview.textContent = item.lastText;
+      if (workflow.state(item.id).unreadMessageId) { const unread = document.createElement('span'); unread.className = 'sr-only'; unread.textContent = ' 未讀'; name.append(unread); }
       time.dateTime = new Date(item.updatedAt).toISOString(); time.textContent = formatConversationTime(item.updatedAt);
       const details = document.createElement("span"); details.className = "conversation-details";
       preview.className = "conversation-preview";
@@ -590,6 +629,7 @@ export function createLineInbox() {
       const conversationId = selected, conversation = conversations.get(selected);
       row = { item, bubble: document.createElement("article") };
       row.bubble.className = `message-bubble audio-message${item.direction === "outgoing" ? " outgoing" : ""}`;
+      row.bubble.dataset.messageId = item.id; row.bubble.tabIndex = -1;
       row.player = createAudioPlayer(async () => {
         if (isSocial(conversation)) {
           if (!row.item.audioTicket) throw new Error("語音連結尚未就緒，請重新整理對話。");
@@ -626,8 +666,9 @@ export function createLineInbox() {
     viewerIndex = (viewerIndex + step + viewerItems.length) % viewerItems.length; renderImageViewer();
   }
   function showMessages(scrollMode = "auto") {
+    const focusedAction = document.activeElement?.dataset.messageAction, focusedMessage = document.activeElement?.closest('.message-bubble')?.dataset.messageId;
     const previousTop = messageArea.scrollTop, previousHeight = messageArea.scrollHeight;
-    const scrollToLatest = scrollMode === "bottom" || (scrollMode === "auto" && followLatest);
+    const scrollToLatest = scrollMode === "bottom" || (["auto", "keep"].includes(scrollMode) && followLatest);
     messageResize.disconnect();
     const desired = [], activeAudio = new Set();
     let renderedDay = null;
@@ -639,7 +680,7 @@ export function createLineInbox() {
         label.textContent = formatDay(item.sentAt); divider.append(label); desired.push(divider);
         renderedDay = itemDay;
       }
-      if (item.type === "audio" && !item.unsent && !item.attachmentExpired) { activeAudio.add(item.id); desired.push(audioRow(item)); continue; }
+      if (item.type === "audio" && !item.unsent && !item.attachmentExpired) { activeAudio.add(item.id); const row = audioRow(item); decorateMessage(row, item); desired.push(row); continue; }
       const bubble = document.createElement("article"), text = document.createElement("p"), time = document.createElement("time");
       bubble.className = `message-bubble${item.unsent ? " unsent" : ""}${item.direction === "outgoing" ? " outgoing" : ""}`;
       bubble.dataset.messageId = item.id; bubble.tabIndex = -1;
@@ -694,7 +735,7 @@ export function createLineInbox() {
         }
         if (item.status !== "sent" && item.note) { const note = document.createElement("p"); note.className = "note"; note.textContent = item.note; bubble.append(note); }
       }
-      desired.push(bubble);
+      decorateMessage(bubble, item); desired.push(bubble);
     }
     for (const [id, row] of audioRows) if (!activeAudio.has(id)) { row.player.dispose(); audioRows.delete(id); }
     // Keep audio rows connected while polling so playback and seeking are preserved.
@@ -706,6 +747,11 @@ export function createLineInbox() {
     historyScroll.sync();
     messageResize.observe(messageArea);
     for (const bubble of messageArea.children) messageResize.observe(bubble);
+    renderPins(); renderQuote();
+    if (focusedAction && focusedMessage) {
+      const row = [...messageArea.children].find(node => node.dataset.messageId === focusedMessage);
+      row?.querySelector(`[data-message-action="${focusedAction}"]`)?.focus({ preventScroll: true });
+    }
   }
   async function loadMessages(older = false, scrollMode = "auto") {
     const id = selected, messageEpoch = epoch;
@@ -745,7 +791,9 @@ export function createLineInbox() {
     messageRequest++; messageLoading = false; messageArea.removeAttribute("aria-busy");
     clearAudio(); selected = id; messages.clear(); messageNext = null; messageSnapshot = null; unchangedRounds = 0; scheduleRefresh();
     historyMode(false);
-    $("line-reply-text").value = drafts.get(id) || ""; replyControls();
+    $("line-reply-text").value = drafts.get(id) || ""; replyControls(); renderQuote();
+    const unreadId = workflow.state(id).unreadMessageId;
+    if (unreadId) void workflow.messageAct(id, 'read', unreadId);
     $("line-conversation-title").textContent = label(conversations.get(id));
     showConversations(); showMessages(); showCustomerPanel();
     const tasks = [loadMessages(false, "bottom"), loadAiControl()];
@@ -1008,10 +1056,12 @@ export function createLineInbox() {
   $("line-reply-text").addEventListener("input", () => { if (selected) drafts.set(selected, $("line-reply-text").value); });
   $("line-reply-form").addEventListener("submit", event => {
     event.preventDefault();
-    const text = $("line-reply-text").value;
+    const text = quotedReply($("line-reply-text").value, quoteDrafts.get(selected)?.text);
     const attachment = attachments.get(selected);
     const current = conversations.get(selected), canReply = isSocial(current) ? !!(current.provider === "instagram" ? instagramAccount : facebookAccount) : !!channel?.canReply;
-    if (sending || uploading || !selected || !canReply || (!text.trim() && !attachment) || text.length > 5000) return;
+    if (sending || uploading || !selected || !canReply || (!$("line-reply-text").value.trim() && !attachment)) return;
+    if (text.length > 5000) { status('含引用文字最多 5000 字，請縮短回覆。', true); return; }
+    quoteDrafts.delete(selected); renderQuote();
     drafts.delete(selected); $("line-reply-text").value = "";
     attachments.delete(selected);
     void sendReply(selected, text, undefined, attachment);
@@ -1090,6 +1140,7 @@ export function createLineInbox() {
       for (const button of filters.querySelectorAll("[data-filter]")) button.setAttribute("aria-pressed", String(button.dataset.filter === "all"));
       conversationNext = zernioConversationNext = instagramNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
       workflow.clear();
+      quoteDrafts.clear(); renderQuote(); renderPins();
       historyMode(false);
       $("line-oa-name").textContent = $("line-webhook-url").value = $("line-channel-id").value = "";
       $("line-step5-webhook").hidden = true;

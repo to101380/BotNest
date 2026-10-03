@@ -3,6 +3,23 @@ import assert from "node:assert/strict";
 import { cleanWorkflow, createWorkflowStore, createWorkflowHandler } from "../functions/conversation-workflow.js";
 import { workflowMatches } from "../public/conversation-workflow.js";
 import { memoryDb } from "../functions/test/memory.js";
+import { quotedReply } from '../public/message-actions.js';
+test('message pins and unread markers persist only in their account, respect revisions and limit pins', async () => {
+  const store = createWorkflowStore(memoryDb()); let revision = 0;
+  const write = async (action, messageId, value = true) => { const item = await store.save('alice', cleanWorkflow({ id: 'c', action, messageId, value, revision }, 'alice'), 100 + revision); revision = item.revision; return item; };
+  await write('pin', 'm1'); await write('pin', 'm1');
+  assert.deepEqual((await store.list('alice'))[0].pinnedMessages, ['m1']);
+  const unread = await write('unread', 'm1'); assert.equal(unread.unreadMessageId, 'm1'); assert.ok(unread.unreadAt);
+  assert.equal((await store.list('bob')).length, 0);
+  await assert.rejects(store.save('alice', cleanWorkflow({ id: 'c', action: 'read', messageId: 'm1', value: true, revision: 0 }, 'alice'), 200), { status: 409 });
+  assert.equal((await write('read', 'm1')).unreadMessageId, '');
+  await write('pin', 'm1', false); assert.deepEqual((await store.list('alice'))[0].pinnedMessages, []);
+  for (let i = 0; i < 20; i++) await write('pin', `m${i}`);
+  await assert.rejects(write('pin', 'overflow'), { status: 400 });
+  for (const messageId of ['', 'a'.repeat(257), 'a\n']) assert.throws(() => cleanWorkflow({ id: 'c', action: 'pin', messageId, value: true, revision: 0 }, 'alice'), { status: 400 });
+  assert.equal(quotedReply('好的', '原文\n內容'), '回覆「原文 內容」\n好的');
+  assert.equal(quotedReply('好的'), '好的'); assert.ok(quotedReply('好的', 'a'.repeat(1000)).length < 220);
+});
 test("workflow persists per account, only assigns self, supports restore and detects conflicts", async () => {
   const store = createWorkflowStore(memoryDb());
   const write = (action, value, revision) => store.save("alice", cleanWorkflow({ id: "conversation", action, value, revision }, "alice"), revision + 1);

@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 const fail = (status, message) => Object.assign(new Error(message), { status });
 export function cleanWorkflow(body, uid) {
+  if (body && ["pin", "unread", "read"].includes(body.action)) {
+    if (typeof body.id !== "string" || !body.id || body.id.length > 512 || /[\u0000-\u001f]/.test(body.id) || typeof body.value !== "boolean" || !Number.isSafeInteger(body.revision) || body.revision < 0 || Object.keys(body).some(k => !["id", "action", "value", "revision", "messageId"].includes(k)) || typeof body.messageId !== "string" || !body.messageId || body.messageId.length > 256 || /[\u0000-\u001f]/.test(body.messageId)) throw fail(400, "訊息操作格式錯誤。");
+    return { id: body.id, revision: body.revision, action: body.action, value: body.value, messageId: body.messageId, patch: {} };
+  }
   if (!body || typeof body.id !== "string" || !body.id || body.id.length > 512 || /[\u0000-\u001f]/.test(body.id) || !["follow", "trash", "complete", "assign"].includes(body.action) || typeof body.value !== "boolean" || !Number.isSafeInteger(body.revision) || body.revision < 0 || Object.keys(body).some(k => !["id", "action", "value", "revision"].includes(k))) throw fail(400, "對話操作格式錯誤。");
   return { id: body.id, revision: body.revision, patch: { [({ follow: "followed", trash: "trashed", complete: "completed", assign: "assignee" })[body.action]]: body.action === "assign" ? body.value ? uid : null : body.value } };
 }
@@ -25,6 +29,13 @@ export function createWorkflowStore(db) {
         const prior = (await tx.get(ref)).data() || { id: value.id, followed: false, trashed: false, completed: false, assignee: null, revision: 0 };
         if (prior.purging) throw fail(409, "這段對話正在永久清除，暫時無法還原。");
         if (prior.revision !== value.revision) throw fail(409, "對話狀態已更新，請重新操作。");
+        if (value.action === "pin") {
+          const pinned = (prior.pinnedMessages || []).filter(id => id !== value.messageId);
+          if (value.value) { if (pinned.length >= 20) throw fail(400, "每段對話最多釘選 20 則訊息。"); pinned.push(value.messageId); }
+          value.patch = { pinnedMessages: pinned };
+        }
+        if (value.action === "unread") value.patch = { unreadMessageId: value.messageId, unreadAt: at };
+        if (value.action === "read") value.patch = { unreadMessageId: "", unreadAt: 0 };
         const result = { ...prior, ...value.patch, ...(value.patch.completed === true ? { completedAt: at } : {}), ...(value.patch.trashed === true ? { trashedAt: at } : {}), ...(value.patch.trashed === false ? { purgeBefore: 0 } : {}), revision: prior.revision + 1, updatedAt: at }; tx.set(ref, result); return result;
       });
     },
