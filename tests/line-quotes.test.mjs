@@ -1,0 +1,23 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createStore } from '../functions/store.js';
+import { memoryDb } from '../functions/test/memory.js';
+import { normalizeEvent } from '../functions/core.js';
+import { publicQuote } from '../functions/line-quotes.js';
+test('LINE native quotes keep reply text unchanged, use same-conversation tokens and preserve retry identity', async () => {
+  const db = memoryDb(), store = createStore(db), at = Date.now();
+  const event = normalizeEvent({ type: 'message', webhookEventId: 'e', timestamp: at, source: { type: 'user', userId: 'U'+'1'.repeat(32) }, message: { type: 'text', id: 'm', text: '原文', quoteToken: 'native-token', quotedMessageId: 'previous' } });
+  await store.ingest('c', event);
+  const op = await store.prepareReply('c', event.conversationId, 'op', '我的回覆', at, null, null, null, 'm');
+  assert.deepEqual(op.lineMessages, [{ type: 'text', text: '我的回覆', quoteToken: 'native-token' }]);
+  assert.equal(op.message.text, '我的回覆'); assert.equal(op.message.quotedMessageId, 'm');
+  await assert.rejects(store.prepareReply('c', event.conversationId, 'op', '我的回覆', at, null, null, null, null), { status: 409 });
+  await assert.rejects(store.prepareReply('c', event.conversationId, 'bad', '回覆', at, null, null, null, 'missing'), { status: 400 });
+  await assert.rejects(store.prepareReply('c', event.conversationId, 'path', '回覆', at, null, null, null, '../m'), { status: 400 });
+  const sent = await store.finishReply('c', 'op', 'sent', '', [{ id: 'platform-id', quoteToken: 'outgoing-token' }]);
+  assert.equal(sent.lineMessageId, 'platform-id'); assert.equal(publicQuote(sent).canQuote, true); assert.equal(publicQuote(sent).quoteToken, undefined);
+  const page = await store.messages('c', event.conversationId);
+  assert.equal(page.items.find(item => item.id === 'm').canQuote, true); assert.equal(page.items.find(item => item.id === 'm').quoteToken, undefined);
+  await store.ingest('c', { ...event, eventId: 'unsend', unsent: true });
+  await assert.rejects(store.prepareReply('c', event.conversationId, 'removed', '回覆', at, null, null, null, 'm'), { status: 400 });
+});

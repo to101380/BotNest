@@ -1,4 +1,5 @@
 import { lineSticker, socialAttachment } from "./stickers.js";
+import { validQuoteToken, publicQuote } from './line-quotes.js';
 import { audioTicket, socialAudio, lineAudio } from "./audio-playback.js";
 import { audioAttachments } from "./audio-input.js";
 import { imageAttachments } from "./image-input.js";
@@ -53,6 +54,8 @@ export function normalizeEvent(event) {
     type: unsent ? "unsend" : (Object.hasOwn(labels, type) || type === "text" ? type : "other"),
     text: unsent ? "[訊息已收回]" : type === "text" ? String(event.message.text || "").slice(0, 10000) : (labels[type] || "[尚未支援的訊息]"),
     ...(lineSticker(event.message) ? { sticker: lineSticker(event.message) } : {}),
+    ...(!unsent && validQuoteToken(event.message?.quoteToken) ? { quoteToken: event.message.quoteToken } : {}),
+    ...(!unsent && /^[A-Za-z0-9_-]{1,128}$/.test(event.message?.quotedMessageId || '') ? { quotedMessageId: event.message.quotedMessageId } : {}),
     unsent,
   };
 }
@@ -568,27 +571,28 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
       if (messages && req.method === "POST") {
         const origin = req.get("origin");
         if (origin && !["https://planning-with-ai-52d58.web.app", "https://planning-with-ai-52d58.firebaseapp.com"].includes(origin)) throw new HttpError(403, "請從正式網站回覆。");
-        const { text = "", operationId, attachmentId = null } = req.body || {};
+        const { text = "", operationId, attachmentId = null, quoteMessageId = null } = req.body || {};
         if (typeof text !== "string" || (!attachmentId && !text.trim()) || text.length > 5000 || (attachmentId && !/^[a-f0-9-]{36}$/.test(attachmentId)) || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(operationId || "")) throw new HttpError(400, "請輸入 1～5000 字的回覆或選取附件。");
         if (!account.accessToken) throw new HttpError(409, "請先更新 OA 連線憑證，啟用網頁回覆。");
         const token = unseal(account.accessToken, getKey(), `${account.channelId}:access-token`);
-        const operation = await store.prepareReply(account.channelId, messages[1], operationId, text, now(), attachmentId);
+        const operation = await store.prepareReply(account.channelId, messages[1], operationId, text, now(), attachmentId, null, null, quoteMessageId);
         if (operation.claimed) await store.pauseAiForHuman(user.uid, "line", messages[1], now());
-        if (!operation.claimed) return res.status(["sent", "failed"].includes(operation.status) ? 200 : 202).json({ message: operation.message });
+        if (!operation.claimed) return res.status(["sent", "failed"].includes(operation.status) ? 200 : 202).json({ message: publicQuote(operation.message) });
         let state = "uncertain", note = "傳送結果尚未確認，請用這則訊息的重試按鈕確認，避免另發一則。";
+        let sentMessages = [];
         try {
           const response = await fetchLine("https://api.line.me/v2/bot/message/push", {
             method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-Line-Retry-Key": operation.retryKey },
             body: JSON.stringify({ to: operation.to, messages: operation.lineMessages || [{ type: "text", text: operation.text }] }), signal: AbortSignal.timeout(12000),
           });
-          if (response.ok || (response.status === 409 && response.headers.get("x-line-accepted-request-id"))) { state = "sent"; note = "已交給 LINE，這不代表對方已收到或已讀。"; }
+          if (response.ok || (response.status === 409 && response.headers.get("x-line-accepted-request-id"))) { state = "sent"; note = "已交給 LINE，這不代表對方已收到或已讀。"; try { const data = await response.json(); if (Array.isArray(data.sentMessages)) sentMessages = data.sentMessages.slice(0, 5); } catch {} }
           else if (response.status >= 400 && response.status < 500 && response.status !== 409) {
             state = operation.retried ? "uncertain" : "failed";
             note = response.status === 429 ? "LINE 拒絕傳送，請檢查訊息額度或稍後再傳。" : [401, 403].includes(response.status) ? "LINE 憑證無效或權限不足，請更新 OA 連線憑證。" : "LINE 拒絕這則訊息，請檢查收件對象與訊息內容。";
           }
         } catch { /* Network errors have ambiguous outcomes. Retry only with the saved key. */ }
-        const message = await store.finishReply(account.channelId, operationId, state, note);
-        return res.status(state === "uncertain" ? 202 : 200).json({ message });
+        const message = await store.finishReply(account.channelId, operationId, state, note, sentMessages);
+        return res.status(state === "uncertain" ? 202 : 200).json({ message: publicQuote(message) });
       }
       throw new HttpError(404, "找不到頁面。");
     } catch (error) {

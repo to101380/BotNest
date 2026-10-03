@@ -1,4 +1,5 @@
 import { workflowRef, reopenedWorkflow } from "./conversation-workflow.js";
+import { validQuoteToken, publicQuote } from './line-quotes.js';
 import { visibleRetainedMessage, retentionActive, messageDue } from "./retention-policy.js";
 import { createMonitor, aiMetrics } from "./security-monitor.js";
 import { HttpError } from "./core.js";
@@ -435,7 +436,8 @@ export function createStore(db) {
         return customer;
       });
     },
-    async prepareReply(id, conversationId, operationId, text, at, attachmentId = null, textParts = null, replyToMessageId = null) {
+    async prepareReply(id, conversationId, operationId, text, at, attachmentId = null, textParts = null, replyToMessageId = null, quoteMessageId = null) {
+      if (quoteMessageId !== null && (typeof quoteMessageId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(quoteMessageId) || !text.trim())) throw new HttpError(400, '引用回覆需包含文字及有效訊息 ID。');
       if (textParts && (!Array.isArray(textParts) || !textParts.length || textParts.length > 3 || textParts.some(part => typeof part !== "string" || !part.trim() || part.length > 5000) || textParts.join("").replace(/\s/g, "") !== text.replace(/\s/g, ""))) throw new HttpError(400, "分段內容無效。");
       const channel = channels.doc(id), conversation = channel.collection("conversations").doc(conversationId);
       const outbox = channel.collection("outbox").doc(operationId);
@@ -446,6 +448,7 @@ export function createStore(db) {
         const [old, target, limits] = await tx.getAll(outbox, conversation, limitRef);
         if (!target.exists) throw new HttpError(404, "找不到這段對話。");
         const previous = old.data();
+        if (previous && (previous.quoteMessageId || null) !== quoteMessageId) throw new HttpError(409, '不可用同一筆傳送編號更改引用訊息。');
         if (previous && (previous.conversationId !== conversationId || previous.text !== text || (previous.attachmentId || null) !== attachmentId)) throw new HttpError(409, "不可用同一筆傳送編號更改內容或收件對象。");
         if (previous && ["sent", "failed"].includes(previous.status)) { result = { ...previous, claimed: false }; return; }
         // Reply has no retry key: after reserving an attempt, never retry it or switch to Push.
@@ -458,6 +461,8 @@ export function createStore(db) {
         const incoming = !previous && replyToMessageId
           ? (await tx.get(conversation.collection("messages").doc(replyToMessageId))).data() : null;
         const replyToken = incoming?.direction === "incoming" && !incoming.unsent && incoming.replyExpiresAt > at ? incoming.replyToken : null;
+        const quoted = !previous && quoteMessageId ? (await tx.get(conversation.collection('messages').doc(quoteMessageId))).data() : null;
+        if (!previous && quoteMessageId && (!quoted || quoted.unsent || !validQuoteToken(quoted.quoteToken) || quoted.sentAt + 365 * 86400000 <= at)) throw new HttpError(400, '此訊息沒有可用的引用資訊，請改用一般回覆。');
         let attachment;
         if (attachmentId) {
           const stored = (await tx.get(channel.collection("attachments").doc(attachmentId))).data();
@@ -467,8 +472,10 @@ export function createStore(db) {
         const lineMessages = [];
         if (attachment) lineMessages.push(attachment.kind === "image" ? { type: "image", originalContentUrl: attachment.url, previewImageUrl: attachment.url } : { type: "text", text: `📎 ${attachment.name}\n${attachment.url}\n（下載連結 90 天內有效）` });
         if (text.trim()) lineMessages.push(...(textParts || [text]).map(part => ({ type: "text", text: part })));
+        if (quoted) lineMessages[attachment ? 1 : 0].quoteToken = quoted.quoteToken;
         const message = { id: `out-${operationId}`, operationId, direction: "outgoing", type: attachment?.kind || "text", text, ...(attachment ? { attachment } : {}), sentAt: previous?.createdAt ?? at, status: "pending", note: "正在確認傳送結果", unsent: false };
-        const operation = { conversationId, text, attachmentId, lineMessages: previous?.lineMessages || lineMessages, to: target.data().sourceId, retryKey: previous?.retryKey ?? randomUUID(), createdAt: previous?.createdAt ?? at, leaseUntil: at + 20000, status: "pending", message,
+        if (quoteMessageId) message.quotedMessageId = quoteMessageId;
+        const operation = { conversationId, text, attachmentId, quoteMessageId, lineMessages: previous?.lineMessages || lineMessages, to: target.data().sourceId, retryKey: previous?.retryKey ?? randomUUID(), createdAt: previous?.createdAt ?? at, leaseUntil: at + 20000, status: "pending", message,
           deliveryMode: previous?.deliveryMode || (replyToken ? "reply" : "push") };
         tx.set(outbox, operation); tx.set(messageRef, message);
         tx.set(limitRef, { since: active ? rate.since : at, count: active ? rate.count + 1 : 1 });
@@ -476,7 +483,7 @@ export function createStore(db) {
       });
       return result;
     },
-    async finishReply(id, operationId, status, note) {
+    async finishReply(id, operationId, status, note, sentMessages = []) {
       const channel = channels.doc(id), outbox = channel.collection("outbox").doc(operationId);
       let message;
       await db.runTransaction(async tx => {
@@ -487,6 +494,9 @@ export function createStore(db) {
         // An acknowledged success must never be downgraded by an older retry.
         if (operation.status === "sent") { message = operation.message; return; }
         message = { ...operation.message, status, note };
+        const sent = sentMessages[operation.message.attachment && operation.message.text.trim() ? 1 : 0];
+        if (status === 'sent' && validQuoteToken(sent?.quoteToken)) message.quoteToken = sent.quoteToken;
+        if (status === 'sent' && /^[A-Za-z0-9_-]{1,128}$/.test(sent?.id || '')) message.lineMessageId = String(sent.id);
         tx.set(outbox, { status, message, leaseUntil: 0 }, { merge: true });
         tx.set(conversation.collection("messages").doc(message.id), message);
         if (status === "sent" && (!summary || message.sentAt >= summary.updatedAt)) tx.set(conversation, { lastText: `你：${message.attachment ? `[${message.type === "image" ? "圖片" : "文件"}] ${message.attachment.name} ` : ""}${message.text}`, lastMessageId: message.id, updatedAt: message.sentAt }, { merge: true });
@@ -544,7 +554,7 @@ export function createStore(db) {
         } else if (!old?.unsent) {
           const reopened = !old && reopenedWorkflow(workflowSnapshot?.data(), event.sentAt);
           if (reopened) tx.set(workflow, reopened);
-          tx.set(message, { type: event.type, text: event.text, sentAt: event.sentAt, unsent: false, direction: "incoming", ...(event.sticker ? { sticker: event.sticker } : {}), ...(!old && reply ? reply : {}) });
+          tx.set(message, { type: event.type, text: event.text, sentAt: event.sentAt, unsent: false, direction: "incoming", ...(event.sticker ? { sticker: event.sticker } : {}), ...(validQuoteToken(event.quoteToken) ? { quoteToken: event.quoteToken } : {}), ...(event.quotedMessageId ? { quotedMessageId: event.quotedMessageId } : {}), ...(!old && reply ? reply : {}) });
           const createdAt = summary?.createdAt == null ? event.sentAt : Math.min(summary.createdAt, event.sentAt);
           if (!summary || event.sentAt >= summary.updatedAt) tx.set(conversation, { sourceType: event.sourceType, sourceId: event.sourceId, lastText: event.text, lastMessageId: event.messageId, updatedAt: event.sentAt, createdAt, retentionPurgedAt: 0, retentionEmpty: false }, { merge: true });
           else if (createdAt !== summary.createdAt) tx.set(conversation, { createdAt }, { merge: true });
@@ -557,7 +567,7 @@ export function createStore(db) {
       const result = await page(channels.doc(id).collection("conversations").doc(conversationId).collection("messages"), "sentAt", before, 50);
       const owner = (await accountRead(channels.doc(id))).data()?.ownerUid;
       if (owner) result.items = await this.retainedMessages(owner, conversationId, result.items, Date.now());
-      result.items = result.items.map(({ replyToken, replyExpiresAt, ...message }) => message);
+      result.items = result.items.map(({ replyToken, replyExpiresAt, ...message }) => publicQuote(message));
       return result;
     },
   };

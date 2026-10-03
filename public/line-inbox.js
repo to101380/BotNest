@@ -1,5 +1,5 @@
 import { lineStickerUrl } from "./stickers.js";
-import { messageToolbar, quotedReply } from "./message-actions.js";
+import { messageToolbar } from "./message-actions.js";
 import { createAudioPlayer } from "./audio-player.js";
 import { createConversationWorkflow, workflowIcons } from "./conversation-workflow.js";
 import { filterConversations, inboxMode } from "./inbox-filters.js";
@@ -71,7 +71,7 @@ export function createLineInbox() {
     const state = workflow.state(selected), pinned = (state.pinnedMessages || []).includes(item.id);
     bubble.classList.toggle('message-pinned', pinned && !item.unsent); bubble.classList.toggle('message-unread', state.unreadMessageId === item.id);
     if (item.unsent || item.direction === 'outgoing' && item.status && item.status !== 'sent') return;
-    bubble.prepend(messageToolbar({ pinned, unread: state.unreadMessageId === item.id, disabled: state.busy, onAction: action => {
+    bubble.prepend(messageToolbar({ pinned, unread: state.unreadMessageId === item.id, disabled: state.busy, replyUnavailable: isSocial(conversations.get(selected)) ? '此渠道暫不支援引用回覆' : !item.canQuote ? '此訊息沒有可用的引用資訊' : null, onAction: action => {
       if (action === 'reply') { if ($('line-reply-text').disabled) { status('請先完成渠道連線才能回覆。', true); return; } quoteDrafts.set(selected, { id: item.id, text: item.text || '[附件]' }); renderQuote(); $('line-reply-text').focus(); return; }
       void workflow.messageAct(selected, action, item.id, action === 'pin' ? !pinned : true);
     } }));
@@ -686,6 +686,14 @@ export function createLineInbox() {
       bubble.dataset.messageId = item.id; bubble.tabIndex = -1;
       text.textContent = item.text; time.textContent = formatClock(item.sentAt); time.dateTime = new Date(item.sentAt).toISOString();
       bubble.append(text, time);
+      if (item.quotedMessageId) {
+        const quoted = messages.get(item.quotedMessageId) || [...messages.values()].find(message => message.lineMessageId === item.quotedMessageId);
+        const card = document.createElement('button'); card.type = 'button'; card.className = 'message-quoted-card';
+        const name = document.createElement('strong'); name.textContent = quoted?.direction === 'outgoing' ? '你' : label(conversations.get(selected));
+        const content = document.createElement('span'); content.textContent = quoted?.unsent ? '訊息已收回' : quoted?.text || '較早的訊息'; card.append(name, content);
+        card.onclick = () => { const row = [...messageArea.children].find(node => node.dataset.messageId === quoted?.id); if (row) { historyMode(true); row.scrollIntoView({ block: 'center' }); row.focus({ preventScroll: true }); } else status('引用的訊息尚未載入或已到期。'); };
+        bubble.prepend(card);
+      }
       if (item.type === 'sticker' && !item.unsent && !item.attachmentExpired && !item.attachment) {
         const url = lineStickerUrl(item.sticker);
         if (url) {
@@ -731,7 +739,7 @@ export function createLineInbox() {
           const retry = document.createElement("button"); retry.type = "button"; retry.className = "retry";
           const selectedProvider = conversations.get(selected)?.provider;
           retry.textContent = "重試確認"; retry.disabled = sending || (["facebook", "instagram"].includes(selectedProvider) ? !(selectedProvider === "instagram" ? instagramAccount : facebookAccount) : !channel?.canReply) || Date.now() - item.sentAt >= 23 * 60 * 60 * 1000;
-          retry.addEventListener("click", () => void sendReply(selected, item.text, item.operationId, item.attachment)); bubble.append(retry);
+          retry.addEventListener("click", () => void sendReply(selected, item.text, item.operationId, item.attachment, item.quotedMessageId ? { id: item.quotedMessageId } : null)); bubble.append(retry);
         }
         if (item.status !== "sent" && item.note) { const note = document.createElement("p"); note.className = "note"; note.textContent = item.note; bubble.append(note); }
       }
@@ -890,7 +898,7 @@ export function createLineInbox() {
     } catch (error) { report(error); }
     await settingsReady;
   }
-  async function sendReply(conversationId, text, operationId, attachment) {
+  async function sendReply(conversationId, text, operationId, attachment, quote = null) {
     const currentConversation = conversations.get(conversationId), facebook = isSocial(currentConversation);
     const canReply = facebook ? !!(currentConversation?.provider === "instagram" ? instagramAccount : facebookAccount) : !!channel?.canReply;
     if (sending || !active || !canReply || !conversationId || (!text.trim() && !attachment) || (currentConversation?.provider === "instagram" && attachment?.kind === "file")) return;
@@ -898,13 +906,13 @@ export function createLineInbox() {
     operationId ||= crypto.randomUUID();
     const currentEpoch = epoch;
     sending = true; replyControls(); showMessages();
-    const initial = { id: `out-${operationId}`, operationId, text, ...(attachment ? { attachment } : {}), direction: "outgoing", type: attachment?.kind || "text", status: "pending", sentAt: localReplies.get(operationId)?.message.sentAt || messages.get(`out-${operationId}`)?.sentAt || Date.now() };
+    const initial = { id: `out-${operationId}`, operationId, text, ...(quote ? { quotedMessageId: quote.id } : {}), ...(attachment ? { attachment } : {}), direction: "outgoing", type: attachment?.kind || "text", status: "pending", sentAt: localReplies.get(operationId)?.message.sentAt || messages.get(`out-${operationId}`)?.sentAt || Date.now() };
     localReplies.set(operationId, { conversationId, message: initial });
     if (selected === conversationId) { historyMode(false); messages.set(initial.id, initial); showMessages("bottom"); }
     try {
       const data = facebook
         ? await zernioApi(`messages?platform=${currentConversation.provider}`, { method: "POST", body: JSON.stringify({ conversationId: currentConversation.remoteId, text, operationId, attachmentId: attachment?.id || null }) })
-        : await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId, attachmentId: attachment?.id || null }) });
+        : await api(`conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text, operationId, attachmentId: attachment?.id || null, quoteMessageId: quote?.id || null }) });
       localReplies.set(operationId, { conversationId, message: data.message });
       if (selected === conversationId) void loadAiControl().catch(report);
       if (selected === conversationId) { if (data.message.id !== initial.id) messages.delete(initial.id); messages.set(data.message.id, data.message); showMessages(); }
@@ -914,6 +922,7 @@ export function createLineInbox() {
       if (error.status && error.status < 500 && !isRetry) {
         localReplies.delete(operationId); messages.delete(initial.id);
         if (!drafts.get(conversationId)) { drafts.set(conversationId, text); if (selected === conversationId) $("line-reply-text").value = text; }
+        if (quote) { quoteDrafts.set(conversationId, quote); if (selected === conversationId) renderQuote(); }
         if (attachment && !attachments.has(conversationId)) attachments.set(conversationId, attachment);
       } else {
         const uncertain = { ...initial, status: "uncertain", note: "連線中斷，請用「重試確認」查看結果，避免另發同一則訊息。" };
@@ -1056,15 +1065,16 @@ export function createLineInbox() {
   $("line-reply-text").addEventListener("input", () => { if (selected) drafts.set(selected, $("line-reply-text").value); });
   $("line-reply-form").addEventListener("submit", event => {
     event.preventDefault();
-    const text = quotedReply($("line-reply-text").value, quoteDrafts.get(selected)?.text);
+    const text = $("line-reply-text").value, quote = quoteDrafts.get(selected);
     const attachment = attachments.get(selected);
     const current = conversations.get(selected), canReply = isSocial(current) ? !!(current.provider === "instagram" ? instagramAccount : facebookAccount) : !!channel?.canReply;
     if (sending || uploading || !selected || !canReply || (!$("line-reply-text").value.trim() && !attachment)) return;
-    if (text.length > 5000) { status('含引用文字最多 5000 字，請縮短回覆。', true); return; }
+    if (text.length > 5000) { status('回覆最多 5000 字，請縮短回覆。', true); return; }
+    if (quote && !text.trim()) { status('引用回覆請輸入文字。', true); return; }
     quoteDrafts.delete(selected); renderQuote();
     drafts.delete(selected); $("line-reply-text").value = "";
     attachments.delete(selected);
-    void sendReply(selected, text, undefined, attachment);
+    void sendReply(selected, text, undefined, attachment, quote);
   });
   $("line-connect-form").addEventListener("submit", async event => {
     event.preventDefault();
