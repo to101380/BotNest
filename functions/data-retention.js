@@ -63,7 +63,7 @@ export function createRetentionService({ db, bucket, now = Date.now }) {
       if (!value || !retentionActive(p.data(), at)) return;
       const trash = wf?.purging && wf.trashed && value.sentAt <= wf.purgeBefore;
       if (messageDue(value, p.data(), at) || trash) { tx.delete(ref); stats.deletedMessages++; return; }
-      const due = ['image', 'audio', 'file'].includes(value.type) && value.sentAt + p.data().attachmentDays * DAY <= at || value.attachment && attachmentDue(value.attachment, p.data(), at);
+      const due = ['image', 'audio', 'file', 'sticker'].includes(value.type) && value.sentAt + p.data().attachmentDays * DAY <= at || value.attachment && attachmentDue(value.attachment, p.data(), at);
       if (due && !value.attachmentExpired) {
         const result = { ...value, attachmentExpired: true, imageNote: '附件已到期', attachments: [], ...(value.attachment ? { attachment: { name: value.attachment.name || '附件', kind: value.attachment.kind || value.type, expiresAt: 0, url: '' } } : {}) };
         delete result.audioTicket; delete result.imageRetryAfter; tx.set(ref, result); stats.deletedRecords++;

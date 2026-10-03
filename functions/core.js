@@ -1,3 +1,4 @@
+import { lineSticker, socialAttachment } from "./stickers.js";
 import { audioTicket, socialAudio, lineAudio } from "./audio-playback.js";
 import { audioAttachments } from "./audio-input.js";
 import { imageAttachments } from "./image-input.js";
@@ -51,6 +52,7 @@ export function normalizeEvent(event) {
     sentAt: event.timestamp,
     type: unsent ? "unsend" : (Object.hasOwn(labels, type) || type === "text" ? type : "other"),
     text: unsent ? "[訊息已收回]" : type === "text" ? String(event.message.text || "").slice(0, 10000) : (labels[type] || "[尚未支援的訊息]"),
+    ...(lineSticker(event.message) ? { sticker: lineSticker(event.message) } : {}),
     unsent,
   };
 }
@@ -373,7 +375,7 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
           const items = (Array.isArray(data.messages) ? data.messages : []).filter(item => item.accountId === social.accountId && item.conversationId === conversationId).map(item => {
             const attachment = Array.isArray(item.attachments) ? item.attachments[0] : null, kind = attachment?.type;
             const sentAt = Number.isFinite(Date.parse(item.createdAt)) ? Date.parse(item.createdAt) : now();
-            const normalizedAttachment = attachment && typeof attachment.url === "string" ? { kind: kind === "image" ? "image" : "file", name: attachment.filename || labels[kind] || "社群附件", url: attachment.url.slice(0, 4096), external: true, expiresAt: sentAt + 86400000 } : null;
+            const normalizedAttachment = socialAttachment(attachment, sentAt, now());
             if (normalizedAttachment) {
               try {
                 const mediaUrl = new URL(normalizedAttachment.url);

@@ -1,3 +1,4 @@
+import { lineStickerUrl } from "./stickers.js";
 import { createAudioPlayer } from "./audio-player.js";
 import { createConversationWorkflow, workflowIcons } from "./conversation-workflow.js";
 import { filterConversations, inboxMode } from "./inbox-filters.js";
@@ -644,6 +645,13 @@ export function createLineInbox() {
       bubble.dataset.messageId = item.id; bubble.tabIndex = -1;
       text.textContent = item.text; time.textContent = formatClock(item.sentAt); time.dateTime = new Date(item.sentAt).toISOString();
       bubble.append(text, time);
+      if (item.type === 'sticker' && !item.unsent && !item.attachmentExpired && !item.attachment) {
+        const url = lineStickerUrl(item.sticker);
+        if (url) {
+          const img = document.createElement('img'); img.className = 'sticker-image'; img.src = url; img.alt = item.sticker.text || 'LINE 貼圖'; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer';
+          img.addEventListener('error', () => { img.remove(); text.hidden = false; text.textContent = '貼圖暫時無法預覽'; }, { once: true }); bubble.prepend(img); text.hidden = !item.sticker.text; if (item.sticker.text) text.textContent = item.sticker.text;
+        } else text.textContent = isSocial(conversations.get(selected)) ? '平台未提供可預覽的貼圖圖片' : item.sticker ? '此貼圖無法預覽' : '貼圖（舊訊息未保存貼圖 ID）';
+      }
       if (item.type === "image" && !item.attachment && !item.unsent && !item.attachmentExpired) {
         const note = document.createElement("p"); note.className = "note";
         note.textContent = item.imageNote || "正在讀取 LINE 圖片…"; bubble.append(note);
@@ -663,7 +671,8 @@ export function createLineInbox() {
             link.replaceChildren(img); link.classList.add("image-attachment"); link.setAttribute("aria-label", `開啟圖片：${item.attachment.name}`);
             link.addEventListener("click", event => { event.preventDefault(); openImageViewer(item.id); });
             bubble.classList.add("image-message");
-            if (item.text === "[圖片]") text.hidden = true;
+            if (["[圖片]", "[貼圖]"].includes(item.text)) text.hidden = true;
+            if (item.type === "sticker") { img.classList.add("sticker-image"); bubble.classList.add("sticker-message"); }
             imageMeta = document.createElement("div");
             imageMeta.className = "image-message-meta";
             imageMeta.append(time);
