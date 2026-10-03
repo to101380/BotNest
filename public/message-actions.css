@@ -1,13 +1,46 @@
-.inbox-open .message-bubble{position:relative;margin-top:28px}
-.message-actions{position:absolute;top:-28px;left:0;display:flex;align-items:center;gap:4px;box-sizing:border-box;height:30px;padding-bottom:4px;opacity:0;pointer-events:none;transition:opacity 160ms ease-out}
-.message-bubble.outgoing .message-actions{left:auto;right:0}
-.message-bubble:hover .message-actions,.message-bubble:focus-within .message-actions{opacity:1;pointer-events:auto}
-.message-actions button{display:grid;place-items:center;width:28px;height:26px;min-height:0;padding:3px;border:0;border-radius:5px;background:transparent;color:#89939f}
-.message-actions button:hover,.message-actions button:focus-visible,.message-actions button[aria-pressed=true]{background:#edf2fa;color:#3577de}
+body.inbox-open .message-bubble{position:relative;margin-top:0;max-width:min(68%,calc(100% - 100px))}
+.message-actions{position:absolute;top:50%;left:100%;display:flex;align-items:center;gap:3px;box-sizing:content-box;height:30px;padding:6px 0 6px 8px;opacity:0;pointer-events:none;transform:translateY(-50%);transition:opacity 160ms ease-out;z-index:2}
+.message-bubble.outgoing .message-actions{left:auto;right:100%;padding:6px 8px 6px 0}
+.message-bubble:hover .message-actions,.message-bubble:focus-within .message-actions,.message-bubble.message-menu-open .message-actions{opacity:1;pointer-events:auto}
+.message-bubble::after{content:'';position:absolute;top:0;bottom:0;left:100%;width:100px;pointer-events:none}
+.message-bubble.outgoing::after{left:auto;right:100%}
+.message-bubble:hover::after,.message-bubble:focus-within::after,.message-bubble.message-menu-open::after{pointer-events:auto}
+.message-actions button{display:grid;place-items:center;width:28px;height:28px;min-height:0;padding:4px;border:0;border-radius:50%;background:transparent;color:#89939f}
+.message-actions button:hover,.message-actions button:focus-visible,.message-actions button[aria-pressed=true]{background:#e1e5eb;color:#536274}
 .message-actions button:focus-visible{outline:2px solid #3577de;outline-offset:1px}
-.message-actions button:disabled{opacity:.45}
-.inbox-open .message-quoted-card{display:flex;flex-direction:column;gap:3px;width:100%;min-height:0;padding:7px 8px;margin:0 0 7px;border:0;border-bottom:1px solid currentColor;border-radius:5px;background:rgba(128,128,128,.12);color:inherit;text-align:left;font-size:12px;line-height:1.4}
-.message-quoted-card strong{font-size:12px}.message-quoted-card span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;opacity:.8}
+.message-actions button:disabled{opacity:.35;cursor:default}
+.message-action-label{display:none}
+body.inbox-open .message-bubble[data-provider=line]{border:0;border-radius:16px;padding:10px 12px;margin-bottom:5px}
+body.inbox-open .message-bubble[data-provider=line].outgoing{background:#91dc7c;color:#203b24;border-radius:16px}
+.message-bubble[data-provider=line]::before{content:'';position:absolute;top:5px;left:-6px;width:12px;height:10px;background:inherit;border-radius:0 0 0 12px;pointer-events:none}
+.message-bubble[data-provider=line].outgoing::before{left:auto;right:-6px;border-radius:0 0 12px 0}
+body.inbox-open .message-bubble[data-provider=line]>time{position:absolute;bottom:0;left:calc(100% + 8px);margin:0;color:#8b96a3;white-space:nowrap;font-size:10px}
+body.inbox-open .message-bubble[data-provider=line].outgoing>time{left:auto;right:calc(100% + 8px);color:#8b96a3}
+body.inbox-open .message-quoted-card{display:flex;align-items:flex-start;gap:8px;width:calc(100% + 24px);min-height:0;padding:0 12px 9px;margin:0 -12px 8px;border:0;border-bottom:1px solid rgba(40,60,45,.2);border-radius:0;background:transparent;color:inherit;text-align:left;font-size:12px;line-height:1.4}
+.message-quote-detail{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.message-quote-detail strong{font-size:12px;font-weight:600;color:inherit}
+.message-quote-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;opacity:.65}
+.message-quote-avatar{display:grid;place-items:center;flex:0 0 22px;width:22px;height:22px;overflow:hidden;border-radius:50%;background:#fff;color:#66716a;font-size:11px}
+.message-quote-avatar .chat-avatar{width:22px;height:22px;flex-basis:22px;font-size:11px}
+.message-quote-avatar .line-avatar-badge,.message-quote-avatar .facebook-avatar-badge,.message-quote-avatar .instagram-avatar-badge{display:none}
+body.inbox-open .message-quote-avatar .chat-avatar .line-avatar-badge,body.inbox-open .message-quote-avatar .chat-avatar .facebook-avatar-badge,body.inbox-open .message-quote-avatar .chat-avatar .instagram-avatar-badge{display:none!important}
+body.inbox-open .message-bubble[data-provider=facebook],body.inbox-open .message-bubble[data-provider=instagram]{border-radius:18px}
+body.inbox-open .message-bubble.messenger-quoted-message{padding:0;background:transparent;color:#243044;border:0;box-shadow:none;display:flex;flex-direction:column;align-items:flex-start;gap:5px}
+body.inbox-open .message-bubble.messenger-quoted-message.outgoing{align-items:flex-end}
+.messenger-quote-heading{font-size:11px;color:#89939f;padding:0 8px}
+body.inbox-open .messenger-quoted-message>.message-quoted-card{width:100%;margin:0;padding:9px 12px;border:0;border-radius:17px;background:#e4e6eb;color:#606770}
+.messenger-quoted-message>.message-quoted-card .message-quote-avatar,.messenger-quoted-message>.message-quoted-card strong{display:none}
+.messenger-reply-body{position:relative;max-width:100%;padding:8px 12px;border-radius:18px;background:#e9ebee;color:#243044}
+.outgoing>.messenger-reply-body{background:#0866ff;color:#fff}
+body.inbox-open .messenger-reply-body time{position:absolute;top:calc(100% + 3px);right:4px;color:#89939f;white-space:nowrap}
+body.inbox-open .message-bubble.outgoing .messenger-reply-body time{color:#89939f}
+.message-menu-open .message-actions{top:0;transform:none;flex-direction:column;align-items:stretch;width:142px;height:auto;padding:4px;margin-left:6px;background:rgba(255,255,255,.97);border:1px solid #dfe3e9;border-radius:7px;box-shadow:0 5px 20px rgba(0,0,0,.14)}
+.message-menu-open.outgoing .message-actions{margin-left:0;margin-right:6px}
+.message-menu-open .message-actions:before{content:'';position:absolute;top:0;bottom:0;left:-8px;width:8px}
+.message-menu-open.outgoing .message-actions:before{left:auto;right:-8px}
+.message-menu-open .message-actions button{display:flex;gap:9px;width:100%;height:32px;padding:6px 9px;border-radius:4px;text-align:left;font-size:12px}
+.message-menu-open .message-action-label{display:block}
+@media(max-width:600px){body.inbox-open .message-bubble{max-width:calc(100% - 36px)}.message-actions{flex-direction:column;width:28px;height:auto;padding:4px 0 4px 4px}.message-bubble.outgoing .message-actions{padding:4px 4px 4px 0}.message-actions button{width:26px;height:26px}.message-menu-open .message-actions{width:124px}.message-menu-open.outgoing .message-actions{right:0;top:100%}.message-menu-open:not(.outgoing) .message-actions{left:0;top:100%}body.inbox-open .message-bubble[data-provider=line]>time,body.inbox-open .message-bubble[data-provider=line].outgoing>time{position:static;text-align:right;margin-top:3px}}
 .inbox-open .message-pinned{border-color:#89aee6}
 .inbox-open .message-unread{box-shadow:inset 3px 0 #e65e5e}
 .conversation-unread .conversation-details strong:after{content:'';display:inline-block;width:7px;height:7px;margin-left:7px;border-radius:50%;background:#e65e5e;vertical-align:middle}
@@ -24,4 +57,5 @@
 .inbox-open .reply-form:has(.message-quote-composer:not([hidden])) .attachment-preview{grid-row:3}
 .inbox-open .reply-form:has(.message-quote-composer:not([hidden])):has(.attachment-preview:not([hidden])) textarea,.inbox-open .reply-form:has(.message-quote-composer:not([hidden])):has(.attachment-preview:not([hidden])) .reply-actions{grid-row:4}
 @media(hover:none){.message-actions{opacity:1;pointer-events:auto}}
+@media(max-width:600px){.message-bubble::after{width:36px}}
 @media(prefers-reduced-motion:reduce){.message-actions{transition:none}}

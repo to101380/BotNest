@@ -67,15 +67,20 @@ export function createLineInbox() {
   const pinsPanel = document.createElement("div"); pinsPanel.className = "message-pins"; pinsPanel.hidden = true; $("line-messages").before(pinsPanel);
   function renderQuote() { if (messages.get(quoteDrafts.get(selected)?.id)?.unsent) quoteDrafts.delete(selected); const quote = quoteDrafts.get(selected); quotePanel.hidden = !quote; quoteLabel.textContent = quote ? `回覆：${quote.text}` : ""; }
   function decorateMessage(bubble, item) {
+    bubble.dataset.provider = conversations.get(selected)?.provider || 'line';
     bubble.querySelector('.message-actions')?.remove();
     const state = workflow.state(selected), pinned = (state.pinnedMessages || []).includes(item.id);
     bubble.classList.toggle('message-pinned', pinned && !item.unsent); bubble.classList.toggle('message-unread', state.unreadMessageId === item.id);
     if (item.unsent || item.direction === 'outgoing' && item.status && item.status !== 'sent') return;
+    if (bubble.dataset.provider === 'line') bubble.oncontextmenu = event => { event.preventDefault(); document.querySelectorAll('.message-menu-open').forEach(row => row.classList.remove('message-menu-open')); bubble.classList.add('message-menu-open'); };
     bubble.prepend(messageToolbar({ pinned, unread: state.unreadMessageId === item.id, disabled: state.busy, replyUnavailable: isSocial(conversations.get(selected)) ? '此渠道暫不支援引用回覆' : !item.canQuote ? '此訊息沒有可用的引用資訊' : null, onAction: action => {
+      bubble.classList.remove('message-menu-open');
       if (action === 'reply') { if ($('line-reply-text').disabled) { status('請先完成渠道連線才能回覆。', true); return; } quoteDrafts.set(selected, { id: item.id, text: item.text || '[附件]' }); renderQuote(); $('line-reply-text').focus(); return; }
       void workflow.messageAct(selected, action, item.id, action === 'pin' ? !pinned : true);
     } }));
   }
+  document.addEventListener('click', event => { if (!event.target.closest('.message-actions')) document.querySelectorAll('.message-menu-open').forEach(row => row.classList.remove('message-menu-open')); });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') document.querySelectorAll('.message-menu-open').forEach(row => row.classList.remove('message-menu-open')); });
   function renderPins() {
     const state = workflow.state(selected), ids = state.pinnedMessages || [];
     pinsPanel.hidden = !selected || !ids.length; pinsPanel.replaceChildren();
@@ -666,6 +671,7 @@ export function createLineInbox() {
     viewerIndex = (viewerIndex + step + viewerItems.length) % viewerItems.length; renderImageViewer();
   }
   function showMessages(scrollMode = "auto") {
+    const openMenuId = messageArea.querySelector('.message-menu-open')?.dataset.messageId;
     const focusedAction = document.activeElement?.dataset.messageAction, focusedMessage = document.activeElement?.closest('.message-bubble')?.dataset.messageId;
     const previousTop = messageArea.scrollTop, previousHeight = messageArea.scrollHeight;
     const scrollToLatest = scrollMode === "bottom" || (["auto", "keep"].includes(scrollMode) && followLatest);
@@ -689,8 +695,12 @@ export function createLineInbox() {
       if (item.quotedMessageId) {
         const quoted = messages.get(item.quotedMessageId) || [...messages.values()].find(message => message.lineMessageId === item.quotedMessageId);
         const card = document.createElement('button'); card.type = 'button'; card.className = 'message-quoted-card';
-        const name = document.createElement('strong'); name.textContent = quoted?.direction === 'outgoing' ? '你' : label(conversations.get(selected));
-        const content = document.createElement('span'); content.textContent = quoted?.unsent ? '訊息已收回' : quoted?.text || '較早的訊息'; card.append(name, content);
+        const name = document.createElement('strong'); name.textContent = !quoted ? '引用訊息' : quoted.direction === 'outgoing' ? channel?.displayName || '你' : label(conversations.get(selected));
+        const content = document.createElement('span'); content.className = 'message-quote-text'; content.textContent = quoted?.unsent ? '訊息已收回' : quoted?.text || '較早的訊息';
+        const detail = document.createElement('span'); detail.className = 'message-quote-detail'; detail.append(name, content);
+        const quoteAvatar = document.createElement('span'); quoteAvatar.className = 'message-quote-avatar';
+        if (quoted && quoted.direction !== 'outgoing') quoteAvatar.append(avatar(conversations.get(selected))); else quoteAvatar.textContent = name.textContent.slice(0, 1);
+        card.append(quoteAvatar, detail);
         card.onclick = () => { const row = [...messageArea.children].find(node => node.dataset.messageId === quoted?.id); if (row) { historyMode(true); row.scrollIntoView({ block: 'center' }); row.focus({ preventScroll: true }); } else status('引用的訊息尚未載入或已到期。'); };
         bubble.prepend(card);
       }
@@ -743,7 +753,14 @@ export function createLineInbox() {
         }
         if (item.status !== "sent" && item.note) { const note = document.createElement("p"); note.className = "note"; note.textContent = item.note; bubble.append(note); }
       }
-      decorateMessage(bubble, item); desired.push(bubble);
+      const provider = conversations.get(selected)?.provider || 'line';
+      if (provider !== 'line' && item.quotedMessageId) {
+        const quote = bubble.querySelector('.message-quoted-card'), replyBody = document.createElement('div'); replyBody.className = 'messenger-reply-body';
+        const heading = document.createElement('div'); heading.className = 'messenger-quote-heading'; heading.textContent = `↶ ${item.direction === 'outgoing' ? '你回覆了' : '回覆'} ${quote?.querySelector('strong')?.textContent || ''}`;
+        for (const node of [...bubble.childNodes]) if (node !== quote) replyBody.append(node);
+        bubble.replaceChildren(heading, quote, replyBody); bubble.classList.add('messenger-quoted-message');
+      }
+      decorateMessage(bubble, item); bubble.classList.toggle('message-menu-open', openMenuId === item.id); desired.push(bubble);
     }
     for (const [id, row] of audioRows) if (!activeAudio.has(id)) { row.player.dispose(); audioRows.delete(id); }
     // Keep audio rows connected while polling so playback and seeking are preserved.

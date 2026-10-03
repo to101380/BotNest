@@ -11,6 +11,7 @@ export function messageToolbar({ pinned, unread, disabled, replyUnavailable, onA
     button.dataset.messageAction = action;
     if (pressed !== null) button.setAttribute('aria-pressed', String(!!pressed));
     button.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[action]}</svg>`;
+    const caption = document.createElement('span'); caption.className = 'message-action-label'; caption.textContent = label; button.append(caption);
     button.onclick = () => onAction(action); row.append(button);
   }
   return row;
