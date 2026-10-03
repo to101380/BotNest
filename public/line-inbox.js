@@ -1,5 +1,4 @@
 import { createAudioPlayer } from "./audio-player.js";
-import { createConversationInsights } from "./conversation-insights.js";
 import { createConversationWorkflow } from "./conversation-workflow.js";
 import { filterConversations, inboxMode } from "./inbox-filters.js";
 import { showAiModel } from "./ai-model.js";
@@ -63,10 +62,6 @@ export function createLineInbox() {
   let linkedScanPages = 0;
   const linkedConversation = new URL(location.href).searchParams.get("conversation");
   if (linkedConversation && linkedConversation.length <= 512) try { sessionStorage.setItem("botnest-open-conversation", linkedConversation); } catch {}
-  const insights = createConversationInsights({ request: items => aiApi("insights", { method: "POST", body: JSON.stringify({ messages: items }) }), jump: id => {
-    const bubble = [...messageArea.children].find(el => el.dataset.messageId === id);
-    if (bubble) { bubble.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); bubble.focus({ preventScroll: true }); }
-  } });
   let filterMode = "all", searchQuery = "", filterTimer, scanning = false, scanEpoch = 0, listLoaded = false;
   const filtering = () => filterMode !== "all" || !!searchQuery.trim();
   const filterStyle = document.createElement("link"); filterStyle.rel = "stylesheet"; filterStyle.href = "/inbox-filters.css"; document.head.append(filterStyle);
@@ -673,7 +668,6 @@ export function createLineInbox() {
     followLatest = scrollToLatest;
     messageArea.scrollTop = scrollToLatest ? messageArea.scrollHeight : scrollMode === "older" ? previousTop + messageArea.scrollHeight - previousHeight : previousTop;
     historyScroll.sync();
-    insights.setContext({ id: selected, items: [...messages.values()], hasOlder: !!messageNext });
     messageResize.observe(messageArea);
     for (const bubble of messageArea.children) messageResize.observe(bubble);
   }
@@ -1059,7 +1053,6 @@ export function createLineInbox() {
       scanEpoch++; scanning = false; listLoaded = false; clearTimeout(filterTimer); searchQuery = ""; filterMode = "all"; $("inbox-name-search").value = "";
       for (const button of filters.querySelectorAll("[data-filter]")) button.setAttribute("aria-pressed", String(button.dataset.filter === "all"));
       conversationNext = zernioConversationNext = instagramNext = messageNext = null; conversations.clear(); messages.clear(); clearSecrets();
-      insights.clear();
       workflow.clear();
       historyMode(false);
       $("line-oa-name").textContent = $("line-webhook-url").value = $("line-channel-id").value = "";
