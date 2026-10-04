@@ -6,6 +6,7 @@ import { memoryDb } from './memory.js';
 const group = `C${'a'.repeat(32)}`, host = `U${'b'.repeat(32)}`, buyer = `U${'c'.repeat(32)}`;
 function fixture(options = {}) {
   const db = memoryDb(); let clock = 1000000, serial = 0;
+  db.data.set('botnest/state/channels/12345', { ownerUid: 'seller' });
   const service = createGroupBuy(db, { now: () => clock, ...options });
   const event = (text, userId = host) => ({ type: 'message', webhookEventId: `event-${++serial}`, timestamp: ++clock,
     source: { type: 'group', groupId: group, userId }, message: { type: 'text', id: String(serial), text } });
@@ -57,4 +58,16 @@ test('AI proposal never commits until confirmed and chat cannot invent orders', 
   await f.send('你好', buyer); assert.equal(calls, 1);
   await f.send('幫我留兩份吧', buyer); await f.send('/放棄', buyer); await f.send('/確認', buyer);
   assert.equal((await f.state()).orders[buyer].quantity, 2);
+});
+test('previously enabled groups turn off customer AI on next message without losing orders', async () => {
+  const f = fixture(); await f.start(); await f.send('+2', buyer);
+  const entry = [...f.db.data.entries()].find(([path]) => /\/groupBuys\/[^/]+$/.test(path));
+  const state = entry[1]; delete state.customerAiDisabledAt; f.db.data.set(entry[0], state);
+  const controlPath = [...f.db.data.keys()].find(path => path.includes('/aiConversations/'));
+  f.db.data.set(controlPath, { mode: 'auto', revision: 3 });
+  await f.send('早安', buyer);
+  assert.equal(f.db.data.get(controlPath).mode, 'off'); assert.equal(f.db.data.get(controlPath).revision, 4);
+  assert.equal((await f.state()).orders[buyer].quantity, 2);
+  await f.send('/結團'); await f.send('/開團 雞塊 100');
+  assert.ok((await f.state()).customerAiDisabledAt); assert.equal(f.db.data.get(controlPath).mode, 'off');
 });

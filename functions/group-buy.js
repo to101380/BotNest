@@ -42,6 +42,16 @@ export async function interpretOrder(text, product, { getOpenAiKey, fetchOpenAi 
 export function createGroupBuy(db, { now = Date.now, getOpenAiKey = () => '', fetchOpenAi = fetch } = {}) {
   const channelRef = id => db.collection('botnest').doc('state').collection('channels').doc(id);
   const ref = (id, group) => channelRef(id).collection('groupBuys').doc(hash(group));
+  async function readAiControl(tx, id, group) {
+    const channel = (await tx.get(channelRef(id))).data();
+    if (!channel?.ownerUid) throw new Error('Group buying channel owner missing');
+    const controlRef = db.collection('botnest').doc('state').collection('accounts').doc(channel.ownerUid)
+      .collection('aiConversations').doc(`line-${hash(`group:${group}`)}`);
+    return { controlRef, old: (await tx.get(controlRef)).data() || { revision: 0 } };
+  }
+  function disableAi(tx, { controlRef, old }) {
+    tx.set(controlRef, { ...old, mode: 'off', pausedUntil: 0, reason: '此群組已啟用團購，AI 客服自動回覆已關閉', updatedAt: now(), revision: (old.revision || 0) + 1 });
+  }
   async function activation(id) {
     const code = randomBytes(16).toString('hex');
     await channelRef(id).collection('groupBuyCodes').doc(hash(code)).set({ expiresAt: now() + 10 * 60000 });
@@ -54,8 +64,18 @@ export function createGroupBuy(db, { now = Date.now, getOpenAiKey = () => '', fe
     const group = event.source.groupId, user = event.source.userId, text = event.message.text.trim(), groupRef = ref(id, group);
     const eventRef = groupRef.collection('events').doc(hash(event.webhookEventId));
     const enable = /^\/啟用團購 ([a-f0-9]{32})$/.exec(text);
-    const current = await snapshot(id, group);
+    let current = await snapshot(id, group);
     if (!current && !enable) return null;
+    // Migrate groups enabled before automatic conversation-level AI disabling existed.
+    if (current && !current.customerAiDisabledAt) {
+      await db.runTransaction(async tx => {
+        const latest = (await tx.get(groupRef)).data();
+        if (!latest || latest.customerAiDisabledAt) return;
+        const control = await readAiControl(tx, id, group);
+        disableAi(tx, control); tx.set(groupRef, { customerAiDisabledAt: now() }, { merge: true });
+      });
+      current = await snapshot(id, group);
+    }
     if ((await eventRef.get()).exists) return null;
     // AI is never called inside a transaction, and every AI proposal needs confirmation.
     let interpreted = null;
@@ -83,9 +103,12 @@ export function createGroupBuy(db, { now = Date.now, getOpenAiKey = () => '', fe
         if (!code || code.expiresAt < now()) reply = '啟用指令已失效，請在 BotNest 重新取得。';
         else if (state && state.host !== user) reply = '此群組已有團主，請由原團主操作。';
         else {
+          const control = await readAiControl(tx, id, group);
+          disableAi(tx, control);
           tx.delete(codeRef);
           next ||= { host: user, groupId: group, open: false, orders: {}, pending: {} };
-          reply = '團購機器人已啟用！團主請輸入：/開團 水餃 150\n一次開一團。喊單：+1、我也要1份、我要三組\n修改：改成2包；取消：取消訂單\n查詢：我的訂單；團主統計：/統計；結束：/結團\n每筆喊單會追加數量；AI 判讀需回覆 /確認 才會登記。';
+          next.customerAiDisabledAt = now();
+          reply = '團購機器人已啟用，此群組的 AI 客服自動回覆已關閉。\n團主請輸入：/開團 水餃 150\n一次開一團。喊單：+1、我也要1份、我要三組\n修改：改成2包；取消：取消訂單\n查詢：我的訂單；團主統計：/統計；結束：/結團\n每筆喊單會追加數量；AI 喊單判讀仍可用，需回覆 /確認 才登記。';
         }
       } else if (!state) return null;
       else if (text.startsWith('/開團')) {
@@ -95,7 +118,7 @@ export function createGroupBuy(db, { now = Date.now, getOpenAiKey = () => '', fe
         else if (!match || Number(match[2]) <= 0) reply = '格式：/開團 水餃 150（商品名稱與每份價格）';
         else {
           if (state.roundId) tx.set(groupRef.collection('rounds').doc(state.roundId), state);
-          next = { host: state.host, groupId: group, roundId: randomUUID(), product: match[1], priceCents: Math.round(Number(match[2]) * 100), open: true, orders: {}, pending: {}, startedAt: now() };
+          next = { host: state.host, groupId: group, customerAiDisabledAt: state.customerAiDisabledAt, roundId: randomUUID(), product: match[1], priceCents: Math.round(Number(match[2]) * 100), open: true, orders: {}, pending: {}, startedAt: now() };
           reply = `開始收單：${next.product}，每份 ${next.priceCents / 100} 元。\n輸入 +1、我也要1份、我要三組。每次喊單都是追加；改數量請說「改成2份」。`;
         }
       } else if (['/統計', '團購統計'].includes(text)) {

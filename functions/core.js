@@ -262,14 +262,19 @@ export function createHandler({ store, groupBuy, verifyToken, authorizeSession =
               typeof event.replyToken === "string" && /^[A-Za-z0-9_-]{1,256}$/.test(event.replyToken)
               ? { replyToken: seal(event.replyToken, getKey(), `${channel.channelId}:${normalized.messageId}:reply-token`), replyExpiresAt: receivedAt + 45000 }
               : null;
-            await store.ingest(channel.channelId, normalized, reply);
+            let groupResult = null, groupToken;
             if (groupBuy && normalized.sourceType === 'group') {
               const token = unseal(channel.accessToken, getKey(), `${channel.channelId}:access-token`);
-              const result = await groupBuy.process(channel.channelId, event, async () => {
+              groupToken = token;
+              groupResult = await groupBuy.process(channel.channelId, event, async () => {
                 const profile = await lineRequest(`/v2/bot/group/${event.source.groupId}/member/${event.source.userId}`, { headers: { Authorization: `Bearer ${token}` } });
                 return profile.displayName;
               });
-              if (result) {
+            }
+            // Disable customer-service AI before ingestion can trigger its Firestore worker.
+            await store.ingest(channel.channelId, normalized, reply);
+            if (groupResult) {
+                const result = groupResult, token = groupToken;
                 let delivery = 'uncertain';
                 if (reply) try {
                   const sent = await fetchLine('https://api.line.me/v2/bot/message/reply', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -277,7 +282,6 @@ export function createHandler({ store, groupBuy, verifyToken, authorizeSession =
                   delivery = sent.ok ? 'sent' : 'failed';
                 } catch { /* Orders are committed; never repeat an uncertain send. */ }
                 await result.eventRef.set({ delivery }, { merge: true });
-              }
             }
           }
         }

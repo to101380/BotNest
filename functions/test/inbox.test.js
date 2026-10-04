@@ -17,6 +17,11 @@ test('signed group webhooks collect orders once and owner API hides LINE identit
   const f = await fixture({ groupBuy: { process: (...args) => service.process(...args), activation: (...args) => service.activation(...args), snapshot: (...args) => service.snapshot(...args) },
     fetchLine: async (url, options) => { calls.push({ url, body: options.body && JSON.parse(options.body) }); return new Response(JSON.stringify(url.includes('/member/') ? { displayName: '小美' } : {})); } });
   service = createGroupBuy(f.db, { now: () => 1000000 });
+  const ingest = f.store.ingest.bind(f.store);
+  f.store.ingest = async (...args) => {
+    if (args[1].text.startsWith('/啟用團購')) assert.equal((await f.store.aiControl('alice', 'line', args[1].conversationId)).mode, 'off', 'AI must be off before Firestore ingestion triggers the responder');
+    return ingest(...args);
+  };
   const activation = await f.request('/api/line/group-buy/activation', { method: 'POST', body: {} });
   const groupId = `C${'d'.repeat(32)}`, userId = `U${'e'.repeat(32)}`;
   const groupEvent = (id, text) => ({ ...event(id, 1000000), replyToken: `reply-${id}`, source: { type: 'group', groupId, userId }, message: { id, type: 'text', text } });
@@ -26,6 +31,14 @@ test('signed group webhooks collect orders once and owner API hides LINE identit
   assert.equal((await service.snapshot('1234567890', groupId)).orders[userId].quantity, 3);
   assert.equal(calls.filter(call => call.url.endsWith('/message/reply')).length, 3);
   const conversationId = createHash('sha256').update(`group:${groupId}`).digest('hex');
+  assert.equal((await f.store.aiControl('alice', 'line', conversationId)).mode, 'off');
+  assert.equal((await f.store.aiControl('alice', 'line', 'other-conversation')).mode, 'auto');
+  assert.equal((await f.store.aiControl('bob', 'line', conversationId)).mode, 'auto');
+  let inferred = 0;
+  await f.store.saveAccountAiSettings('alice', { enabled: true }, 1000000);
+  const responder = createAiResponder({ store: f.store, getKey: () => key, getOpenAiKey: () => 'test', now: () => 1000000, fetchOpenAi: async () => { inferred++; throw Error('Group customer AI should stay off'); } });
+  assert.equal((await responder({ channelId: '1234567890', conversationId, messageId: 'buy' })).skipped, true);
+  assert.equal(inferred, 0);
   const result = await f.request(`/api/line/group-buy/${conversationId}`);
   assert.equal(result.code, 200); assert.equal(result.body.groupBuy.orders[0].label, '小美');
   assert.ok(!JSON.stringify(result.body).includes(userId)); assert.ok(!JSON.stringify(result.body).includes(groupId));
