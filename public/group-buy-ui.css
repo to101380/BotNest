@@ -1,9 +1,9 @@
-#line-account .group-buy-setup{width:100%;margin-top:16px;border:1px solid #e5e7eb;border-radius:16px;background:rgba(248,249,251,.86);overflow:hidden;min-width:0}
-#line-account .group-buy-setup>summary{display:flex;align-items:center;gap:10px;padding:18px 20px;margin:0;color:#20252d;font-size:14px;font-weight:650;list-style:none;cursor:pointer}
+#line-account .group-buy-setup{box-sizing:border-box;width:100%;margin-top:16px;padding:0;border:1px solid #e5e7eb;border-radius:16px;background:rgba(248,249,251,.86);overflow:hidden;min-width:0}
+#line-account .group-buy-setup>summary{box-sizing:border-box;display:grid;grid-template-columns:16px minmax(0,1fr);align-items:center;gap:10px;min-height:64px;padding:20px;margin:0;color:#20252d;font-size:14px;line-height:24px;font-weight:650;list-style:none;cursor:pointer}
 #line-account .group-buy-setup>summary::-webkit-details-marker{display:none}
-#line-account .group-buy-setup>summary:before{content:'›';font-size:22px;font-weight:400;color:#7b8492;line-height:1;transition:transform 160ms ease}
-#line-account .group-buy-setup[open]>summary:before{transform:rotate(90deg)}
-#line-account .group-buy-setup-body{padding:0 20px 20px;display:grid;gap:16px;min-width:0}
+#line-account .group-buy-setup>summary:before{content:'';box-sizing:border-box;justify-self:center;width:7px;height:7px;border-right:1.5px solid #7b8492;border-bottom:1.5px solid #7b8492;transform:rotate(-45deg);transition:transform 160ms ease}
+#line-account .group-buy-setup[open]>summary:before{transform:rotate(45deg)}
+#line-account .group-buy-setup-body{padding:0 20px 20px 46px;display:grid;gap:16px;min-width:0}
 #line-account .group-buy-description{margin:0;color:#69717e;font-size:13px;line-height:1.7}
 #line-account .group-buy-steps{margin:0;padding:0;display:grid;gap:12px;list-style:none;counter-reset:group-step}
 #line-account .group-buy-steps li{display:flex;align-items:flex-start;gap:10px;color:#414955;font-size:13px;line-height:1.7;counter-increment:group-step}
@@ -24,6 +24,6 @@
 #line-account .group-buy-feedback.is-error{color:#b43e3e}
 #line-account .group-buy-footnote{padding-top:14px;border-top:1px solid #e5e7eb}
 #line-account .group-buy-setup :focus-visible{outline:3px solid #8dbafa;outline-offset:3px}
-@media(max-width:580px){#line-account .group-buy-setup>summary{padding:16px}#line-account .group-buy-setup-body{padding:0 16px 16px}#line-account .group-buy-code-row{flex-direction:column;align-items:stretch}#line-account .group-buy-copy{width:100%}#line-account .group-buy-code-box{padding:12px}}
+@media(max-width:580px){#line-account .group-buy-setup>summary{padding:16px;min-height:56px}#line-account .group-buy-setup-body{padding:0 16px 16px 42px}#line-account .group-buy-code-row{flex-direction:column;align-items:stretch}#line-account .group-buy-copy{width:100%}#line-account .group-buy-code-box{padding:12px}}
 @media(prefers-reduced-motion:reduce){#line-account .group-buy-setup *{transition:none!important}}
 @media(forced-colors:active){#line-account .group-buy-primary,#line-account .group-buy-copy{border:1px solid ButtonText}}
