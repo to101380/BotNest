@@ -57,17 +57,33 @@ export function createLineInbox() {
     void refresh(false, true).finally(() => { if (resumedEpoch === epoch) scheduleRefresh(); });
   }
   const conversations = new Map(), messages = new Map();
-  const groupSetup = document.createElement('details'); groupSetup.className = 'connection-details';
+  const groupStyle = document.createElement('link'); groupStyle.rel = 'stylesheet'; groupStyle.href = '/group-buy-ui.css'; document.head.append(groupStyle);
+  const groupSetup = document.createElement('details'); groupSetup.className = 'connection-details group-buy-setup';
   const groupSetupTitle = document.createElement('summary'); groupSetupTitle.textContent = 'LINE 群組團購試用';
-  const groupHelp = document.createElement('p'); groupHelp.className = 'note'; groupHelp.textContent = '在 LINE Developers 開啟 Allow bot to join group chats，把此官方帳號加入一般 LINE 群組。取得啟用指令後，由團主貼到群組，再輸入 /開團 水餃 150。一次開一團，最多 200 位買家；本版先測收單，不收款。';
-  const groupActivate = document.createElement('button'); groupActivate.type = 'button'; groupActivate.textContent = '取得啟用指令';
-  const groupCode = document.createElement('textarea'); groupCode.readOnly = true; groupCode.hidden = true; groupCode.rows = 2; groupCode.setAttribute('aria-label', '團購啟用指令');
-  const groupFeedback = document.createElement('p'); groupFeedback.setAttribute('role', 'status');
-  groupSetup.append(groupSetupTitle, groupHelp, groupActivate, groupCode, groupFeedback); $('line-account').append(groupSetup);
+  const groupBody = document.createElement('div'); groupBody.className = 'group-buy-setup-body';
+  const groupHelp = document.createElement('p'); groupHelp.className = 'group-buy-description'; groupHelp.textContent = '把官方帳號加入 LINE 群組，貼上啟用指令，就能開始收單。';
+  const groupSteps = document.createElement('ol'); groupSteps.className = 'group-buy-steps';
+  for (const value of ['在 LINE Developers 開啟「Allow bot to join group chats」。', '邀請此官方帳號加入一般 LINE 群組。', '由團主貼上啟用指令，再輸入「/開團 水餃 150」。']) { const step = document.createElement('li'); step.textContent = value; groupSteps.append(step); }
+  const groupActivate = document.createElement('button'); groupActivate.type = 'button'; groupActivate.className = 'group-buy-primary'; groupActivate.textContent = '產生啟用指令';
+  const groupCodeBox = document.createElement('div'); groupCodeBox.className = 'group-buy-code-box'; groupCodeBox.hidden = true;
+  const groupCodeLabel = document.createElement('label'); groupCodeLabel.htmlFor = 'group-buy-command'; groupCodeLabel.textContent = '貼到群組的啟用指令';
+  const groupCodeRow = document.createElement('div'); groupCodeRow.className = 'group-buy-code-row';
+  const groupCode = document.createElement('textarea'); groupCode.id = 'group-buy-command'; groupCode.readOnly = true; groupCode.rows = 2; groupCode.spellcheck = false;
+  const groupCopy = document.createElement('button'); groupCopy.type = 'button'; groupCopy.className = 'group-buy-copy'; groupCopy.textContent = '複製指令';
+  const groupExpiry = document.createElement('p'); groupExpiry.className = 'group-buy-expiry';
+  groupCodeRow.append(groupCode, groupCopy); groupCodeBox.append(groupCodeLabel, groupCodeRow, groupExpiry);
+  const groupFeedback = document.createElement('p'); groupFeedback.className = 'group-buy-feedback'; groupFeedback.setAttribute('role', 'status'); groupFeedback.hidden = true;
+  const groupLimit = document.createElement('p'); groupLimit.className = 'group-buy-footnote'; groupLimit.textContent = '試用版 · 每次一個商品 · 最多 200 位買家 · 暫不收款';
+  groupBody.append(groupHelp, groupSteps, groupActivate, groupCodeBox, groupFeedback, groupLimit); groupSetup.append(groupSetupTitle, groupBody); $('line-account').append(groupSetup);
+  groupCopy.onclick = async () => {
+    try { await navigator.clipboard.writeText(groupCode.value); groupCopy.textContent = '已複製'; groupFeedback.textContent = '已複製，請由團主貼到 LINE 群組。'; }
+    catch { groupCode.focus(); groupCode.select(); groupFeedback.textContent = '請長按或按 Ctrl+C 複製已選取的指令。'; }
+    groupFeedback.hidden = false;
+  };
   groupActivate.onclick = async () => {
-    groupActivate.disabled = true;
-    try { const data = await api('group-buy/activation', { method: 'POST', body: '{}' }); groupCode.value = data.command; groupCode.hidden = false; groupCode.select(); groupFeedback.textContent = '複製指令並在 10 分鐘內貼到群組。貼出指令的 LINE 帳號將成為團主。'; }
-    catch (error) { groupFeedback.textContent = error.message; }
+    groupActivate.disabled = true; groupActivate.textContent = '正在產生…'; groupFeedback.hidden = true; groupFeedback.classList.remove('is-error');
+    try { const data = await api('group-buy/activation', { method: 'POST', body: '{}' }); groupCode.value = data.command; groupCodeBox.hidden = false; groupCopy.textContent = '複製指令'; groupActivate.textContent = '重新產生'; groupExpiry.textContent = `有效至 ${formatClock(data.expiresAt)} · 貼出指令的 LINE 帳號將成為團主`; }
+    catch (error) { groupFeedback.textContent = error.message; groupFeedback.classList.add('is-error'); groupFeedback.hidden = false; groupActivate.textContent = groupCode.value ? '重新產生' : '產生啟用指令'; }
     finally { groupActivate.disabled = false; }
   };
   const groupPanel = document.createElement('details'); groupPanel.className = 'connection-details'; groupPanel.hidden = true;
@@ -1192,7 +1208,7 @@ export function createLineInbox() {
       messageRequest++; messageLoading = false; messageArea.removeAttribute("aria-busy");
       messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; pageMode = nextMode; channel = null; facebookAccount = null, instagramAccount = null; selected = null; refreshing = false; saving = false;
-      groupCode.value = ''; groupCode.hidden = true; groupFeedback.textContent = ''; groupPanel.hidden = true; groupRows.replaceChildren();
+      groupCode.value = ''; groupCodeBox.hidden = true; groupFeedback.textContent = ''; groupFeedback.hidden = true; groupActivate.textContent = '產生啟用指令'; groupPanel.hidden = true; groupRows.replaceChildren();
       unchangedRounds = 0; lastListVersion = ""; messageSnapshot = null; lastResume = 0;
       selectedAi = null; changingAi = false; aiEnabled = false; aiRequest++;
       channelAiSettings = null; channelAiSaving = false; renderChannelAiToggle(); channelAiFeedback("");

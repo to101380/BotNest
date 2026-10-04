@@ -1,0 +1,29 @@
+#line-account .group-buy-setup{width:100%;margin-top:16px;border:1px solid #e5e7eb;border-radius:16px;background:rgba(248,249,251,.86);overflow:hidden;min-width:0}
+#line-account .group-buy-setup>summary{display:flex;align-items:center;gap:10px;padding:18px 20px;margin:0;color:#20252d;font-size:14px;font-weight:650;list-style:none;cursor:pointer}
+#line-account .group-buy-setup>summary::-webkit-details-marker{display:none}
+#line-account .group-buy-setup>summary:before{content:'›';font-size:22px;font-weight:400;color:#7b8492;line-height:1;transition:transform 160ms ease}
+#line-account .group-buy-setup[open]>summary:before{transform:rotate(90deg)}
+#line-account .group-buy-setup-body{padding:0 20px 20px;display:grid;gap:16px;min-width:0}
+#line-account .group-buy-description{margin:0;color:#69717e;font-size:13px;line-height:1.7}
+#line-account .group-buy-steps{margin:0;padding:0;display:grid;gap:12px;list-style:none;counter-reset:group-step}
+#line-account .group-buy-steps li{display:flex;align-items:flex-start;gap:10px;color:#414955;font-size:13px;line-height:1.7;counter-increment:group-step}
+#line-account .group-buy-steps li:before{content:counter(group-step);display:grid;place-items:center;flex:0 0 23px;height:23px;border-radius:50%;background:#e9edf3;color:#5d6877;font-size:11px;font-weight:650}
+#line-account .group-buy-primary,#line-account .group-buy-copy{appearance:none;width:auto;min-height:40px;margin:0;padding:10px 16px;border-radius:10px;font:600 13px/1.4 system-ui,sans-serif;cursor:pointer;transition:background 160ms ease,opacity 160ms ease}
+#line-account .group-buy-primary{justify-self:start;border:1px solid #1765d9;background:#1765d9;color:white;box-shadow:0 2px 4px #1765d91a}
+#line-account .group-buy-primary:hover{background:#1258c3}
+#line-account .group-buy-primary:disabled{opacity:.55;cursor:wait}
+#line-account .group-buy-code-box{display:grid;gap:9px;padding:16px;border:1px solid #e2e6ed;border-radius:12px;background:#fff;min-width:0}
+#line-account .group-buy-code-box[hidden],#line-account .group-buy-feedback[hidden]{display:none}
+#line-account .group-buy-code-box label{margin:0;color:#515c6b;font-size:12px;font-weight:600}
+#line-account .group-buy-code-row{display:flex;align-items:center;gap:12px;min-width:0}
+#line-account #group-buy-command{box-sizing:border-box;flex:1;min-width:0;width:100%;min-height:58px;height:58px;margin:0;padding:9px 11px;border:1px solid #e7eaf0;border-radius:8px;background:#f7f8fa;color:#283344;resize:none;overflow:auto;font:13px/1.5 ui-monospace,Consolas,monospace;overflow-wrap:anywhere;word-break:break-all}
+#line-account .group-buy-copy{flex-shrink:0;border:1px solid #dae1eb;background:#f4f7fc;color:#1765d9}
+#line-account .group-buy-copy:hover{background:#eaf0fa}
+#line-account .group-buy-expiry,#line-account .group-buy-footnote{margin:0;color:#8a919d;font-size:11px;line-height:1.7}
+#line-account .group-buy-feedback{margin:0;color:#28745a;font-size:12px;line-height:1.6}
+#line-account .group-buy-feedback.is-error{color:#b43e3e}
+#line-account .group-buy-footnote{padding-top:14px;border-top:1px solid #e5e7eb}
+#line-account .group-buy-setup :focus-visible{outline:3px solid #8dbafa;outline-offset:3px}
+@media(max-width:580px){#line-account .group-buy-setup>summary{padding:16px}#line-account .group-buy-setup-body{padding:0 16px 16px}#line-account .group-buy-code-row{flex-direction:column;align-items:stretch}#line-account .group-buy-copy{width:100%}#line-account .group-buy-code-box{padding:12px}}
+@media(prefers-reduced-motion:reduce){#line-account .group-buy-setup *{transition:none!important}}
+@media(forced-colors:active){#line-account .group-buy-primary,#line-account .group-buy-copy{border:1px solid ButtonText}}
