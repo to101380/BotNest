@@ -12,6 +12,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { createHandler } from "./core.js";
 import { createStore } from "./store.js";
+import { createGroupBuy } from './group-buy.js';
 import { createAdminUsers, createAdminStore } from "./admin-users.js";
 import { createProfileHandler, createProfileStore } from "./account-profile.js";
 import { createAiResponder, createZernioAiResponder } from "./ai.js";
@@ -76,7 +77,7 @@ export const botnestApi = onRequest({
     if (req.method !== "GET") return res.status(405).json({ error: "僅提供唯讀監控。" });
     try { const [snapshot, permissions] = await Promise.all([monitor.snapshot(), readPermissionAudit(() => applicationDefault().getAccessToken())]); return res.json({ ...snapshot, permissions }); } catch { return res.status(503).json({ error: "監控資料暫時無法讀取，不能判定系統正常。" }); }
   }
-  handler ||= createHandler({ store: createStore(getFirestore()), verifyToken: token => getAuth().verifyIdToken(token, true), authorizeSession: loginSecurity.authorize, getKey: () => encryptionKey.value(),
+  handler ||= createHandler({ store: createStore(getFirestore()), groupBuy: createGroupBuy(getFirestore(), { getOpenAiKey: () => openAiKey.value() }), verifyToken: token => getAuth().verifyIdToken(token, true), authorizeSession: loginSecurity.authorize, getKey: () => encryptionKey.value(),
     getOpenAiKey: () => openAiKey.value(), openAiConfigured: () => !!openAiKey.value(), getZernioKey: () => zernioApiKey.value(),
     media: {
       save: (path, bytes, contentType) => getStorage().bucket("planning-with-ai-52d58-botnest-media").file(path).save(bytes, { resumable: false, metadata: { contentType, cacheControl: "private, no-store" } }),

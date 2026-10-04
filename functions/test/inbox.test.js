@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomBytes, createHash, createHmac, randomUUID } from "node:crypto";
 import { createHandler, seal, unseal, validSignature, normalizeEvent } from "../core.js";
 import { createStore } from "../store.js";
+import { createGroupBuy } from '../group-buy.js';
 import { memoryDb } from "./memory.js";
 import { validateUpload } from "../media.js";
 import { createAiResponder, createZernioAiResponder } from "../ai.js";
@@ -10,6 +11,26 @@ import { createAiResponder, createZernioAiResponder } from "../ai.js";
 const key = randomBytes(32).toString("base64"), secret = "a".repeat(32), botId = `U${"b".repeat(32)}`;
 const event = (id = "1", timestamp = 1000) => ({ type: "message", webhookEventId: `event-${id}`, timestamp, source: { type: "user", userId: `U${"c".repeat(32)}` }, message: { id, type: "text", text: `message ${id}` } });
 const channel = (id = "1234567890", uid = "alice") => ({ channelId: id, ownerUid: uid, botUserId: botId, displayName: "Test OA", basicId: "@test", secret: seal(secret, key, id), accessToken: seal("test-access-token", key, `${id}:access-token`) });
+
+test('signed group webhooks collect orders once and owner API hides LINE identities', async () => {
+  let service; const calls = [];
+  const f = await fixture({ groupBuy: { process: (...args) => service.process(...args), activation: (...args) => service.activation(...args), snapshot: (...args) => service.snapshot(...args) },
+    fetchLine: async (url, options) => { calls.push({ url, body: options.body && JSON.parse(options.body) }); return new Response(JSON.stringify(url.includes('/member/') ? { displayName: '小美' } : {})); } });
+  service = createGroupBuy(f.db, { now: () => 1000000 });
+  const activation = await f.request('/api/line/group-buy/activation', { method: 'POST', body: {} });
+  const groupId = `C${'d'.repeat(32)}`, userId = `U${'e'.repeat(32)}`;
+  const groupEvent = (id, text) => ({ ...event(id, 1000000), replyToken: `reply-${id}`, source: { type: 'group', groupId, userId }, message: { id, type: 'text', text } });
+  assert.equal((await f.webhook([groupEvent('enable', activation.body.command)])).code, 200);
+  await f.webhook([groupEvent('open', '/開團 水餃 150')]);
+  const order = groupEvent('buy', '我要三組'); await f.webhook([order]); await f.webhook([order]);
+  assert.equal((await service.snapshot('1234567890', groupId)).orders[userId].quantity, 3);
+  assert.equal(calls.filter(call => call.url.endsWith('/message/reply')).length, 3);
+  const conversationId = createHash('sha256').update(`group:${groupId}`).digest('hex');
+  const result = await f.request(`/api/line/group-buy/${conversationId}`);
+  assert.equal(result.code, 200); assert.equal(result.body.groupBuy.orders[0].label, '小美');
+  assert.ok(!JSON.stringify(result.body).includes(userId)); assert.ok(!JSON.stringify(result.body).includes(groupId));
+  assert.equal((await f.request(`/api/line/group-buy/${conversationId}`, { token: 'bob' })).code, 404);
+});
 
 test("webhook reply credentials are encrypted, channel/message-bound, private and not renewed by redelivery", async () => {
   let clock = 1000000;

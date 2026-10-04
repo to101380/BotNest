@@ -57,6 +57,40 @@ export function createLineInbox() {
     void refresh(false, true).finally(() => { if (resumedEpoch === epoch) scheduleRefresh(); });
   }
   const conversations = new Map(), messages = new Map();
+  const groupSetup = document.createElement('details'); groupSetup.className = 'connection-details';
+  const groupSetupTitle = document.createElement('summary'); groupSetupTitle.textContent = 'LINE 群組團購試用';
+  const groupHelp = document.createElement('p'); groupHelp.className = 'note'; groupHelp.textContent = '在 LINE Developers 開啟 Allow bot to join group chats，把此官方帳號加入一般 LINE 群組。取得啟用指令後，由團主貼到群組，再輸入 /開團 水餃 150。一次開一團，最多 200 位買家；本版先測收單，不收款。';
+  const groupActivate = document.createElement('button'); groupActivate.type = 'button'; groupActivate.textContent = '取得啟用指令';
+  const groupCode = document.createElement('textarea'); groupCode.readOnly = true; groupCode.hidden = true; groupCode.rows = 2; groupCode.setAttribute('aria-label', '團購啟用指令');
+  const groupFeedback = document.createElement('p'); groupFeedback.setAttribute('role', 'status');
+  groupSetup.append(groupSetupTitle, groupHelp, groupActivate, groupCode, groupFeedback); $('line-account').append(groupSetup);
+  groupActivate.onclick = async () => {
+    groupActivate.disabled = true;
+    try { const data = await api('group-buy/activation', { method: 'POST', body: '{}' }); groupCode.value = data.command; groupCode.hidden = false; groupCode.select(); groupFeedback.textContent = '複製指令並在 10 分鐘內貼到群組。貼出指令的 LINE 帳號將成為團主。'; }
+    catch (error) { groupFeedback.textContent = error.message; }
+    finally { groupActivate.disabled = false; }
+  };
+  const groupPanel = document.createElement('details'); groupPanel.className = 'connection-details'; groupPanel.hidden = true;
+  const groupTitle = document.createElement('summary'); groupTitle.textContent = '團購試用 · 查看收單';
+  const groupRefresh = document.createElement('button'); groupRefresh.type = 'button'; groupRefresh.textContent = '更新訂單';
+  const groupSummary = document.createElement('p'); groupSummary.setAttribute('role', 'status');
+  const groupRows = document.createElement('ul'); groupPanel.append(groupTitle, groupRefresh, groupSummary, groupRows); $('line-messages').before(groupPanel);
+  async function loadGroupBuy() {
+    const id = selected, conversation = conversations.get(id);
+    groupPanel.hidden = !conversation || isSocial(conversation) || conversation.sourceType !== 'group';
+    if (groupPanel.hidden) return;
+    groupRefresh.disabled = true; groupSummary.textContent = '讀取中…'; groupRows.replaceChildren();
+    try {
+      const { groupBuy: value } = await api(`group-buy/${id}`);
+      if (selected !== id) return;
+      if (!value?.product) { groupSummary.textContent = '請在渠道 → LINE 群組團購試用取得啟用指令，並在群組開團。'; return; }
+      const total = value.orders.reduce((sum, item) => sum + item.quantity, 0);
+      groupSummary.textContent = `${value.product} · ${value.open ? '收單中' : '已結團'} · ${value.orders.length} 位買家 · ${total} 份 · ${total * value.priceCents / 100} 元`;
+      for (const order of value.orders) { const row = document.createElement('li'); row.textContent = `${order.label}：${order.quantity} 份，${order.quantity * value.priceCents / 100} 元`; groupRows.append(row); }
+    } catch (error) { if (selected === id) groupSummary.textContent = error.message; }
+    finally { groupRefresh.disabled = false; }
+  }
+  groupRefresh.onclick = () => void loadGroupBuy(); groupPanel.ontoggle = () => { if (groupPanel.open) void loadGroupBuy(); };
   const workflow = createConversationWorkflow({ request: options => aiApi("workflow", options), changed: () => { if (active) { showConversations(); if (selected) showMessages("keep"); } }, feedback: text => status(text), getUser: () => user });
   const quoteDrafts = new Map();
   const actionStyle = document.createElement("link"); actionStyle.rel = "stylesheet"; actionStyle.href = "/message-actions.css"; document.head.append(actionStyle);
@@ -821,7 +855,7 @@ export function createLineInbox() {
     if (unreadId) void workflow.messageAct(id, 'read', unreadId);
     $("line-conversation-title").textContent = label(conversations.get(id));
     showConversations(); showMessages(); showCustomerPanel();
-    const tasks = [loadMessages(false, "bottom"), loadAiControl()];
+    const tasks = [loadMessages(false, "bottom"), loadAiControl(), loadGroupBuy()];
     if (isSocial(conversations.get(id))) tasks.push(customerRequest(id).then(data => {
       if (selected !== id) return;
       const item = conversations.get(id); conversations.set(id, { ...item, customer: data.customer || {} }); showCustomerPanel(); showConversations();
@@ -1158,6 +1192,7 @@ export function createLineInbox() {
       messageRequest++; messageLoading = false; messageArea.removeAttribute("aria-busy");
       messageResize.disconnect(); followLatest = true;
       user = nextUser; active = nextActive; pageMode = nextMode; channel = null; facebookAccount = null, instagramAccount = null; selected = null; refreshing = false; saving = false;
+      groupCode.value = ''; groupCode.hidden = true; groupFeedback.textContent = ''; groupPanel.hidden = true; groupRows.replaceChildren();
       unchangedRounds = 0; lastListVersion = ""; messageSnapshot = null; lastResume = 0;
       selectedAi = null; changingAi = false; aiEnabled = false; aiRequest++;
       channelAiSettings = null; channelAiSaving = false; renderChannelAiToggle(); channelAiFeedback("");

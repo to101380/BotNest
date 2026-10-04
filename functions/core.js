@@ -84,7 +84,7 @@ function cleanCustomer(input) {
   return result;
 }
 
-export function createHandler({ store, verifyToken, authorizeSession = async () => { throw new LoginSecurityError(503, "登入安全服務尚未設定。"); }, getKey, getOpenAiKey = () => "", openAiConfigured = () => !!getOpenAiKey(), getZernioKey = () => "", media, fetchAudio, fetchLine = fetch, fetchZernio = fetch, fetchOpenAi = fetch, now = Date.now }) {
+export function createHandler({ store, groupBuy, verifyToken, authorizeSession = async () => { throw new LoginSecurityError(503, "登入安全服務尚未設定。"); }, getKey, getOpenAiKey = () => "", openAiConfigured = () => !!getOpenAiKey(), getZernioKey = () => "", media, fetchAudio, fetchLine = fetch, fetchZernio = fetch, fetchOpenAi = fetch, now = Date.now }) {
   const zernioWebhookUrl = "https://planning-with-ai-52d58.web.app/zernio-webhook";
   const zernioWebhookToken = () => createHmac("sha256", Buffer.from(getKey(), "base64")).update("botnest-zernio-webhook-v1").digest("hex");
   let zernioWebhookReady = false, zernioWebhookSetup;
@@ -263,6 +263,22 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
               ? { replyToken: seal(event.replyToken, getKey(), `${channel.channelId}:${normalized.messageId}:reply-token`), replyExpiresAt: receivedAt + 45000 }
               : null;
             await store.ingest(channel.channelId, normalized, reply);
+            if (groupBuy && normalized.sourceType === 'group') {
+              const token = unseal(channel.accessToken, getKey(), `${channel.channelId}:access-token`);
+              const result = await groupBuy.process(channel.channelId, event, async () => {
+                const profile = await lineRequest(`/v2/bot/group/${event.source.groupId}/member/${event.source.userId}`, { headers: { Authorization: `Bearer ${token}` } });
+                return profile.displayName;
+              });
+              if (result) {
+                let delivery = 'uncertain';
+                if (reply) try {
+                  const sent = await fetchLine('https://api.line.me/v2/bot/message/reply', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ replyToken: event.replyToken, messages: [{ type: 'text', text: result.text }] }), signal: AbortSignal.timeout(12000) });
+                  delivery = sent.ok ? 'sent' : 'failed';
+                } catch { /* Orders are committed; never repeat an uncertain send. */ }
+                await result.eventRef.set({ delivery }, { merge: true });
+              }
+            }
           }
         }
         await store.markVerified(channel.channelId, now(), body.events.some(event => event.type === "message"));
@@ -445,6 +461,16 @@ export function createHandler({ store, verifyToken, authorizeSession = async () 
       }
       const account = await store.account(user.uid);
       if (!account || account.ownerUid !== user.uid) throw new HttpError(404, "請先綁定 OA。");
+      if (path === '/api/line/group-buy/activation' && req.method === 'POST' && groupBuy) return res.json(await groupBuy.activation(account.channelId));
+      const groupBuyRoute = /^\/api\/line\/group-buy\/([a-f0-9]{64})$/.exec(path);
+      if (groupBuyRoute && req.method === 'GET' && groupBuy) {
+        const target = await store.getConversation(account.channelId, groupBuyRoute[1]);
+        if (!target || target.sourceType !== 'group') throw new HttpError(404, '請選擇 LINE 群組。');
+        const data = await groupBuy.snapshot(account.channelId, target.sourceId);
+        if (!data) return res.json({ groupBuy: null });
+        const { host, groupId, pending, ...visible } = data;
+        return res.json({ groupBuy: { ...visible, orders: Object.values(data.orders).filter(order => order.quantity > 0) } });
+      }
       if (path === "/api/line/ai-settings" && req.method === "GET") {
         const ai = normalizeAiSettings(await store.accountAiSettings(user.uid));
         return res.json({ settings: { ...ai, configured: openAiConfigured() } });
