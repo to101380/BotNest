@@ -4,6 +4,29 @@ import { createGroupBuy, parseOrder } from '../group-buy.js';
 import { memoryDb } from './memory.js';
 
 const group = `C${'a'.repeat(32)}`, host = `U${'b'.repeat(32)}`, buyer = `U${'c'.repeat(32)}`;
+test('button onboarding binds only the owning channel, then opens, orders and rejects old cards', async () => {
+  const f = fixture();
+  const tap = (data, userId = host) => { const event = f.event('', userId); event.type = 'postback'; delete event.message; event.postback = { data: `gb:${data}` }; return f.service.process('12345', event, async () => '小美'); };
+  const request = await tap('bind');
+  const url = request.messages[0].contents.footer.contents[0].action.uri;
+  const token = new URL(url).searchParams.get('groupBuyBinding');
+  await assert.rejects(f.service.bind('67890', token));
+  await f.service.bind('12345', token);
+  await assert.rejects(f.service.bind('12345', token));
+  await tap('new', buyer); assert.equal((await f.state()).draft, undefined);
+  await tap('new'); await f.send('手工水餃'); await f.send('150');
+  assert.equal((await f.state()).open, false);
+  await tap(`publish:${(await f.state()).draft.nonce}`);
+  const round = (await f.state()).roundId;
+  const event = f.event('', buyer); event.type = 'postback'; delete event.message; event.postback = { data: `gb:buy:${round}:3` };
+  await f.service.process('12345', event); await f.service.process('12345', event);
+  assert.equal((await f.state()).orders[buyer].quantity, 3);
+  await tap(`end:${round}`, buyer); assert.equal((await f.state()).open, true);
+  await tap(`close:${round}`); assert.equal((await f.state()).open, true);
+  await tap(`end:${round}`); assert.equal((await f.state()).open, false);
+  await tap('new'); await f.send('雞塊'); await f.send('100'); await tap(`publish:${(await f.state()).draft.nonce}`);
+  await tap(`buy:${round}:1`, buyer); assert.equal((await f.state()).orders[buyer], undefined);
+});
 function fixture(options = {}) {
   const db = memoryDb(); let clock = 1000000, serial = 0;
   db.data.set('botnest/state/channels/12345', { ownerUid: 'seller' });

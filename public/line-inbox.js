@@ -61,9 +61,9 @@ export function createLineInbox() {
   const groupSetup = document.createElement('details'); groupSetup.className = 'connection-details group-buy-setup';
   const groupSetupTitle = document.createElement('summary'); groupSetupTitle.textContent = 'LINE 群組團購試用';
   const groupBody = document.createElement('div'); groupBody.className = 'group-buy-setup-body';
-  const groupHelp = document.createElement('p'); groupHelp.className = 'group-buy-description'; groupHelp.textContent = '把官方帳號加入 LINE 群組，貼上啟用指令，就能開始收單。';
+  const groupHelp = document.createElement('p'); groupHelp.className = 'group-buy-description'; groupHelp.textContent = '把官方帳號加入 LINE 群組，點「設定團主」，就能開始收單。已在群組內？輸入「團購」叫出選單。';
   const groupSteps = document.createElement('ol'); groupSteps.className = 'group-buy-steps';
-  for (const value of ['在 LINE Developers 開啟「Allow bot to join group chats」。', '邀請此官方帳號加入一般 LINE 群組。', '由團主貼上啟用指令，再輸入「/開團 水餃 150」。']) { const step = document.createElement('li'); step.textContent = value; groupSteps.append(step); }
+  for (const value of ['在 LINE Developers 開啟「Allow bot to join group chats」。', '邀請此官方帳號加入一般 LINE 群組，點「設定團主」。', '登入 BotNest 確認綁定，再回群組點「開新團」。']) { const step = document.createElement('li'); step.textContent = value; groupSteps.append(step); }
   const groupActivate = document.createElement('button'); groupActivate.type = 'button'; groupActivate.className = 'group-buy-primary'; groupActivate.textContent = '產生啟用指令';
   const groupCodeBox = document.createElement('div'); groupCodeBox.className = 'group-buy-code-box'; groupCodeBox.hidden = true;
   const groupCodeLabel = document.createElement('label'); groupCodeLabel.htmlFor = 'group-buy-command'; groupCodeLabel.textContent = '貼到群組的啟用指令';
@@ -75,6 +75,21 @@ export function createLineInbox() {
   const groupFeedback = document.createElement('p'); groupFeedback.className = 'group-buy-feedback'; groupFeedback.setAttribute('role', 'status'); groupFeedback.hidden = true;
   const groupLimit = document.createElement('p'); groupLimit.className = 'group-buy-footnote'; groupLimit.textContent = '試用版 · 每次一個商品 · 最多 200 位買家 · 暫不收款';
   groupBody.append(groupHelp, groupSteps, groupActivate, groupCodeBox, groupFeedback, groupLimit); groupSetup.append(groupSetupTitle, groupBody); $('line-account').append(groupSetup);
+  const bindingToken = new URLSearchParams(location.search).get('groupBuyBinding');
+  const bindPanel = document.createElement('section'); bindPanel.className = 'group-buy-code-box'; bindPanel.hidden = !/^[a-f0-9]{64}$/.test(bindingToken || '');
+  const bindDescription = document.createElement('p'); bindDescription.textContent = '確認將剛才在 LINE 群組點「設定團主」的成員設為團主？此群組的 AI 客服會關閉。請確認這個連結是你本人剛才點開的。';
+  const bindButton = document.createElement('button'); bindButton.type = 'button'; bindButton.className = 'group-buy-primary'; bindButton.textContent = '確認設定團主';
+  const bindStatus = document.createElement('p'); bindStatus.setAttribute('role', 'status');
+  bindPanel.append(bindDescription, bindButton, bindStatus); groupBody.prepend(bindPanel);
+  bindButton.onclick = async () => {
+    bindButton.disabled = true; bindStatus.textContent = '正在設定…';
+    try {
+      const result = await api('group-buy/bind', { method: 'POST', body: JSON.stringify({ token: bindingToken }) });
+      bindStatus.textContent = result.notified ? '設定完成！回 LINE 群組輸入「團購」，點「開新團」即可。' : '設定完成！請回 LINE 群組輸入「團購」開始。';
+      bindButton.textContent = '已設定完成';
+      const url = new URL(location.href); url.searchParams.delete('groupBuyBinding'); history.replaceState(null, '', url);
+    } catch (error) { bindStatus.textContent = error.message; bindButton.disabled = false; }
+  };
   groupCopy.onclick = async () => {
     try { await navigator.clipboard.writeText(groupCode.value); groupCopy.textContent = '已複製'; groupFeedback.textContent = '已複製，請由團主貼到 LINE 群組。'; }
     catch { groupCode.focus(); groupCode.select(); groupFeedback.textContent = '請長按或按 Ctrl+C 複製已選取的指令。'; }
@@ -954,6 +969,7 @@ export function createLineInbox() {
       if (lineResult.status === "fulfilled") channel = lineResult.value.channel;
       if (zernioResult.status === "fulfilled") showZernioAccount(zernioResult.value);
       showAccount();
+      if (bindingToken && channel) { groupSetup.open = true; bindPanel.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
       if (channel || facebookAccount || instagramAccount) {
         if (channel && pageMode !== "inbox") {
           status(channel.verifiedAt ? "LINE 官方帳號已連接，Webhook 運作正常。" : "LINE 官方帳號已連接，等待 Webhook 驗證。");

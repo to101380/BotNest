@@ -255,6 +255,22 @@ export function createHandler({ store, groupBuy, verifyToken, authorizeSession =
         const receivedAt = now();
         for (const event of body.events) {
           const normalized = normalizeEvent(event);
+          if (!normalized && groupBuy && event.source?.type === 'group' && ['join', 'postback'].includes(event.type)) {
+            const result = await groupBuy.process(channel.channelId, event, async () => {
+              const token = unseal(channel.accessToken, getKey(), `${channel.channelId}:access-token`);
+              const profile = await lineRequest(`/v2/bot/group/${event.source.groupId}/member/${event.source.userId}`, { headers: { Authorization: `Bearer ${token}` } });
+              return profile.displayName;
+            });
+            if (result) {
+              let delivery = 'uncertain';
+              if (!event.deliveryContext?.isRedelivery && typeof event.replyToken === 'string') try {
+                const token = unseal(channel.accessToken, getKey(), `${channel.channelId}:access-token`);
+                const sent = await fetchLine('https://api.line.me/v2/bot/message/reply', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ replyToken: event.replyToken, messages: result.messages || [{ type: 'text', text: result.text }] }), signal: AbortSignal.timeout(12000) });
+                delivery = sent.ok ? 'sent' : 'failed';
+              } catch { /* Never repeat an uncertain send. */ }
+              await result.eventRef.set({ delivery }, { merge: true });
+            }
+          }
           if (normalized) {
             // Keep the short-lived credential encrypted and out of public message DTOs.
             // Redelivery may carry an already-used token, so it cannot start a Reply attempt.
@@ -278,7 +294,7 @@ export function createHandler({ store, groupBuy, verifyToken, authorizeSession =
                 let delivery = 'uncertain';
                 if (reply) try {
                   const sent = await fetchLine('https://api.line.me/v2/bot/message/reply', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ replyToken: event.replyToken, messages: [{ type: 'text', text: result.text }] }), signal: AbortSignal.timeout(12000) });
+                    body: JSON.stringify({ replyToken: event.replyToken, messages: result.messages || [{ type: 'text', text: result.text }] }), signal: AbortSignal.timeout(12000) });
                   delivery = sent.ok ? 'sent' : 'failed';
                 } catch { /* Orders are committed; never repeat an uncertain send. */ }
                 await result.eventRef.set({ delivery }, { merge: true });
@@ -466,13 +482,24 @@ export function createHandler({ store, groupBuy, verifyToken, authorizeSession =
       const account = await store.account(user.uid);
       if (!account || account.ownerUid !== user.uid) throw new HttpError(404, "請先綁定 OA。");
       if (path === '/api/line/group-buy/activation' && req.method === 'POST' && groupBuy) return res.json(await groupBuy.activation(account.channelId));
+      if (path === '/api/line/group-buy/bind' && req.method === 'POST' && groupBuy) {
+        let binding;
+        try { binding = await groupBuy.bind(account.channelId, req.body?.token); } catch (error) { throw new HttpError(400, error.message); }
+        const token = unseal(account.accessToken, getKey(), `${account.channelId}:access-token`);
+        let notified = false;
+        try {
+          const sent = await fetchLine('https://api.line.me/v2/bot/message/push', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ to: binding.groupId, messages: binding.messages }), signal: AbortSignal.timeout(12000) });
+          notified = sent.ok;
+        } catch { /* Binding is durable even if notification fails. */ }
+        return res.json({ ok: true, notified });
+      }
       const groupBuyRoute = /^\/api\/line\/group-buy\/([a-f0-9]{64})$/.exec(path);
       if (groupBuyRoute && req.method === 'GET' && groupBuy) {
         const target = await store.getConversation(account.channelId, groupBuyRoute[1]);
         if (!target || target.sourceType !== 'group') throw new HttpError(404, '請選擇 LINE 群組。');
         const data = await groupBuy.snapshot(account.channelId, target.sourceId);
         if (!data) return res.json({ groupBuy: null });
-        const { host, groupId, pending, ...visible } = data;
+        const { host, groupId, pending, draft, ...visible } = data;
         return res.json({ groupBuy: { ...visible, orders: Object.values(data.orders).filter(order => order.quantity > 0) } });
       }
       if (path === "/api/line/ai-settings" && req.method === "GET") {

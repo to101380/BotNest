@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { action, card, welcome, ready, productCard } from './group-buy-cards.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const number = value => {
@@ -58,7 +59,99 @@ export function createGroupBuy(db, { now = Date.now, getOpenAiKey = () => '', fe
     return { command: `/啟用團購 ${code}`, expiresAt: now() + 10 * 60000 };
   }
   async function snapshot(id, group) { return (await ref(id, group).get()).data() || null; }
+  async function bind(id, token) {
+    if (!/^[a-f0-9]{64}$/.test(token || '')) throw new Error('綁定連結無效');
+    return db.runTransaction(async tx => {
+      const requestRef = channelRef(id).collection('groupBuyBindings').doc(token), request = (await tx.get(requestRef)).data();
+      if (!request || request.expiresAt < now()) throw new Error('綁定連結已失效，請回群組重新點設定團主');
+      const groupRef = ref(id, request.group), state = (await tx.get(groupRef)).data();
+      if (state && state.host !== request.user) throw new Error('此群組已有團主');
+      const control = await readAiControl(tx, id, request.group);
+      disableAi(tx, control);
+      tx.set(groupRef, { ...(state || { host: request.user, groupId: request.group, open: false, orders: {}, pending: {} }), customerAiDisabledAt: now(), updatedAt: now() });
+      tx.delete(requestRef);
+      return { groupId: request.group, messages: [state?.open ? productCard(state) : ready()] };
+    });
+  }
   async function process(id, event, getMemberName = async () => '') {
+    if (event.source?.type !== 'group' || !/^C[a-f0-9]{32}$/i.test(event.source.groupId || '') || typeof event.webhookEventId !== 'string' || !Number.isFinite(event.timestamp) || now() - event.timestamp > 5 * 60000 || event.timestamp > now() + 60000) return null;
+    const groupRef = ref(id, event.source.groupId), seenRef = groupRef.collection('events').doc(hash(event.webhookEventId));
+    const button = event.type === 'postback' && event.postback?.data?.startsWith('gb:') ? event.postback.data.slice(3) : '';
+    const current = await snapshot(id, event.source.groupId);
+    const user = event.source.userId;
+    if (event.type === 'join' || button === 'bind' || (event.type === 'message' && ['團購', '團購選單'].includes(event.message?.text?.trim()))) {
+      return db.runTransaction(async tx => {
+        if ((await tx.get(seenRef)).exists) return null;
+        let messages = [current ? (current.open ? productCard(current) : ready()) : welcome()];
+        if (button === 'bind') {
+          if (!/^U[a-f0-9]{32}$/i.test(user || '')) return null;
+          const token = randomBytes(32).toString('hex');
+          tx.set(channelRef(id).collection('groupBuyBindings').doc(token), { group: event.source.groupId, user, expiresAt: now() + 10 * 60000 });
+          messages = [card('確認團主身分', '請登入此官方帳號所屬的 BotNest 帳號，確認將剛才點按鈕的 LINE 成員設為團主。連結 10 分鐘內有效。', [{ type: 'uri', label: '登入並確認綁定', uri: `https://planning-with-ai-52d58.web.app/?groupBuyBinding=${token}#channels` }])];
+        }
+        tx.set(seenRef, { at: now(), delivery: 'claimed', expiresAt: new Date(now() + 30 * 86400000) });
+        return { messages, eventRef: seenRef };
+      });
+    }
+    if (button || (current?.draft?.user === user && current.draft.expiresAt > now() && event.type === 'message' && event.message?.type === 'text' && !event.message.text.startsWith('/'))) {
+      if (!current || !/^U[a-f0-9]{32}$/i.test(user || '')) return null;
+      const parts = button.split(':');
+      if (['buy', 'quantity', 'mine', 'cancel'].includes(parts[0])) {
+        if (parts[1] !== current.roundId || !current.open) return { text: '這張商品卡已停止收單，請輸入「團購」查看最新商品。', eventRef: seenRef };
+        if (parts[0] === 'quantity') {
+          return db.runTransaction(async tx => {
+            if ((await tx.get(seenRef)).exists) return null;
+            tx.set(seenRef, { at: now(), delivery: 'claimed' });
+            return { messages: [{ type: 'text', text: '選擇這次要追加的數量：', quickReply: { items: [1, 2, 3, 5, 10].map(n => ({ type: 'action', action: action(`${n} 份`, `buy:${current.roundId}:${n}`) })) } }], eventRef: seenRef };
+          });
+        }
+        if (parts[0] === 'buy' && !['1', '2', '3', '5', '10'].includes(parts[2])) return null;
+        event = { ...event, groupBuyRound: parts[1], type: 'message', message: { type: 'text', id: event.webhookEventId, text: parts[0] === 'buy' ? `+${parts[2]}` : parts[0] === 'cancel' ? '取消訂單' : '我的訂單' } };
+      } else if (button === 'stats') event = { ...event, type: 'message', message: { type: 'text', id: event.webhookEventId, text: '/統計' } };
+      else {
+        const result = await db.runTransaction(async tx => {
+          const state = (await tx.get(groupRef)).data();
+          if ((await tx.get(seenRef)).exists || !state) return null;
+          let messages, next = structuredClone(state);
+          if (state.host !== user) messages = [{ type: 'text', text: '只有團主可以操作。買家請點商品卡購買。' }];
+          else if (button === 'manage') messages = [card('團主操作', state.open ? '正在收單' : '尚未開團', state.open ? [action('查看統計', 'stats'), action('結束收單', `close:${state.roundId}`)] : [action('開新團', 'new')])];
+          else if (button === `close:${state.roundId}` && state.open) messages = [card('結束收單？', '結束後停止新增訂單，已登記的訂單會保留。', [action('確認結團', `end:${state.roundId}`)])];
+          else if (button === `end:${state.roundId}` && state.open) { next.open = false; next.pending = {}; delete next.draft; messages = [card('已結團', '訂單已保留，可查看統計或開始下一團。', [action('查看統計', 'stats'), action('開新團', 'new')])]; }
+          else if (button === 'new' && !state.open) { next.draft = { user, step: 'name', expiresAt: now() + 10 * 60000 }; messages = [{ type: 'text', text: '貼上商品文，例如「手工水餃，一包150元，週五到貨」。\n也可以先只輸入商品名稱，我會再問價格。10 分鐘內完成即可。', quickReply: { items: [{ type: 'action', action: action('放棄開團', 'abandon') }] } }]; }
+          else if (button === 'abandon') { delete next.draft; messages = [ready()]; }
+          else if (!button && state.draft?.expiresAt > now() && !state.open) {
+            const value = event.message.text.trim();
+            const prices = [...value.matchAll(/(?:每[份包組盒個]|一[份包組盒個])\s*(\d{1,6}(?:\.\d{1,2})?)\s*元/g)];
+            const product = value.split(/[，,。\n]/)[0].trim();
+            if (state.draft.step === 'name' && prices.length === 1 && product.length > 0 && product.length <= 60 && !/(\d+.*元|每[份包組盒個]|一[份包組盒個])/.test(product) && Number(prices[0][1]) > 0) {
+              next.draft = { ...next.draft, product, price: Number(prices[0][1]), step: 'review', nonce: randomBytes(8).toString('hex') };
+              messages = [card('確認開團', `${product}\n每份 ${next.draft.price} 元\n到貨日期等文字僅作說明，本次只收這個商品及數量。`, [action('確認開始收單', `publish:${next.draft.nonce}`), action('重新填寫', 'new'), action('放棄開團', 'abandon')])];
+            }
+            else if (state.draft.step === 'name' && value.length > 0 && value.length <= 60 && !/\d+\s*元|[，,。\n]/.test(value)) { next.draft.product = value; next.draft.step = 'price'; messages = [{ type: 'text', text: `「${value}」每份多少元？只要輸入數字，例如 150。` }]; }
+            else if (state.draft.step === 'price' && /^\d{1,6}(?:\.\d{1,2})?$/.test(value) && Number(value) > 0) { next.draft.price = Number(value); next.draft.step = 'review'; next.draft.nonce = randomBytes(8).toString('hex'); messages = [card('確認開團', `${state.draft.product}\n每份 ${value} 元`, [action('確認開始收單', `publish:${next.draft.nonce}`), action('重新填寫', 'new'), action('放棄開團', 'abandon')])]; }
+            else messages = [{ type: 'text', text: state.draft.step === 'name' ? '請輸入 1～60 字的商品名稱。' : state.draft.step === 'review' ? '請點上方「確認開始收單」，或重新填寫。' : '請輸入有效價格，例如 150。' }];
+          } else if (button === `publish:${state.draft?.nonce}` && state.draft?.step === 'review' && state.draft.expiresAt > now() && !state.open) {
+            if (state.roundId) tx.set(groupRef.collection('rounds').doc(state.roundId), state);
+            next = { host: state.host, groupId: state.groupId, customerAiDisabledAt: state.customerAiDisabledAt, roundId: randomUUID(), product: state.draft.product, priceCents: Math.round(state.draft.price * 100), open: true, orders: {}, pending: {}, startedAt: now() };
+            messages = [productCard(next)];
+          } else messages = [{ type: 'text', text: state.open ? '目前正在收單，請先結團。' : '按鈕已失效，請輸入「團購」重新開始。' }];
+          tx.set(groupRef, { ...next, updatedAt: now() }); tx.set(seenRef, { at: now(), delivery: 'claimed', expiresAt: new Date(now() + 30 * 86400000) });
+          return { messages, eventRef: seenRef };
+        });
+        return result;
+      }
+    }
+    const result = await processText(id, event, getMemberName);
+    if (result) {
+      const state = await snapshot(id, event.source.groupId);
+      if (/^\/啟用團購 /.test(event.message.text) && state?.host === user) result.messages = [ready()];
+      else if (event.message.text.startsWith('/開團') && state?.open && result.text.startsWith('開始收單')) result.messages = [productCard(state)];
+      // Controls always operate on the user ID provided by LINE's signed webhook.
+      else if (state?.open) result.messages = [{ type: 'text', text: result.text, quickReply: { items: [{ type: 'action', action: action('我的訂單', `mine:${state.roundId}`) }, { type: 'action', action: action('取消我的訂單', `cancel:${state.roundId}`) }] } }];
+    }
+    return result;
+  }
+  async function processText(id, event, getMemberName = async () => '') {
     if (event.type !== 'message' || event.message?.type !== 'text' || event.source?.type !== 'group' || !/^U[a-f0-9]{32}$/i.test(event.source.userId || '')) return null;
     if (now() - event.timestamp > 5 * 60000 || event.timestamp > now() + 60000) return null;
     const group = event.source.groupId, user = event.source.userId, text = event.message.text.trim(), groupRef = ref(id, group);
@@ -111,6 +204,7 @@ export function createGroupBuy(db, { now = Date.now, getOpenAiKey = () => '', fe
           reply = '團購機器人已啟用，此群組的 AI 客服自動回覆已關閉。\n團主請輸入：/開團 水餃 150\n一次開一團。喊單：+1、我也要1份、我要三組\n修改：改成2包；取消：取消訂單\n查詢：我的訂單；團主統計：/統計；結束：/結團\n每筆喊單會追加數量；AI 喊單判讀仍可用，需回覆 /確認 才登記。';
         }
       } else if (!state) return null;
+      else if (event.groupBuyRound && (event.groupBuyRound !== state.roundId || !state.open)) reply = '商品卡已失效，請輸入「團購」查看最新商品。';
       else if (text.startsWith('/開團')) {
         const match = /^\/開團\s+(.{1,60}?)\s+(\d{1,6}(?:\.\d{1,2})?)$/.exec(text);
         if (user !== state.host) reply = '只有啟用此群組的團主可以開團。';
@@ -170,5 +264,5 @@ export function createGroupBuy(db, { now = Date.now, getOpenAiKey = () => '', fe
       return { text: reply, eventRef };
     });
   }
-  return { activation, snapshot, process };
+  return { activation, snapshot, process, bind };
 }
