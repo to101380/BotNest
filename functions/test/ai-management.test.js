@@ -211,6 +211,28 @@ test("failed model calls leave failure logs and never send malformed answers or 
   assert.deepEqual(await responder(message), { skipped: true }); assert.equal(calls, 1);
 });
 
+for (const provider of ['facebook', 'instagram']) test(`${provider}: two connected accounts receiving the same Meta message generate and send only once`, async () => {
+  const f = await fixture(); let inferences = 0, sends = 0;
+  const incoming = [];
+  for (const [uid, accountId] of [['alice', 'a'.repeat(24)], ['bob', 'c'.repeat(24)]]) {
+    const profileId = (uid === 'alice' ? 'b' : 'd').repeat(24);
+    await f.store.saveZernioProfile(uid, profileId, now);
+    await f.store.bindZernioPlatform(uid, profileId, provider, { accountId, platform: provider }, now);
+    await f.store.saveAccountAiSettings(uid, normalizeAiSettings({ enabled: true }), now);
+    const item = await f.store.ingestZernio(uid, { provider, eventId: randomUUID(), accountId, remoteConversationId: `thread-${uid}`, remoteMessageId: 'same-physical-meta-message', text: '你好', sentAt: now, displayName: 'Demo', pictureUrl: '' });
+    incoming.push({ uid, ...item });
+  }
+  const responder = createZernioAiResponder({ store: f.store, getOpenAiKey: () => 'test', getZernioKey: () => 'test', now: () => now,
+    fetchOpenAi: async () => { inferences++; return response(answer()); },
+    fetchZernio: async (url, options = {}) => { if (options.method === 'POST' && !url.endsWith('/typing')) sends++; return new Response(JSON.stringify({ messages: [] })); } });
+  await Promise.all(incoming.map(responder));
+  assert.equal(inferences, 1); assert.equal(sends, 1);
+  await Promise.all(incoming.map(responder)); assert.equal(sends, 1);
+  // Same wording in a genuinely new message must still receive a reply.
+  const fresh = await f.store.ingestZernio('alice', { provider, eventId: randomUUID(), accountId: 'a'.repeat(24), remoteConversationId: 'thread-alice', remoteMessageId: 'new-physical-meta-message', text: '你好', sentAt: now + 1, displayName: 'Demo', pictureUrl: '' });
+  await responder({ uid: 'alice', ...fresh }); assert.equal(sends, 2);
+});
+
 test("Messenger respects channel selection and uses persistent control for handoff", async () => {
   const f = await fixture(), accountId = "a".repeat(24), profileId = "b".repeat(24);
   await f.store.saveZernioProfile("alice", profileId, now); await f.store.bindZernioFacebook("alice", profileId, { accountId, platform: "facebook" }, now);

@@ -1,0 +1,11 @@
+const fs = require('node:fs'), path = require('node:path');
+const root = path.resolve(__dirname, '..');
+const target = path.join(root, '.deploy-social-reply-dedup/functions/store.js');
+const local = fs.readFileSync(path.join(root, 'functions/store.js'), 'utf8').replace(/\r\n/g, '\n');
+const live = fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n');
+const start = '    async claimZernioAiReply(', end = '    async finishZernioAiReply(';
+const a = live.indexOf(start), b = live.indexOf(end, a);
+const c = local.indexOf(start), d = local.indexOf(end, c);
+if ([a, b, c, d].some(i => i < 0)) throw Error('Social reply claim anchors missing');
+fs.writeFileSync(target, live.slice(0, a) + local.slice(c, d) + live.slice(b));
+console.log('Patched only the social reply claim transaction.');

@@ -311,11 +311,21 @@ export function createStore(db) {
       await db.runTransaction(async tx => {
         const [message, limit] = await tx.getAll(ref, limitRef), value = message.data(), usage = limit.data();
         if (!value || value.direction !== "incoming" || !["text", "image", "audio"].includes(value.type) || value.unsent || ["sent", "handoff", "skipped", "failed"].includes(value.aiStatus) || value.aiLeaseUntil > at || (value.aiAttempts || 0) >= 3) return;
+        // One physical Meta inbox can be connected through several Zernio accounts.
+        // Meta's message ID is shared across those deliveries; account IDs are not.
+        // Claim it atomically across tenants before inference or sending anything.
+        // Never take over an existing claim: an uncertain send must not be repeated.
+        const globalReply = value.remoteMessageId ? state.collection("socialAiReplies").doc(digestId(`${value.provider || 'facebook'}:${value.remoteMessageId}`)) : null;
+        if (globalReply && (await tx.get(globalReply)).exists) {
+          tx.set(ref, { aiStatus: "skipped", aiLeaseUntil: 0, aiUpdatedAt: at, aiSkipReason: "同一平台訊息已由另一個接收流程處理" }, { merge: true });
+          return;
+        }
         const sameMinute = usage && at - usage.minuteSince < 60000, sameDay = usage && at - usage.daySince < 86400000;
         if ((sameMinute ? usage.minuteCount : 0) >= 20 || (sameDay ? usage.dayCount : 0) >= 500) {
           tx.set(ref, { aiStatus: "throttled", aiLeaseUntil: 0, aiUpdatedAt: at }, { merge: true }); return;
         }
         tx.set(ref, { aiStatus: "processing", aiLeaseUntil: at + 180000, aiAttempts: (value.aiAttempts || 0) + 1 }, { merge: true });
+        if (globalReply) tx.set(globalReply, { claimedAt: at });
         tx.set(limitRef, { minuteSince: sameMinute ? usage.minuteSince : at, minuteCount: (sameMinute ? usage.minuteCount : 0) + 1,
           daySince: sameDay ? usage.daySince : at, dayCount: (sameDay ? usage.dayCount : 0) + 1 }); result = true;
       });
